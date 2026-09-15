@@ -11,6 +11,7 @@ export interface ReportDownload {
   title: string;
   kind: "drawing" | "nesting" | "cutList";
   preview: string;
+  previews?: string[];
   formats: { pdf: string; dxf: string; csv?: string };
   rows?: CutRow[];
 }
@@ -73,14 +74,18 @@ export function pageSvg(page: ReportPage): Uint8Array {
   const elements = page.entities
     .map((e) => {
       if (e.kind === "text")
-        return `<text x="${e.x}" y="${e.y}" font-size="${e.height}" fill="#20303a">${escapeXml(e.text)}</text>`;
+        return `<text x="${e.x}" y="${e.y}" font-size="${e.height}" fill="#20252a" text-anchor="${e.align ?? "start"}" transform="rotate(${e.rotation ?? 0},${e.x},${e.y})">${escapeXml(e.text)}</text>`;
       if (e.kind === "circle")
         return `<circle cx="${e.x}" cy="${e.y}" r="${e.radius}" fill="none" stroke="#53616a" stroke-width="0.2"/>`;
-      return `<path d="${e.points.map((p, i) => (i ? "L" : "M") + p.x + "," + p.y).join("")}${e.closed ? "Z" : ""}" fill="none" stroke="#53616a" stroke-width="0.2"/>`;
+      const dashed = /HIDDEN|BEND_|TANGENT/.test(e.layer);
+      const weight =
+        e.style?.lineWidth ??
+        (/BORDER|VISIBLE|BLANK_OUTLINE/.test(e.layer) ? 0.35 : 0.18);
+      return `<path d="${e.points.map((p, i) => (i ? "L" : "M") + p.x + "," + p.y).join("")}${e.closed ? "Z" : ""}" fill="none" stroke="${escapeXml(e.style?.stroke ?? "#20252a")}" stroke-width="${weight}" ${dashed ? 'stroke-dasharray="3,1,0.5,1"' : ""}/>`;
     })
     .join("");
   return new TextEncoder().encode(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${page.width}mm" height="${page.height}mm" viewBox="0 0 ${page.width} ${page.height}"><rect width="${page.width}" height="${page.height}" fill="white"/><g font-family="sans-serif">${elements}</g></svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${page.width}mm" height="${page.height}mm" viewBox="0 0 ${page.width} ${page.height}"><rect width="${page.width}" height="${page.height}" fill="white"/><g font-family="sans-serif" stroke-linecap="round" stroke-linejoin="round">${elements}</g></svg>`,
   );
 }
 export function pagesDxf(pages: ReportPage[]): Uint8Array {

@@ -299,7 +299,7 @@ export class KitchenCabinet extends Project {
         offset: 60,
       })
       .note({
-        at: { x: 20, y: 275 },
+        at: { x: 20, y: 235 },
         text: "Hardware geometry is provisional. All dimensions are in millimetres.",
       });
   }

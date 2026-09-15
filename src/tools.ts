@@ -3,6 +3,7 @@ import {
   Shapes,
   SolidShape,
   positive,
+  screwHole,
   type Placement,
   type Point2,
   type SignedAxis,
@@ -77,11 +78,8 @@ export class Drill extends Tool {
     options: { z: CutSpan; placement?: Placement },
   ): Part {
     const s = span(target, { x: 0, y: 0, z: options.z });
-    for (const f of Object.values(mount.features)) {
-      if (f.kind !== "hole")
-        throw new Error(
-          "Slotted mounting interfaces require a routing operation",
-        );
+    for (const feature of Object.values(mount.features)) {
+      const f = screwHole(feature);
       target.subtract(
         new Shapes.Cylinder({
           diameter: this.diameter,

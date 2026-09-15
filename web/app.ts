@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ReportDownload } from "../src/reports.js";
 import { IsolationSession } from "./isolation.js";
+import { setupDesktop } from "./desktop.js";
+import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import {
   codeEditor,
   configureEditor,
@@ -467,22 +469,26 @@ function downloadControl(report: ReportDownload) {
   control.append(select, link);
   return control;
 }
+let pdfViewers: ReturnType<typeof pdfViewer>[] = [];
 function renderOutputs() {
+  pdfViewers.forEach((viewer) => viewer.dispose());
+  pdfViewers = [];
+  const pdfReports: { drawing: PdfReport[]; nesting: PdfReport[] } = {
+    drawing: [],
+    nesting: [],
+  };
   for (const id of ["drawing", "nesting", "exports"]) $(id).replaceChildren();
   const grouped = new Set<string>();
   for (const report of model?.reports ?? []) {
     grouped.add(report.preview);
+    report.previews?.forEach((name) => grouped.add(name));
     Object.values(report.formats).forEach((name) => grouped.add(name));
     if (report.kind !== "cutList") {
-      const card = document.createElement("section"),
-        title = document.createElement("h3"),
-        img = document.createElement("img");
-      title.textContent = report.title;
-      title.append(downloadControl(report));
-      img.src = artifactUrl(report.preview);
-      img.alt = report.title;
-      card.append(title, img);
-      $(report.kind === "drawing" ? "drawing" : "nesting").append(card);
+      pdfReports[report.kind === "drawing" ? "drawing" : "nesting"].push({
+        title: report.title,
+        url: artifactUrl(report.formats.pdf),
+        download: downloadControl(report),
+      });
     }
     const row = document.createElement("div"),
       label = document.createElement("span");
@@ -498,15 +504,12 @@ function renderOutputs() {
     if (file.kind === "drawing" || file.kind === "nesting") {
       const card = document.createElement("section"),
         title = document.createElement("h3"),
-        link = document.createElement("a"),
-        img = document.createElement("img");
+        link = document.createElement("a");
       title.textContent = file.name;
       link.href = url + "&download";
       link.textContent = "Download";
       title.append(link);
-      img.src = url;
-      img.alt = file.name;
-      card.append(title, img);
+      card.append(title);
       $(file.kind === "drawing" ? "drawing" : "nesting").append(card);
     }
     const row = document.createElement("div");
@@ -518,6 +521,12 @@ function renderOutputs() {
     size.textContent = (file.size / 1024).toFixed(1) + " KB · " + file.kind;
     row.append(link, size);
     $("exports").append(row);
+  }
+  for (const id of ["drawing", "nesting"] as const) {
+    if (!pdfReports[id].length) continue;
+    const viewer = pdfViewer(pdfReports[id]);
+    pdfViewers.push(viewer);
+    $(id).append(viewer.element);
   }
 }
 function renderCuts() {
@@ -673,6 +682,7 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   )[0];
   select(hit?.object.userData.path ?? "");
 });
+setupDesktop(() => !dirty || confirm("Discard unsaved editor changes?"));
 await loadSource();
 await configureEditor(token);
 const events = new EventSource("/api/events");

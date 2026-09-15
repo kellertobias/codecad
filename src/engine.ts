@@ -1,6 +1,13 @@
 import * as b from "brepjs/quick";
 import { readFile } from "node:fs/promises";
-import { Matrix4, Box3, Vector3 } from "three";
+import {
+  Matrix4,
+  Box3,
+  Vector3,
+  BufferGeometry,
+  Float32BufferAttribute,
+  EdgesGeometry,
+} from "three";
 import {
   Component,
   Part,
@@ -10,10 +17,11 @@ import {
   framed,
   type Recipe,
 } from "./model.js";
-import { SheetPart, SheetMetalPart } from "./stock.js";
+import { SheetPart, SheetMetalPart, BlockPart } from "./stock.js";
 import type { ManufacturingDxf, TechnicalDrawing } from "./outputs.js";
 import { renderDrawing } from "./drawing.js";
 import { exportDxf } from "./manufacturing.js";
+import { profileFace } from "./profile.js";
 export interface ModelSnapshot {
   readonly root: Component;
   readonly revision: number;
@@ -24,6 +32,8 @@ export interface EngineCapabilities {
   readonly stepExport: boolean;
   readonly hiddenLineProjection: boolean;
   readonly sheetMetalFolding: boolean;
+  readonly sheetMetalUnfolding: "history-based";
+  readonly sheetMetalReliefs: readonly string[];
   readonly engineName: string;
   readonly engineVersion: string;
 }
@@ -68,6 +78,8 @@ export class OpenCascadeEngine implements CadEngine {
     stepExport: true,
     hiddenLineProjection: true,
     sheetMetalFolding: true,
+    sheetMetalUnfolding: "history-based",
+    sheetMetalReliefs: ["rectangular", "round"],
     engineName: "OpenCascade / occt-wasm",
     engineVersion: "5.0.0",
   };
@@ -124,7 +136,9 @@ export class OpenCascadeEngine implements CadEngine {
         break;
       case "extrude": {
         const face = this.own(
-          b.unwrap(b.polygon(r.points.map((p) => [p.x, p.y, 0]))),
+          r.arcTolerance
+            ? profileFace(r.points, r.arcTolerance)
+            : b.unwrap(b.polygon(r.points.map((p) => [p.x, p.y, 0]))),
         );
         shape = b.unwrap(b.extrude(face, r.height));
         break;
@@ -200,17 +214,32 @@ export class OpenCascadeEngine implements CadEngine {
         if (!b.isValid(solid))
           throw new Error("Kernel produced an invalid solid");
         this.shapes.set(part, solid);
-        const mesh = b.mesh(solid, { tolerance: 0.1, cache: false }),
-          edges = b.meshEdges(solid, { tolerance: 0.1, cache: false });
+        const mesh = b.mesh(solid, {
+          tolerance: 0.025,
+          angularTolerance: 0.08,
+          cache: false,
+        });
+        // Welded tessellation feature edges suppress cylinder seams and smooth
+        // profile chords, while retaining real rims, holes and sharp corners.
+        const geometry = new BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new Float32BufferAttribute(mesh.vertices, 3),
+        );
+        geometry.setIndex(Array.from(mesh.triangles));
+        const features = new EdgesGeometry(geometry, 12);
+        const edges = new Float32Array(features.getAttribute("position").array);
+        geometry.dispose();
+        features.dispose();
         meshes.push({
           componentPath: part.path,
           positions: mesh.vertices,
           normals: mesh.normals,
           indices: mesh.triangles,
-          edges: edges.lines,
+          edges,
           matrix: part.worldMatrix().toArray(),
           color:
-            part instanceof SheetPart
+            part instanceof SheetPart || part instanceof BlockPart
               ? (part.material.options.color ?? "#c9aa78")
               : "#8b9da8",
           volume: b.unwrap(b.measureVolume(solid)),
@@ -282,7 +311,8 @@ export class OpenCascadeEngine implements CadEngine {
       ];
     }
   }
-  /** Exact cylindrical bends for straight full-width bend bands without cuts inside the band. */
+  /** Exact cylindrical bands, including relieved partial-width flanges.
+   * Unsupported pierced bands are rejected rather than silently filled in. */
   private async fold(
     part: SheetMetalPart,
     flat: b.Shape3D,
@@ -313,19 +343,23 @@ export class OpenCascadeEngine implements CadEngine {
       const size = Math.max(bounds.getSize(new Vector3()).length() * 4, 1000);
       const region = (x: number, width: number) =>
         this.own(
-          b.box(width, size * 2, size * 2, {
-            at: [x + width / 2, 0, 0],
+          b.box(width, len, size * 2, {
+            at: [x + width / 2, len / 2, 0],
             centered: true,
           }),
         );
-      const fixed = this.own(b.unwrap(b.intersect(local, region(-size, size))));
+      if ((bounds.min.y < -0.01 || bounds.max.y > len + 0.01) && !o.autoRelief)
+        throw new Error(
+          `Partial-width bend ${o.id} requires autoRelief to release its flange`,
+        );
+      const fixed = this.own(b.unwrap(b.cut(local, region(0, size))));
       const moving = this.own(b.unwrap(b.intersect(local, region(BA, size))));
       const band = this.own(b.unwrap(b.intersect(local, region(0, BA))));
       const expected = BA * len * t,
         actual = b.unwrap(b.measureVolume(band));
       if (Math.abs(actual - expected) > Math.max(0.01, expected * 1e-5))
         throw new Error(
-          `Bend ${o.id} needs an uncut rectangular full-width band of ${BA.toFixed(3)} mm`,
+          `Bend ${o.id} needs an uncut rectangular band of ${BA.toFixed(3)} mm; pierced or intersecting bend bands are not supported`,
         );
       const up = o.direction === "up",
         pivot = up ? R + t : -R,
@@ -350,6 +384,11 @@ export class OpenCascadeEngine implements CadEngine {
         .multiply(new Matrix4().makeRotationY(sign * angle))
         .multiply(new Matrix4().makeTranslation(-BA, 0, -pivot));
       const flange = this.transform(moving, transform);
+      const interference = this.own(b.unwrap(b.intersect(fixed, flange)));
+      if (Math.abs(b.unwrap(b.measureVolume(interference))) > 0.01)
+        throw new Error(
+          `Bend ${o.id} causes flange self-intersection; adjust the profile or bend order`,
+        );
       const folded = this.own(
         b.unwrap(b.fuse(this.own(b.unwrap(b.fuse(fixed, curved))), flange)),
       );

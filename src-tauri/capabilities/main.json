@@ -1,0 +1,7 @@
+{
+  "identifier": "main-window",
+  "description": "App-controlled main window; native commands also verify the current session URL.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*"] },
+  "permissions": ["core:default", "allow-open-project", "allow-window-action"]
+}

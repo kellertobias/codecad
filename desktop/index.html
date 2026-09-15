@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>CodeCAD</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header id="titlebar">
+      <strong>⌘ CodeCAD</strong><span>DESKTOP STUDIO</span>
+      <div class="controls">
+        <button data-window="minimize" aria-label="Minimize">−</button
+        ><button data-window="maximize" aria-label="Maximize or restore">
+          □</button
+        ><button data-window="close" aria-label="Close">×</button>
+      </div>
+    </header>
+    <main>
+      <img
+        class="app-icon"
+        src="icon.png"
+        alt="CodeCAD"
+        width="96"
+        height="96"
+      />
+      <h1>Build with code.<br />Make it real.</h1>
+      <p>Parametric parts, woodworking, sheet metal and room plans.</p>
+      <button id="open-project" class="primary">Open project…</button>
+      <p class="muted">
+        Choose a TypeScript project entry (.ts). Only open code you trust.
+      </p>
+      <h2>Explore an example</h2>
+      <div class="examples">
+        <button data-example="cabinet">
+          Kitchen cabinet<small>Joinery · hardware · motion</small></button
+        ><button data-example="keyboard">
+          Keyboard case<small>Sheet metal · MDF interfaces</small></button
+        ><button data-example="apartment">
+          Small apartment<small>Rooms · windows · floor plans</small>
+        </button>
+      </div>
+      <p id="message" role="status"></p>
+    </main>
+    <script src="desktop.js"></script>
+  </body>
+</html>

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$ROOT"
+fail() { echo "CodeCAD: $*" >&2; exit 1; }
+ACTION="${1:-build}"
+[[ $# -le 2 ]] || fail "Usage: ./build [open|install|archive [install]]"
+case "$ACTION:${2:-}" in build:|open:|install:|archive:|archive:install) ;; *) fail "Usage: ./build [open|install|archive [install]]" ;; esac
+[[ "$(uname -s)" == Darwin ]] || fail "This wrapper packages macOS only. Run npm scripts for browser development."
+
+ensure_dependencies() {
+  if ! xcode-select -p >/dev/null 2>&1; then
+    if [[ -t 0 ]]; then xcode-select --install || true; fi
+    fail "Install Apple's Command Line Tools with xcode-select --install, then rerun."
+  fi
+  for executable in node npm cargo rustc; do
+    if ! command -v "$executable" >/dev/null; then
+      command -v brew >/dev/null || fail "Install Homebrew from https://brew.sh, then rerun to provision Node and Rust."
+      case "$executable" in node|npm) echo "Installing Node 22 through Homebrew"; brew install node@22; export PATH="$(brew --prefix node@22)/bin:$PATH" ;; cargo|rustc) echo "Installing Rust through Homebrew"; brew install rust ;; esac
+    fi
+  done
+  node -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)' || fail "Node 22+ is required. Select it in PATH and rerun."
+  local fingerprint previous=""
+  fingerprint="$(shasum -a 256 package.json package-lock.json)"
+  [[ ! -f .codecad/dependencies.sha256 ]] || previous="$(< .codecad/dependencies.sha256)"
+  if [[ ! -x node_modules/.bin/tauri || "$fingerprint" != "$previous" ]]; then
+    npm ci
+    mkdir -p .codecad
+    printf '%s\n' "$fingerprint" > .codecad/dependencies.sha256
+  fi
+}
+
+APP="$ROOT/src-tauri/target/release/bundle/macos/CodeCAD.app"
+DEST="/Applications/CodeCAD.app"
+verify_app() {
+  local candidate="$1"
+  [[ -d "$candidate" && ! -L "$candidate" ]] || fail "Not a regular app bundle: $candidate"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$candidate/Contents/Info.plist")" == de.tobisk.codecad ]] || fail "Refusing to replace a different application: $candidate"
+  [[ -x "$candidate/Contents/MacOS/codecad-desktop" ]] || fail "Missing native executable"
+}
+stop_exact_app() {
+  local pid command attempt
+  while read -r pid command; do
+    if [[ "$command" == "$APP/Contents/MacOS/codecad-desktop" || "$command" == "$DEST/Contents/MacOS/codecad-desktop" ]]; then
+      kill -TERM "$pid"
+      for ((attempt=0; attempt<40; attempt++)); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.25
+      done
+      ! kill -0 "$pid" 2>/dev/null || fail "CodeCAD PID $pid did not exit; quit it and rerun. No application was replaced."
+    fi
+  done < <(ps -axo pid=,comm=)
+}
+install_app() {
+  verify_app "$APP"
+  [[ ! -L "$DEST" ]] || fail "Refusing to replace a symlink: $DEST"
+  [[ ! -e "$DEST" ]] || verify_app "$DEST"
+  [[ -w /Applications ]] || fail "/Applications is not writable. Ask an administrator to grant installation access, then rerun."
+  local staging backup
+  staging="$(mktemp -d /Applications/.CodeCAD-install.XXXXXX)"
+  ditto "$APP" "$staging/CodeCAD.app"
+  verify_app "$staging/CodeCAD.app"
+  codesign --verify --deep --strict "$staging/CodeCAD.app"
+  stop_exact_app
+  backup="/Applications/.CodeCAD-previous-$(date +%Y%m%d-%H%M%S)-$$.app"
+  if [[ -e "$DEST" ]]; then mv "$DEST" "$backup"; fi
+  if ! mv "$staging/CodeCAD.app" "$DEST"; then
+    [[ ! -e "$backup" ]] || mv "$backup" "$DEST"
+    fail "Install failed; previous application restored. Staging retained at $staging"
+  fi
+  rmdir "$staging"
+  echo "Installed $DEST"
+  [[ ! -e "$backup" ]] || echo "Recoverable previous version: $backup"
+  open "$DEST"
+}
+
+ensure_dependencies
+# Do not inherit a target override: APP must identify the bundle actually built.
+export CARGO_TARGET_DIR="$ROOT/src-tauri/target"
+if [[ "$ACTION" == archive ]]; then
+  cargo clean --manifest-path src-tauri/Cargo.toml --release -p codecad-desktop
+fi
+npm run check
+npm run desktop:build -- --bundles app -- --locked
+verify_app "$APP"
+node scripts/sign-app.mjs "$APP"
+codesign --verify --deep --strict "$APP"
+if [[ "$ACTION" == archive ]]; then
+  VERSION="$(node -p 'JSON.parse(require("fs").readFileSync("src-tauri/tauri.conf.json")).version')"
+  mkdir -p artifacts
+  ZIP="$ROOT/artifacts/CodeCAD-$VERSION-macos-$(uname -m).zip"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+  shasum -a 256 "$ZIP" > "$ZIP.sha256"
+  echo "Archive: $ZIP"
+fi
+if [[ "$ACTION" == install || "${2:-}" == install ]]; then install_app
+elif [[ "$ACTION" == open ]]; then stop_exact_app; open "$APP"
+else echo "Built $APP"; fi

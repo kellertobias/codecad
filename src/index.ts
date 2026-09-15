@@ -5,5 +5,9 @@ export * from "./model.js";
 export * from "./motion.js";
 export * from "./outputs.js";
 export * from "./stock.js";
+export type {
+  DrawingLineStyle,
+  MaterialDrawingStyle,
+} from "./drawing-style.js";
 export * from "./techniques.js";
 export * from "./tools.js";

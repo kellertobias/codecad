@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, cp } from "node:fs/promises";
 import { watch } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve, join, dirname, basename } from "node:path";
@@ -11,37 +11,41 @@ const root = resolve(new URL("..", import.meta.url).pathname);
 const entry = resolve(
   process.argv[2] ?? join(root, "examples/kitchen-cabinet.ts"),
 );
-const port = Number(process.env.PORT ?? 4317),
-  token = randomBytes(24).toString("hex");
-const storage = join(root, ".codecad"),
+let port = Number(process.env.PORT ?? 4317);
+const token = randomBytes(24).toString("hex");
+const storage = process.env.CODECAD_STORAGE ?? join(root, ".codecad"),
   ui = join(storage, "ui");
 await mkdir(ui, { recursive: true });
-await build({
-  entryPoints: [join(root, "web/app.ts")],
-  bundle: true,
-  format: "esm",
-  platform: "browser",
-  target: "es2022",
-  outfile: join(ui, "app.js"),
-  sourcemap: true,
-  loader: { ".ttf": "dataurl" },
-});
-await build({
-  entryPoints: {
-    "ts.worker": join(
-      root,
-      "node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js",
-    ),
-    "editor.worker": join(
-      root,
-      "node_modules/monaco-editor/esm/vs/editor/editor.worker.js",
-    ),
-  },
-  outdir: ui,
-  bundle: true,
-  format: "esm",
-  platform: "browser",
-});
+if (process.env.CODECAD_DESKTOP) {
+  await cp(join(root, "ui"), ui, { recursive: true });
+} else {
+  await build({
+    entryPoints: [join(root, "web/app.ts")],
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    outfile: join(ui, "app.js"),
+    sourcemap: true,
+    loader: { ".ttf": "dataurl" },
+  });
+  await build({
+    entryPoints: {
+      "ts.worker": join(
+        root,
+        "node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js",
+      ),
+      "editor.worker": join(
+        root,
+        "node_modules/monaco-editor/esm/vs/editor/editor.worker.js",
+      ),
+    },
+    outdir: ui,
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+  });
+}
 const languageService = await editorService(root, entry);
 const listeners = new Set<ServerResponse>();
 let generation = 0,
@@ -67,7 +71,21 @@ function rebuild() {
   broadcast();
   const processHandle = spawn(
     process.execPath,
-    ["--import", "tsx", join(root, "src/worker.ts"), entry, directory],
+    [
+      "--import",
+      "tsx",
+      ...(process.env.CODECAD_DESKTOP
+        ? ["--import", join(root, "src/desktop-loader.ts")]
+        : []),
+      join(
+        root,
+        process.env.CODECAD_COMPILER === "esbuild"
+          ? "src/worker.ts"
+          : "src/native-rebuild.ts",
+      ),
+      entry,
+      directory,
+    ],
     { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
   );
   child = processHandle;
@@ -278,6 +296,10 @@ const server = createServer(async (req, res) => {
       "/app.css": [join(ui, "app.css"), "text/css"],
       "/ts.worker.js": [join(ui, "ts.worker.js"), "text/javascript"],
       "/editor.worker.js": [join(ui, "editor.worker.js"), "text/javascript"],
+      "/pdf.worker.mjs": [
+        join(root, "node_modules/pdfjs-dist/build/pdf.worker.mjs"),
+        "text/javascript",
+      ],
       "/style.css": [join(root, "web/style.css"), "text/css"],
     };
     const resource = resources[url.pathname];
@@ -300,10 +322,14 @@ const server = createServer(async (req, res) => {
   }
 });
 server.listen(port, "127.0.0.1", () => {
+  const address = server.address();
+  if (address && typeof address !== "string") port = address.port;
+  console.log(`CODECAD_READY:${port}`);
   console.log(`CodeCAD: http://127.0.0.1:${port}\nProject: ${entry}`);
   rebuild();
 });
 function close() {
+  clearTimeout(timer);
   child?.kill();
   for (const watcher of watchers) watcher.close();
   for (const listener of listeners) listener.end();

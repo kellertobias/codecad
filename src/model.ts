@@ -41,6 +41,7 @@ export interface HoleFeature extends Point2 {
   readonly source: MeasurementSource;
 }
 export interface SlotFeature extends Point2 {
+  /** x/y is the lower-left of the slot bounds; length includes both round ends. */
   readonly kind: "slot";
   readonly length: number;
   readonly width: number;
@@ -49,11 +50,25 @@ export interface SlotFeature extends Point2 {
 }
 export type MountingFeature = HoleFeature | SlotFeature;
 export type MountingFeatures = Readonly<Record<string, MountingFeature>>;
+/** Screw in the mating part: a slot locates one round hole at its centre. */
+export function screwHole(feature: MountingFeature): HoleFeature {
+  if (feature.kind === "hole") return { ...feature };
+  positive(feature.width, "slot width");
+  if (!Number.isFinite(feature.length) || feature.length < feature.width)
+    throw new Error("Slot length must be at least its width");
+  return {
+    kind: "hole",
+    x: feature.x + (feature.axis === "x" ? feature.length : feature.width) / 2,
+    y: feature.y + (feature.axis === "y" ? feature.length : feature.width) / 2,
+    diameter: feature.width,
+    source: feature.source,
+  };
+}
 export type Recipe =
   | { kind: "box"; width: number; depth: number; height: number }
   | { kind: "cylinder"; diameter: number; length: number }
   | { kind: "cone"; diameter: number; length: number }
-  | { kind: "extrude"; points: Point2[]; height: number }
+  | { kind: "extrude"; points: Point2[]; height: number; arcTolerance?: number }
   | { kind: "step"; path: string }
   | { kind: "transform"; source: Recipe; matrix: number[] }
   | { kind: "cut" | "union" | "intersect"; left: Recipe; right: Recipe }
@@ -147,6 +162,18 @@ export class PartInterface<F extends MountingFeatures = MountingFeatures> {
   get outline() {
     return this.options.outline;
   }
+  /** Round mating holes, preserving feature names, owner and interface frame. */
+  screwHoles(): PartInterface<{ readonly [K in keyof F]: HoleFeature }> {
+    const features = Object.fromEntries(
+      Object.entries(this.features).map(([name, feature]) => [
+        name,
+        screwHole(feature),
+      ]),
+    ) as { readonly [K in keyof F]: HoleFeature };
+    const result = new PartInterface({ ...this.options, features });
+    result.owner = this.owner;
+    return result;
+  }
   bind(owner: Component): PartInterface<F> {
     const i = new PartInterface(this.options);
     i.owner = owner;
@@ -217,6 +244,12 @@ export abstract class Shape {
   }
 }
 export abstract class Shape2D extends Shape {
+  private arcTolerance?: number;
+  /** Opt in to circular-arc reconstruction for sampled curved profiles. */
+  fitArcs(tolerance = 0.01): this {
+    this.arcTolerance = positive(tolerance, "arc fit tolerance");
+    return this;
+  }
   constructor(public points: Point2[]) {
     super({ kind: "extrude", points, height: 1 });
   }
@@ -225,6 +258,9 @@ export abstract class Shape2D extends Shape {
       kind: "extrude",
       points: this.points.map((p) => ({ ...p })),
       height: positive(height, "height"),
+      ...(this.arcTolerance === undefined
+        ? {}
+        : { arcTolerance: this.arcTolerance }),
     });
   }
   override move(p: Placement): this {
@@ -352,11 +388,12 @@ export interface ComponentOptions {
 }
 interface ConstructionScope {
   owner?: Component;
+  detached?: boolean;
 }
 const scopes: ConstructionScope[] = [];
 export const interfaceMethods = new WeakMap<object, Map<string, string>>();
-export function construction<T>(fn: () => T): T {
-  scopes.push({});
+export function construction<T>(fn: () => T, detached = false): T {
+  scopes.push({ detached });
   try {
     return fn();
   } finally {
@@ -376,7 +413,7 @@ export abstract class Component {
   constructor(o: ComponentOptions = {}) {
     const scope = scopes.at(-1),
       parentScope = scope?.owner ? scope : scopes.at(-2);
-    const parent = parentScope?.owner;
+    const parent = scope?.detached ? undefined : parentScope?.owner;
     this.parent = parent instanceof Assembly ? parent : undefined;
     const siblings = this.parent?.children ?? [];
     this.id = o.id ?? `part-${siblings.length + 1 || ++outsideId}`;
@@ -606,6 +643,93 @@ export class HardwarePart extends Part {
 }
 export abstract class Assembly extends Component {
   children: Component[] = [];
+  /** Fuse placed components into one generic part. Inputs are consumed by default.
+   * Placement is snapshotted in this assembly's coordinates; disconnected inputs
+   * may still produce multiple solid bodies. Stock and machining metadata are not merged.
+   */
+  joinSolids(
+    sources: readonly Component[],
+    options: ComponentOptions & { keepSources?: boolean } = {},
+  ): Part {
+    const available = new Set(descendants(this));
+    if (!sources.length || sources.some((source) => !available.has(source)))
+      throw new Error(
+        "joinSolids requires components belonging to this assembly",
+      );
+    const roots = [...new Set(sources)].filter(
+      (source) =>
+        !sources.some(
+          (other) => other !== source && descendants(other).includes(source),
+        ),
+    );
+    const parts = [
+      ...new Set(
+        roots.flatMap((source) =>
+          [source, ...descendants(source)].filter(
+            (c): c is Part => c instanceof Part,
+          ),
+        ),
+      ),
+    ];
+    if (!parts.length)
+      throw new Error("joinSolids requires at least one solid part");
+    if (
+      parts.some(
+        (part) =>
+          "bends" in part && Array.isArray(part.bends) && part.bends.length,
+      )
+    )
+      throw new Error(
+        "joinSolids does not yet support folded sheet metal; its recipe describes the flat blank",
+      );
+    const inverse = this.worldMatrix().invert();
+    const recipes = parts.map((part) =>
+      transformed(
+        structuredClone(part.recipe),
+        inverse.clone().multiply(part.worldMatrix()),
+      ),
+    );
+    const recipe = recipes
+      .slice(1)
+      .reduce<Recipe>(
+        (left, right) => ({ kind: "union", left, right }),
+        recipes[0]!,
+      );
+    let id = options.id;
+    if (!id) {
+      let suffix = 1;
+      while (this.children.some((c) => c.id === `joined-${suffix}`)) suffix++;
+      id = `joined-${suffix}`;
+    }
+    if (this.children.some((c) => c.id === id))
+      throw new Error(`Duplicate component id: ${id}`);
+    const worlds = roots.map((source) => source.worldMatrix());
+    // Isolate construction from the caller's active decorator scope.
+    const result = construction(
+      () =>
+        new Part({
+          id,
+          ...(options.label ? { label: options.label } : {}),
+          shape: new SolidShape(recipe),
+        }),
+      true,
+    );
+    result.sourceTraces.push(
+      ...parts.flatMap((part) => part.sourceTraces),
+      new Error().stack ?? "",
+    );
+    this.add(result);
+    if (!options.keepSources)
+      roots.forEach((source, index) => {
+        source.parent!.children = source.parent!.children.filter(
+          (c) => c !== source,
+        );
+        source.parent = undefined;
+        source.place({ relativeTo: "world" });
+        source.extraMatrixForMate(worlds[index]!);
+      });
+    return result;
+  }
   protected add<T extends Component>(component: T, p?: Placement): T {
     if (component.parent !== this) {
       if (this.children.some((c) => c.id === component.id))

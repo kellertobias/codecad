@@ -10,6 +10,8 @@ import {
   type Placement,
 } from "./model.js";
 import { RouterBit } from "./tools.js";
+import { SheetPart } from "./stock.js";
+import { Vector3 } from "three";
 export abstract class Technique {
   constructor(readonly id: string) {}
 }
@@ -129,6 +131,20 @@ export class DominoJoint extends Technique {
   }
 }
 export class FingerJoint extends Technique {
+  /** Protected material at BOTH ends, measured against the untrimmed overlap. */
+  static interval(
+    length: number,
+    options: { internal: boolean; edgeMargin?: number },
+  ) {
+    positive(length, "joint overlap");
+    const requested = options.edgeMargin ?? 0;
+    if (!Number.isFinite(requested) || requested < 0)
+      throw new Error("Finger edge margin must be non-negative");
+    const margin = Math.max(requested, options.internal ? length * 0.2 : 0);
+    if (margin * 2 >= length)
+      throw new Error("Finger margins leave no joint overlap");
+    return { start: margin, end: length - margin };
+  }
   constructor(
     readonly options: { id?: string; fingerWidth: number; clearance?: number },
   ) {
@@ -139,23 +155,82 @@ export class FingerJoint extends Technique {
     first: PartInterface;
     second: PartInterface;
     startWith?: "first" | "second";
+    edgeMargin?: number;
   }): void {
     const w = Math.min(width(o.first), width(o.second)),
       pitch = this.options.fingerWidth,
       clearance = this.options.clearance ?? 0;
-    for (let x = 0, n = 0; x < w; x += pitch, n++) {
-      const i =
-        (n % 2 === 0) === (o.startWith !== "second") ? o.first : o.second;
+    if (!Number.isFinite(clearance) || clearance < 0)
+      throw new Error("Finger clearance must be non-negative");
+    const internal = (i: PartInterface) => {
+      const p = owner(i);
+      if (!(p instanceof SheetPart))
+        throw new Error("Finger joints require sheet parts");
+      const points = p.manufacturingOutline.points;
+      const inside = (y: number) => {
+        const q = new Vector3(w / 2, y, 0).applyMatrix4(framed(i.frame));
+        let contained = false;
+        for (let n = 0, j = points.length - 1; n < points.length; j = n++) {
+          const a = points[j]!,
+            c = points[n]!;
+          const dx = c.x - a.x,
+            dy = c.y - a.y;
+          const t = Math.max(
+            0,
+            Math.min(
+              1,
+              ((q.x - a.x) * dx + (q.y - a.y) * dy) / (dx * dx + dy * dy || 1),
+            ),
+          );
+          if (Math.hypot(q.x - a.x - t * dx, q.y - a.y - t * dy) < 1e-6)
+            return false;
+          if (
+            a.y > q.y !== c.y > q.y &&
+            q.x < ((c.x - a.x) * (q.y - a.y)) / (c.y - a.y) + a.x
+          )
+            contained = !contained;
+        }
+        return contained;
+      };
+      return inside(0) && inside(p.material.thickness);
+    };
+    const firstInternal = internal(o.first),
+      secondInternal = internal(o.second);
+    if (firstInternal && secondInternal)
+      throw new Error(
+        "Internal finger joint needs one receiving face and one entering edge",
+      );
+    const interval = FingerJoint.interval(w, {
+      internal: firstInternal || secondInternal,
+      ...(o.edgeMargin !== undefined ? { edgeMargin: o.edgeMargin } : {}),
+    });
+    const cut = (i: PartInterface, x: number, end: number) => {
       const p = owner(i),
         thickness = (p as any).material?.thickness;
       if (!thickness) throw new Error("Finger joints require sheet parts");
       p.subtract(
         new Shapes.Box({
-          width: Math.min(pitch, w - x) + clearance,
+          width: end - x,
           depth: thickness,
           height: thickness,
-        }).move({ z: -thickness, x: -clearance / 2 }),
+        }).move({ z: -thickness }),
         { relativeTo: i, x },
+      );
+    };
+    // Trim the entering sheet at the protected ends: leaving both parts here
+    // would preserve the receiving sheet but create an impossible interference.
+    if (firstInternal || secondInternal) {
+      const entering = firstInternal ? o.second : o.first;
+      cut(entering, 0, interval.start);
+      cut(entering, interval.end, w);
+    }
+    for (let x = interval.start, n = 0; x < interval.end; x += pitch, n++) {
+      const i =
+        (n % 2 === 0) === (o.startWith !== "second") ? o.first : o.second;
+      cut(
+        i,
+        Math.max(interval.start, x - clearance / 2),
+        Math.min(interval.end, x + pitch + clearance / 2),
       );
     }
   }

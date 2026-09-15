@@ -208,7 +208,13 @@ export function nest(parts: readonly SheetPart[]): SheetLayout[] {
   return results;
 }
 export type DxfEntity =
-  | { kind: "polyline"; layer: string; points: Point2[]; closed: boolean }
+  | {
+      kind: "polyline";
+      layer: string;
+      points: Point2[];
+      closed: boolean;
+      style?: import("./drawing-style.js").DrawingLineStyle;
+    }
   | {
       kind: "text";
       layer: string;
@@ -216,6 +222,8 @@ export type DxfEntity =
       y: number;
       height: number;
       text: string;
+      rotation?: number;
+      align?: "middle";
     }
   | { kind: "circle"; layer: string; x: number; y: number; radius: number };
 function primitiveTransform(recipe: Recipe): {
@@ -267,7 +275,7 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
     9,
     "$ACADVER",
     1,
-    "AC1015",
+    "AC1018",
     9,
     "$INSUNITS",
     70,
@@ -281,12 +289,101 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
     0,
     "TABLE",
     2,
+    "LTYPE",
+    70,
+    3,
+    0,
+    "LTYPE",
+    2,
+    "CONTINUOUS",
+    70,
+    0,
+    3,
+    "Solid",
+    72,
+    65,
+    73,
+    0,
+    40,
+    0,
+    0,
+    "LTYPE",
+    2,
+    "CENTER",
+    70,
+    0,
+    3,
+    "Bend center / tangent",
+    72,
+    65,
+    73,
+    4,
+    40,
+    5.5,
+    49,
+    3,
+    74,
+    0,
+    49,
+    -1,
+    74,
+    0,
+    49,
+    0.5,
+    74,
+    0,
+    49,
+    -1,
+    74,
+    0,
+    0,
+    "LTYPE",
+    2,
+    "HIDDEN",
+    70,
+    0,
+    3,
+    "Hidden edges",
+    72,
+    65,
+    73,
+    2,
+    40,
+    2,
+    49,
+    1,
+    74,
+    0,
+    49,
+    -1,
+    74,
+    0,
+    0,
+    "ENDTAB",
+    0,
+    "TABLE",
+    2,
     "LAYER",
     70,
     new Set(entities.map((e) => e.layer)).size,
   ];
   for (const layer of new Set(entities.map((e) => e.layer)))
-    out.push(0, "LAYER", 2, layer, 70, 0, 62, 7, 6, "CONTINUOUS");
+    out.push(
+      0,
+      "LAYER",
+      2,
+      layer,
+      70,
+      0,
+      62,
+      7,
+      6,
+      /HIDDEN/.test(layer)
+        ? "HIDDEN"
+        : /BEND|TANGENT/.test(layer)
+          ? "CENTER"
+          : "CONTINUOUS",
+    );
   out.push(0, "ENDTAB", 0, "ENDSEC", 0, "SECTION", 2, "ENTITIES");
   for (const e of entities) {
     if (e.kind === "text")
@@ -312,6 +409,16 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
               "\\U+" +
               c.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase(),
           ),
+        50,
+        -(e.rotation ?? 0),
+        72,
+        e.align === "middle" ? 1 : 0,
+        11,
+        e.x,
+        21,
+        e.y,
+        31,
+        0,
       );
     else if (e.kind === "circle")
       out.push(0, "CIRCLE", 8, e.layer, 10, e.x, 20, e.y, 30, 0, 40, e.radius);
@@ -326,6 +433,23 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
         70,
         e.closed ? 1 : 0,
       );
+      if (e.style?.stroke)
+        out.push(420, Number.parseInt(e.style.stroke.slice(1), 16));
+      if (e.style?.lineWidth !== undefined) {
+        const weights = [
+          0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100,
+          106, 120, 140, 158, 200, 211,
+        ];
+        const requested = e.style.lineWidth * 100;
+        out.push(
+          370,
+          weights.reduce((best, weight) =>
+            Math.abs(weight - requested) < Math.abs(best - requested)
+              ? weight
+              : best,
+          ),
+        );
+      }
       for (const p of e.points) out.push(10, p.x, 20, p.y);
     }
   }
@@ -336,6 +460,7 @@ export async function partEntities(
   engine: OpenCascadeEngine,
   part: SheetPart,
 ): Promise<DxfEntity[]> {
+  if (part instanceof SheetMetalPart) return sheetMetalEntities(engine, part);
   const entities: DxfEntity[] = [
     {
       kind: "polyline",
@@ -443,14 +568,87 @@ export async function partEntities(
     for (const chain of contourChains(segments))
       entities.push({ kind: "polyline", layer, ...chain });
   }
-  if (part instanceof SheetMetalPart)
-    for (const bend of part.bends)
+  return entities;
+}
+
+/** Section the finished developed solid, not the untrimmed cutter shapes.
+ * Edge-open reliefs become part of the outer contour; holes remain closed loops. */
+async function sheetMetalEntities(
+  engine: OpenCascadeEngine,
+  part: SheetMetalPart,
+): Promise<DxfEntity[]> {
+  if (part.operations.some((op) => op.kind === "union"))
+    throw new Error(
+      `Sheet-metal DXF cannot infer stock for additive geometry on ${part.path}; define the final blank explicitly`,
+    );
+  const flat = await engine.recipe(part.unfold().shape.recipe);
+  if (b.getSolids(flat).length !== 1)
+    throw new Error(
+      `Sheet-metal blank ${part.path} must be one connected solid`,
+    );
+  const section = engine.own(
+    b.unwrap(
+      b.section(flat, {
+        origin: [0, 0, part.material.thickness / 2],
+        xDir: [1, 0, 0],
+        yDir: [0, 1, 0],
+        zDir: [0, 0, 1],
+      }),
+    ),
+  );
+  const lines = b.meshEdges(section, { tolerance: 0.02, cache: false }).lines;
+  const segments: { a: Point2; b: Point2 }[] = [],
+    seen = new Set<string>();
+  for (let i = 0; i < lines.length; i += 6) {
+    const a = { x: lines[i]!, y: lines[i + 1]! },
+      c = { x: lines[i + 3]!, y: lines[i + 4]! };
+    const key = [JSON.stringify(a), JSON.stringify(c)].sort().join("|");
+    if (!seen.has(key)) {
+      seen.add(key);
+      segments.push({ a, b: c });
+    }
+  }
+  const contours = contourChains(segments);
+  if (contours.some((c) => !c.closed))
+    throw new Error(`Developed contour of ${part.path} is not closed`);
+  const area = (points: Point2[]) =>
+    Math.abs(
+      points.reduce((a, p, i) => {
+        const q = points[(i + 1) % points.length]!;
+        return a + p.x * q.y - q.x * p.y;
+      }, 0),
+    );
+  contours.sort((a, c) => area(c.points) - area(a.points));
+  const entities: DxfEntity[] = contours.map((c, i) => ({
+    kind: "polyline",
+    layer: i
+      ? `CUT_THROUGH_D${part.material.thickness.toFixed(3)}`
+      : "BLANK_OUTLINE",
+    ...c,
+  }));
+  // A sheet-metal blank cannot encode blind milling as a through-cut.
+  for (const op of part.operations) {
+    const box = engine.bounds(await engine.recipe(op.recipe));
+    if (box.min.z > 1e-5 || box.max.z < part.material.thickness - 1e-5)
+      throw new Error(
+        `Sheet-metal flat DXF requires through cuts on ${part.path}; use a separate milling setup for blind features`,
+      );
+  }
+  for (const bend of part.unfold().bends) {
+    entities.push({
+      kind: "polyline",
+      layer: `BEND_${bend.direction.toUpperCase()}_${bend.angle}_R${bend.insideRadius}`,
+      points: [bend.start, bend.end],
+      closed: false,
+    });
+    for (const points of [bend.tangentStart, bend.tangentEnd])
       entities.push({
         kind: "polyline",
-        layer: `BEND_${bend.options.direction.toUpperCase()}_${bend.options.angle}_R${bend.options.insideRadius}`,
-        points: [bend.options.start, bend.options.end],
+        layer: "TANGENT_BEND_LIMIT",
+        points,
         closed: false,
       });
+  }
   return entities;
 }
 function edgeSetup(

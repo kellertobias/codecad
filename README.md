@@ -6,6 +6,63 @@ outputs.
 
 ## Run
 
+### Desktop app (Tauri)
+
+The repository-root wrapper builds the complete macOS application, including its
+icon, web assets, native shell, bundled Node runtime and TypeScript 7 compiler:
+
+```sh
+./build                  # bootstrap dependencies and build
+./build open             # rebuild and launch the build-directory app
+./build install          # rebuild, replace /Applications/CodeCAD.app, and launch
+./build archive          # clean app release build and macOS ZIP in artifacts/
+./build archive install  # archive, replace the installed app, and launch
+```
+
+It works from other working directories too. ZIP filenames include the version
+and host architecture; these are host-architecture macOS builds, not universal,
+Windows or Linux packages. Native dependency caches are retained; archive builds
+clean the CodeCAD crate. Node 22+, Rust and Apple Command Line Tools are required;
+missing Node/Rust can be installed through an existing Homebrew installation.
+If Homebrew or Apple's installer needs user action, the wrapper explains how to
+continue. Locked npm dependencies are installed when their fingerprint changes.
+
+Install validates the bundle ID, stages and verifies the new app before stopping
+the exact old process, and preserves an existing app at the printed hidden
+`/Applications/.CodeCAD-previous-...app` path. Project files and application data
+are not removed. `/Applications` must be writable. Builds use local ad-hoc signing
+unless `CODECAD_SIGN_IDENTITY` is set; no notarization is performed.
+
+The macOS app has a custom draggable window frame with minimize, maximize/restore
+and close controls. **Open project…** on the welcome screen or editor toolbar
+(Cmd/Ctrl+O) opens a native file picker: select a project's `.ts` or `.mts` entry
+file, not its folder. Opening a project executes local TypeScript, so accept the
+trust prompt only for code you trust. Switching projects stops the previous CAD
+engine; closing the app stops its engine and workers.
+
+The welcome screen also offers editable copies of the cabinet, keyboard and
+apartment examples. Copies live in the application's data directory, separate
+from bundled resources. The app bundles Node.js, OpenCascade and its TypeScript
+tools; users do not need a separately installed Node runtime.
+
+To develop/build, install Node.js 22+, Rust and the platform's Tauri prerequisites
+(Xcode Command Line Tools on macOS), then run:
+
+```sh
+npm ci
+npm run desktop:dev
+# Or build the macOS application:
+npm run desktop:build
+```
+
+The app is written to `src-tauri/target/release/bundle/macos/CodeCAD.app`.
+Preparation downloads an official Node 22 runtime and checks its SHA-256 against
+the published manifest. Subsequent builds reuse the cached runtime. Only macOS
+has been built and tested; Windows runtime packaging is not implemented. The
+local build is not a signed/notarized distribution release.
+
+### Browser development
+
 Requires Node.js 22 or newer.
 
 ```sh
@@ -61,7 +118,17 @@ To open another project:
 ```sh
 npm run dev -- examples/sheet-metal-project.ts
 npm run dev -- examples/joinery-techniques.ts
+npm run dev -- examples/small-apartment.ts
 ```
+
+The apartment example has an 8 x 6.4 m footprint and approximately 43.70 m2 of
+clear room floor area: hallway, L-shaped living/kitchen, bedroom and bathroom.
+All four rooms have exterior windows. The entrance has a door; the 1000 mm
+hall-to-living opening has no door. PDF/DXF plans include a north-up floor plan
+cut at 1400 mm, door-swing symbols and a cutaway isometric page. The 3D model
+retains full-height walls. It is a spatial concept, not a construction/permit plan.
+`DrawingView.cutHeight` clips only the drawing; `drawing.path()` and
+`drawing.label()` place symbols and labels in world coordinates in a named view.
 
 For exports without the viewer:
 
@@ -77,6 +144,61 @@ stored under `.codecad/`. Project source runs as trusted local Node.js code,
 with your account's filesystem access. Use projects you trust.
 
 ## Authoring
+
+### Material drawing styles
+
+Materials can define regular edge styling and a separate cutaway style:
+
+```ts
+const wall = new BlockMaterial({
+  name: "Plastered wall",
+  drawingStyle: {
+    regular: { stroke: "#555555", lineWidth: 0.18 },
+    cutaway: {
+      stroke: "#202020",
+      lineWidth: 0.5,
+      hatch: { angle: 45, spacing: 1.8, stroke: "#777777", lineWidth: 0.13 },
+    },
+  },
+});
+```
+
+`cutaway` applies to actual faces exposed by a drawing view's `cutHeight`, not
+the entire clipped part. Openings remain unhatched. Use `cross: true` inside
+`hatch` for cross-hatching, or `hatch: false` to show only the cut outline.
+Widths and spacing are in **paper millimetres**, angle is in degrees on the page,
+and colours are six-digit hex values. Styles affect drawings, not 3D materials
+or CNC toolpaths. Regular styles also apply to developed sheet-metal drawing
+outlines. Cut edges inherit unspecified regular line settings; hatch defaults
+are 45°, 2 mm spacing and 0.13 mm line width.
+
+SVG previews and PDF use the same vector geometry. DXF stores clipped hatch
+segments on `SECTION_HATCH_*` layers (not native editable HATCH entities), with
+true colour and the nearest supported DXF line weight. The apartment demo uses
+this for its walls. Joined generic solids do not inherit source material styles.
+
+### Joining solids
+
+Use `this.joinSolids([floor, leftWall, rightWall], { id: "shell" })` in a
+project or assembly to fuse placed parts (including whole nested assemblies).
+Their current world positions are captured in the owning assembly's coordinate
+system. The returned `Part` can be drilled, cut, moved, copied or exported to STEP.
+Source components are removed from the registry and exports by default; pass
+`keepSources: true` to retain them deliberately. Later source edits do not change
+the joined snapshot. References to consumed components retain their original
+world placement, but are no longer independently animated/exported.
+
+For additive edits in a part's **local coordinates**, use
+`part.union(new Shapes.Box({ width: 10, depth: 10, height: 10 }), { x: 20 })`.
+To union another placed part without consuming it, use
+`part.union(other, { relativeTo: other })`.
+
+See [the joined room shell](examples/joined-solids.ts). Overlapping or face-touching
+inputs can form one solid; disconnected inputs remain separate bodies within one
+part. Joining does not bridge gaps or guarantee printability. Material, cut-list,
+bend and machining metadata are not merged; folded sheet metal is explicitly
+rejected to avoid joining its flat blank by mistake. This is a geometric union,
+not a woodworking joint or a slicer/toolpath generator.
 
 ```ts
 @cad.project({ id: "cabinet", units: "mm" })
@@ -207,19 +329,44 @@ Flat blanks remain the manufacturing source. Bends consume a neutral-axis bend
 allowance of `angleRadians × (insideRadius + kFactor × thickness)`. Preview and
 STEP use exact cylindrical bend surfaces and transformed flanges.
 
-The implemented bend family is straight, full-width bends with an uncut rectangular
-bend band. Use `movingSide: "left" | "right"` relative to the directed bend line.
-Cuts outside the bend band are carried with the flange. Partial-width bends,
-cuts through bend bands, general unfolding, and automatic corner relief are
-not implemented; unsupported band geometry produces a build error.
+Use `movingSide: "left" | "right"` relative to the directed bend line. Its start/end
+describe the fixed-side **tangent line**, not the bend center. Cuts outside the
+band move with the flange. Partial-width bends use `autoRelief: true` and rectangular
+or round relief slots, extending from the root to the free edge. Specify
+`reliefWidth` and `reliefDepth` (both at least material thickness).
+
+`part.unfold()` returns an independent, unregistered snapshot with `shape` (all cuts
+and reliefs), `outline` (stock envelope), and `bends` (center lines, tangent lines,
+allowances and deductions). `flatPattern` is only the original stock outline;
+use `unfold().shape` for finished geometry. Per-part sheet-metal DXFs section the
+finished developed solid so edge-open reliefs are incorporated in the outer loop.
+
+`material.makeBentProfile({ width, lengths, bends, bendRules })` accepts straight
+**tangent-to-tangent** lengths and inserts neutral-axis allowances automatically.
+This is history-based development, not recognition/unfolding of arbitrary STEP solids.
+Pierced/intersecting bend bands, tear reliefs, multi-flange corner reliefs and tooling
+collision planning are not supported. Unsupported geometry is rejected. Final-position
+flange self-intersections are checked, but this is not press-brake feasibility analysis.
+
+See [sheet-metal authoring and drawing examples](docs/sheet-metal-and-drawings.md),
+the [keyboard case](examples/keyboard-case.ts), and
+[relief comparison / Z profile](examples/sheet-metal-reliefs.ts).
 
 ### Drawings, motion and exports
 
 - Technical drawings use kernel edge projection and optional hidden lines.
-  Views support programmable dimensions/notes and exploded arrangements.
+  Tangent seams are hidden by default (`tangentEdges: true` opts in).
+  Views support true-length dimensions (also isometric), angles, leaders, notes,
+  developed sheet views (`kind: "flat"`), and exploded arrangements.
+  `drawing.page(otherDrawing)` appends PDF pages and Studio previews; drawing DXF
+  lays pages side by side. Title blocks include project, drawing number, revision,
+  material, author, scale, units and page numbers, plus a calibrated graphic scale.
   Plans, sheet layouts and cut lists default to PDF downloads in Studio;
   each download has its own DXF dropdown option. Cut lists also offer CSV.
-  SVG is retained internally for previews. Cut-list PDFs paginate; sheet PDFs
+  Drawings and sheet layouts use PDF.js to display the actual PDFs in one
+  continuous workspace per section, with shared zoom, page navigation, drag-pan,
+  pinch zoom, and Ctrl/Command-wheel zoom. Plain scrolling moves through pages.
+  SVG remains an intermediate for PDF generation. Cut-list PDFs paginate; sheet PDFs
   include a scaled A4 overview and a numbered part legend.
 - Plan DXFs preserve drawing-page coordinates and view scales, including
   dimension labels and notes. Cut-list DXFs contain vector tables, not toolpaths.
@@ -236,6 +383,9 @@ not implemented; unsupported band geometry produces a build error.
 
 ## Examples
 
+- [MKSP toolbox](examples/mksp-toolbox.ts): port of the existing Python toolbox,
+  with finger-jointed plywood, telescoping rails and animated drawers. See the
+  [port notes](docs/mksp-toolbox-port.md) for dimensions and hardware assumptions.
 - [Kitchen cabinet](examples/kitchen-cabinet.ts): complete four-drawer example,
   handle screw patterns/countersinks, back grooves, rails, nesting and all outputs.
 - [Simple cabinet API example](examples/simple-kitchen-cabinet.ts): compact
@@ -244,6 +394,10 @@ not implemented; unsupported band geometry produces a build error.
 - [Reusable hinge](examples/my-custom-hinge.ts): named interfaces and revolute motion.
 - [Joinery project](examples/joinery-techniques.ts): paired Domino, finger and miter samples.
 - [Sheet-metal project](examples/sheet-metal-project.ts): cut flat blank and two bends.
+- [Keyboard case](examples/keyboard-case.ts): twelve slots, four R5 bends,
+  a 20° deck, bottom returns, internal stud envelopes, and routed MDF cheeks
+  consuming the shell's mating outline. See the [capability audit](docs/capability-audit.md)
+  for assumptions, current coverage and missing features.
 
 The example hardware uses provisional simplified geometry; replace it with
 measured or supplier STEP geometry and mounting dimensions for your hardware.
@@ -262,8 +416,41 @@ measured or supplier STEP geometry and mounting dimensions for your hardware.
 
 ## Dependencies
 
+`npm run check` uses the native TypeScript **7.0.2** compiler. The dependency
+`@typescript/native` aliases `typescript@7.0.2`, while `typescript` aliases
+Microsoft's `@typescript/typescript6@6.0.2` compatibility package. This follows
+[Microsoft's side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/):
+the auto-import language service and source-link analysis still need the JavaScript
+compiler API, which TypeScript 7.0 does not expose. `npm run check:compat` provides
+the corresponding compatibility check; keep both packages when upgrading.
+
+On the development Mac, five warm-process-launch measurements of `--noEmit`
+on 2026-09-15 gave medians of 129 ms (native) and 784 ms (compatibility), about 6x
+faster. These are type-check timings, not CAD rebuild timings. CAD rebuilds now
+use TypeScript 7 to emit the project and SDK, then run the emitted JavaScript
+through Node and evaluate OpenCascade geometry and reports. The launcher/server
+still bootstraps with `tsx`. Monaco's browser-bundled language service is unchanged;
+upgrading the CLI does not replace it with a native language server.
+
+`npm run cad:build -- examples/mksp-toolbox.ts output/mksp-toolbox` uses the same
+native rebuild path as the UI. Emission uses `noCheck` for iteration speed;
+`npm run check` remains the strict project type-check. Each rebuild gets an isolated
+`.native` output directory and never writes JavaScript beside your project.
+Original module URLs and inline source maps preserve assets and source highlighting.
+Imported TypeScript helpers must be statically discoverable (literal dynamic imports
+also work); computed TypeScript imports are rejected if not emitted. Use
+`CODECAD_COMPILER=esbuild npm run dev -- <project.ts>` for the previous runtime path.
+The compiler does not accelerate OpenCascade booleans, drawing projection or exports.
+
 The geometry adapter uses [brepjs](https://github.com/andymai/brepjs) and
 [occt-wasm](https://www.npmjs.com/package/occt-wasm), with Three.js for rendering.
 Exact versions are pinned in `package-lock.json`. Dependency licenses remain
-those of their respective packages; review the OpenCascade/LGPL obligations
+those of their respective packages; review the OpenCascade/LGPL obligations.
+
+## License
+
+CodeCAD's own source code is licensed under [Apache-2.0](LICENSE). The bundled
+OpenCascade WebAssembly kernel (`occt-wasm`) is separately LGPL-2.1-only. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the included software,
+attributions, and the replacement instructions for that kernel.
 before distributing a packaged application.

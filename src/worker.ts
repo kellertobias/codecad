@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, realpath } from "node:fs/promises";
 import { resolve, join, basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { zipSync } from "fflate";
@@ -23,7 +23,6 @@ import {
   type ReportDownload,
 } from "./reports.js";
 import {
-  pdf,
   pdfPages,
   glb,
   motionFrames,
@@ -32,6 +31,7 @@ import {
 } from "./exporters.js";
 
 export async function buildProject(entry: string, directory: string) {
+  entry = await realpath(entry);
   const module = await import(pathToFileURL(resolve(entry)).href);
   const constructors = Object.values(module).filter(
     (value): value is new () => Project =>
@@ -80,18 +80,25 @@ export async function buildProject(entry: string, directory: string) {
         const value = (project as any)[output.name](),
           requested = output.options.fileName;
         if (value instanceof TechnicalDrawing) {
-          const { svg, dxf } = await renderDrawingFormats(engine, value);
+          const { svg, dxf, pages } = await renderDrawingFormats(engine, value);
           const stem = (requested ?? output.name).replace(
             /\.(svg|pdf|dxf)$/i,
             "",
           );
           await save(stem + ".svg", "drawing", svg);
-          await save(stem + ".pdf", "pdf", await pdf(svg));
+          const previews = [stem + ".svg"];
+          for (let i = 1; i < pages.length; i++) {
+            const name = `${stem}-page-${i + 1}.svg`;
+            await save(name, "drawing", pages[i]!);
+            previews.push(name);
+          }
+          await save(stem + ".pdf", "pdf", await pdfPages(pages));
           await save(stem + ".dxf", "drawing-dxf", dxf);
           reports.push({
             title: stem,
             kind: "drawing",
             preview: stem + ".svg",
+            previews,
             formats: { pdf: stem + ".pdf", dxf: stem + ".dxf" },
           });
         } else if (value instanceof CutList) {
