@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeCAD Studio</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="mark">C</span> CodeCAD <small>STUDIO</small>
+      </div>
+      <span id="file">Loading project…</span>
+      <div id="status">Starting</div>
+      <button id="toggle-source">Source</button>
+      <button id="toggle-parts">Parts</button>
+      <button id="rebuild">↻ Rebuild</button>
+    </header>
+    <main>
+      <section class="editor-pane">
+        <div class="pane-head">
+          <strong>Project source</strong><span>TypeScript · mm</span
+          ><button id="save">Save & build</button>
+        </div>
+        <div id="source-selection" aria-live="polite">
+          Select a component to highlight its source references.
+        </div>
+        <div id="editor"></div>
+        <div class="editor-foot">
+          <span id="source-status">Changes save on Ctrl / ⌘ + S</span
+          ><button id="reload-source">Reload from disk</button>
+        </div>
+      </section>
+      <section class="workspace">
+        <nav id="tabs">
+          <button data-tab="model" class="active">3D model</button
+          ><button data-tab="drawing">Drawings</button
+          ><button data-tab="nesting">Sheet layouts</button
+          ><button data-tab="cuts">Cut list</button
+          ><button data-tab="exports">Exports</button>
+        </nav>
+        <div id="model" class="tab active">
+          <div class="viewer-tools">
+            <button id="fit">Fit</button
+            ><button data-camera="iso">Isometric</button
+            ><button data-camera="front">Front</button
+            ><button data-camera="top">Top</button
+            ><label><input id="edges" type="checkbox" checked /> Edges</label
+            ><label
+              >Explode
+              <input id="explode" type="range" min="0" max="300" value="0"
+            /></label>
+          </div>
+          <div id="canvas"></div>
+          <div id="selection">Select a part to inspect it</div>
+          <div class="motion-bar">
+            <button id="play">▶ Motion</button
+            ><input
+              id="motion"
+              aria-label="Motion position"
+              type="range"
+              min="0"
+              max="1000"
+              value="0"
+            /><span id="motion-label">Closed</span>
+          </div>
+        </div>
+        <div id="drawing" class="tab gallery"></div>
+        <div id="nesting" class="tab gallery"></div>
+        <div id="cuts" class="tab"></div>
+        <div id="exports" class="tab"></div>
+        <section class="diagnostics">
+          <div class="pane-head">
+            <strong>Build & checks</strong
+            ><span id="summary">Waiting for first build</span>
+          </div>
+          <div id="messages"></div>
+        </section>
+      </section>
+      <aside>
+        <div class="pane-head">
+          <strong>Parts registry</strong><span id="count">0</span>
+          <button id="show-all" hidden>Show all</button>
+        </div>
+        <input
+          id="filter"
+          placeholder="Filter parts…"
+          aria-label="Filter parts"
+        />
+        <div id="parts" role="tree" aria-label="Component hierarchy"></div>
+        <div class="aside-foot">
+          Local coordinates for machining<br />World coordinates for assembly
+        </div>
+      </aside>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

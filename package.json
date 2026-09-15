@@ -1,0 +1,40 @@
+{
+  "name": "@codecad/studio",
+  "version": "0.1.0",
+  "private": true,
+  "overrides": {
+    "dompurify": "3.4.15"
+  },
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "format": "prettier --write src examples web tests package.json tsconfig.json README.md",
+    "format:check": "prettier --check src examples web tests package.json tsconfig.json README.md",
+    "dev": "node --import tsx src/server.ts",
+    "build": "node --import tsx src/worker.ts examples/kitchen-cabinet.ts output/kitchen-cabinet",
+    "examples": "npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "@types/pdfkit": "0.17.6",
+    "@types/svg-to-pdfkit": "0.1.4",
+    "@types/three": "0.186.0",
+    "prettier": "3.9.6",
+    "tsx": "4.23.13",
+    "typescript": "5.9.2"
+  },
+  "dependencies": {
+    "brepjs": "19.0.4",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.3",
+    "monaco-editor": "^0.56.0",
+    "occt-wasm": "5.0.0",
+    "pdfkit": "0.20.2",
+    "svg-to-pdfkit": "0.1.8",
+    "three": "0.186.0"
+  }
+}

@@ -1,0 +1,344 @@
+import {
+  Assembly,
+  Project,
+  SheetMaterial,
+  SheetPart,
+  Shapes,
+  HardwarePart,
+  PartInterface,
+  Drill,
+  CounterSink,
+  Arrangement,
+  LinearJoint,
+  MotionStudy,
+  TechnicalDrawing,
+  CutList,
+  ManufacturingDxf,
+  StepModel,
+  Groove,
+  DominoJoint,
+  cad,
+} from "../src/index.js";
+import { Vector3 } from "three";
+import { DrawerSlide } from "./drawer-slide.js";
+import { pairedDominoes } from "./paired-dominoes.js";
+
+// Edit dimensions and save: the application rebuilds this project in a fresh process.
+const WIDTH = 600;
+const DEPTH = 500;
+const HEIGHT = 900;
+const DRAWERS = 4;
+const plywood = new SheetMaterial({
+  id: "birch-18",
+  name: "Birch multiplex 18 mm",
+  thickness: 18,
+  width: 1250,
+  height: 2500,
+  color: "#ff00aa",
+  grain: "height",
+  partSpacing: 8,
+  sheetMargin: 10,
+});
+const drawerStock = new SheetMaterial({
+  id: "birch-12",
+  name: "Birch multiplex 12 mm",
+  thickness: 12,
+  width: 1250,
+  height: 2500,
+  color: "#dfca9e",
+  partSpacing: 8,
+  sheetMargin: 10,
+});
+const backStock = new SheetMaterial({
+  id: "birch-6",
+  name: "Birch plywood 6 mm",
+  thickness: 6,
+  width: 1250,
+  height: 2500,
+  color: "#b79d75",
+  partSpacing: 8,
+  sheetMargin: 10,
+});
+
+@cad.part({ id: "cabinet-drawer", revision: "1" })
+export class CabinetDrawer extends Assembly {
+  constructor(id: string) {
+    super({ id, label: "Drawer" });
+    const width = WIDTH - 60,
+      depth = DEPTH - 60,
+      height = 150;
+    drawerStock.makePart({ id: "floor", width, height: depth });
+    const left = drawerStock
+      .makePart({ id: "left", width: depth, height })
+      .place({ z: 12, rotate: { y: 90, z: 90 } });
+    const right = left
+      .copy({ id: "right" })
+      .place({ x: width - 12, z: 12, rotate: { y: 90, z: 90 } });
+    const back = drawerStock
+      .makePart({ id: "back", width: width - 24, height })
+      .place({ x: 12, y: depth, z: 12, rotate: { x: 90 } });
+    const drawerDominoes = new DominoJoint({
+      width: 16,
+      thickness: 4,
+      depthPerSide: 6,
+    });
+    pairedDominoes(
+      left,
+      back,
+      new Vector3(12, depth - 6, 12),
+      new Vector3(0, 0, 1),
+      new Vector3(1, 0, 0),
+      height,
+      drawerDominoes,
+      2,
+    );
+    pairedDominoes(
+      right,
+      back,
+      new Vector3(width - 12, depth - 6, 12),
+      new Vector3(0, 0, 1),
+      new Vector3(-1, 0, 0),
+      height,
+      drawerDominoes,
+      2,
+    );
+    const front = plywood
+      .makePart({ id: "front", width: WIDTH - 4, height: 190 })
+      .place({ x: -28, y: -22, z: -6, rotate: { x: 90 } });
+
+    const mount = new PartInterface({
+      features: {
+        left: {
+          kind: "hole",
+          x: (WIDTH - 4) / 2 - 48,
+          y: 95,
+          diameter: 4,
+          source: "provisional",
+        },
+        right: {
+          kind: "hole",
+          x: (WIDTH - 4) / 2 + 48,
+          y: 95,
+          diameter: 4,
+          source: "provisional",
+        },
+      },
+    } as const);
+    const handle = new HardwarePart({
+      id: "handle",
+      label: "Handle · 96 mm mounting centers",
+      shape: new Shapes.Box({ width: 128, depth: 22, height: 12 }),
+      measurementStatus: "provisional",
+      interfaces: { default: mount },
+    }).place({ x: (width - 128) / 2, y: -62, z: 83 });
+    const drill = new Drill({ size: 4 });
+    drill.pattern(front, handle.interface(), { z: [18, -18] });
+    const countersink = new CounterSink({ diameter: 8, angle: 90 });
+    for (const hole of Object.values(mount.features)) {
+      countersink.cut(front, { x: hole.x, y: hole.y, z: [0, 4] });
+    }
+  }
+}
+
+@cad.project({
+  id: "kitchen-cabinet",
+  title: "Four-drawer kitchen cabinet",
+  units: "mm",
+})
+export class KitchenCabinet extends Project {
+  private readonly drawerMotion: {
+    joint: LinearJoint;
+    travel: number;
+    delaySeconds: number;
+  }[] = [];
+
+  constructor() {
+    super({ id: "kitchen-cabinet", label: "Four-drawer kitchen cabinet" });
+    const left = plywood
+      .makePart({ id: "left", width: DEPTH, height: HEIGHT })
+      .place({ rotate: { y: 90, z: 90 } });
+    const right = left
+      .copy({ id: "right" })
+      .place({ x: WIDTH - 18, rotate: { y: 90, z: 90 } });
+    const bottom = plywood
+      .makePart({ id: "bottom", width: WIDTH - 36, height: DEPTH })
+      .place({ x: 18 });
+    const top = plywood
+      .makePart({ id: "top", width: WIDTH - 36, height: DEPTH })
+      .place({ x: 18, z: HEIGHT - 18 });
+    const corpusDominoes = new DominoJoint({
+      width: 20,
+      thickness: 6,
+      depthPerSide: 10,
+    });
+    for (const [panel, z] of [
+      [bottom, 9],
+      [top, HEIGHT - 9],
+    ] as const) {
+      pairedDominoes(
+        left,
+        panel,
+        new Vector3(18, 0, z),
+        new Vector3(0, 1, 0),
+        new Vector3(1, 0, 0),
+        DEPTH,
+        corpusDominoes,
+        3,
+      );
+      pairedDominoes(
+        right,
+        panel,
+        new Vector3(WIDTH - 18, 0, z),
+        new Vector3(0, 1, 0),
+        new Vector3(-1, 0, 0),
+        DEPTH,
+        corpusDominoes,
+        3,
+      );
+    }
+    backStock
+      .makePart({ id: "back", width: WIDTH - 24, height: HEIGHT - 24 })
+      .place({ x: 12, y: DEPTH - 10, z: 12, rotate: { x: 90 } });
+
+    // Back grooves, in each side's own XY coordinates, on its inside face.
+    new Groove({ toolDiameter: 6 }).cut({
+      target: left,
+      profile: new Shapes.Rectangle({ width: 6.4, height: HEIGHT - 24 }),
+      placement: { x: DEPTH - 16.2, y: 12, z: 12 },
+      depth: 6,
+    });
+    new Groove({ toolDiameter: 6 }).cut({
+      target: right,
+      profile: new Shapes.Rectangle({ width: 6.4, height: HEIGHT - 24 }),
+      placement: { x: DEPTH - 16.2, y: 12 },
+      depth: 6,
+    });
+
+    for (let i = 0; i < DRAWERS; i++) {
+      const z = 36 + i * 210;
+      const drawer = new CabinetDrawer("drawer-" + (i + 1)).place({
+        x: 30,
+        y: 20,
+        z,
+      });
+      this.drawerMotion.push({
+        joint: new LinearJoint({
+          id: "drawer-" + (i + 1) + "-slide",
+          fixed: this,
+          moving: drawer,
+          axis: "y",
+          limits: { min: -380, max: 0 },
+        }),
+        travel: 380,
+        delaySeconds: i * 0.75,
+      });
+      for (const [side, x] of [
+        [left, 18],
+        [right, WIDTH - 18],
+      ] as const) {
+        const slide = new DrawerSlide("rail-" + side.id + "-" + (i + 1)).place({
+          x,
+          y: 20,
+          z,
+        });
+        if (side === right) slide.mirror({ axis: "x" });
+        for (const [moving, travel] of [
+          [slide.middle, 190],
+          [slide.inner, 380],
+        ] as const)
+          this.drawerMotion.push({
+            joint: new LinearJoint({
+              id: moving.path,
+              fixed: this,
+              moving,
+              axis: "y",
+              limits: { min: -travel, max: 0 },
+            }),
+            travel,
+            delaySeconds: i * 0.75,
+          });
+        Arrangement.linear({
+          start: { x: 60, y: z + 15 },
+          end: { x: 420, y: z + 15 },
+          steps: 3,
+        }).execute((pos) =>
+          new Drill({ size: 3 }).drill(side, {
+            ...pos,
+            z: side === left ? [18, -10] : [0, 10],
+          }),
+        );
+      }
+    }
+  }
+
+  @cad.output.technicalDrawing({ fileName: "cabinet-plan.pdf" })
+  technicalDrawing() {
+    return new TechnicalDrawing({
+      title: "Kitchen cabinet · 600 × 500 × 900 mm",
+      paper: "A3",
+    })
+      .view({
+        id: "front",
+        of: this,
+        kind: "front",
+        at: { x: 30, y: 30 },
+        scale: 0.18,
+        hiddenLines: false,
+      })
+      .view({
+        id: "iso",
+        of: this,
+        kind: "isometric",
+        at: { x: 185, y: 30 },
+        scale: 0.14,
+      })
+      .dimension({
+        view: "front",
+        from: { x: 0, y: 0, z: 0 },
+        to: { x: WIDTH, y: 0, z: 0 },
+        offset: 60,
+      })
+      .note({
+        at: { x: 20, y: 275 },
+        text: "Hardware geometry is provisional. All dimensions are in millimetres.",
+      });
+  }
+
+  @cad.output.cutList({ fileName: "cut-list.csv" })
+  cutList() {
+    return new CutList({ includeLayouts: true });
+  }
+
+  @cad.output.manufacturingDxf({ fileName: "cnc-parts.zip" })
+  manufacturingDxf() {
+    return new ManufacturingDxf({ parts: "all", layout: "one-file-per-part" });
+  }
+
+  @cad.output.step({ fileName: "cabinet.step" })
+  stepModel() {
+    return new StepModel({ of: this });
+  }
+
+  @cad.output.motion({ fileName: "drawer-motion.glb" })
+  motion() {
+    const study = new MotionStudy({ of: this });
+    // Each drawer starts 25% of the 3-second opening time after its predecessor.
+    for (const { joint, travel, delaySeconds } of this.drawerMotion)
+      study.animate({
+        joint,
+        from: 0,
+        to: -travel,
+        durationSeconds: 3,
+        delaySeconds,
+      });
+    study.checkClearance({
+      between: [
+        this.registry.require("drawer-1", CabinetDrawer),
+        this.parts.require("kitchen-cabinet/left", SheetPart),
+      ],
+      minimum: 1,
+      samples: 12,
+    });
+    return study;
+  }
+}
