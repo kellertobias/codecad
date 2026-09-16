@@ -30,7 +30,7 @@ export async function compileCad(
           inlineSources: true,
           rewriteRelativeImportExtensions: true,
           allowImportingTsExtensions: true,
-          paths: { "@codecad/studio": [join(root, "src/index.ts")] },
+          paths: { "@tobisk/codecad": [join(root, "src/index.ts")] },
           skipLibCheck: true,
         },
         files: [

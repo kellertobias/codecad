@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const sdk = resolve(fileURLToPath(new URL(".", import.meta.url)));
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === "@codecad/studio")
+    if (specifier === "@tobisk/codecad")
       return nextResolve(pathToFileURL(join(sdk, "index.ts")).href, context);
     const result = nextResolve(specifier, context);
     if (!result.url.startsWith("file:")) return result;
@@ -21,7 +21,7 @@ registerHooks({
         readFileSync(join(parent, "../package.json"), "utf8"),
       );
       const target = join(sdk, relative(parent, path).replace(/\.js$/, ".ts"));
-      if (pkg.name === "@codecad/studio" && existsSync(target))
+      if (pkg.name === "@tobisk/codecad" && existsSync(target))
         return nextResolve(pathToFileURL(target).href, context);
     } catch {
       /* Not a CodeCAD SDK; retain the project's own module. */

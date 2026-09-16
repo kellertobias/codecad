@@ -24,7 +24,7 @@ test("desktop projects share SDK identities across external workspace imports", 
         "-e",
         `import { Project as local } from './src/model.ts';
        import { Project as external } from ${JSON.stringify(imported)};
-       import { Project as publicSDK } from '@codecad/studio';
+       import { Project as publicSDK } from '@tobisk/codecad';
        if (local !== external || local !== publicSDK) throw new Error('Split SDK identity');
        console.log('shared');`,
       ],

@@ -15,7 +15,7 @@ const outputFor = (path) =>
   );
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === "@codecad/studio")
+    if (specifier === "@tobisk/codecad")
       specifier = pathToFileURL(join(sdk, "index.ts")).href;
     let result;
     try {
@@ -53,7 +53,7 @@ registerHooks({
             sdk,
             path.split("/").at(-1).replace(/\.js$/, ".ts"),
           );
-          if (pkg.name === "@codecad/studio" && existsSync(target))
+          if (pkg.name === "@tobisk/codecad" && existsSync(target))
             return nextResolve(pathToFileURL(target).href, context);
         } catch {
           /* Unrelated module: retain its original identity. */

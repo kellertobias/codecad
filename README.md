@@ -46,6 +46,26 @@ the local Xcode, Rust and Node toolchains, and opens it. A previously built copy
 is opened directly; use `npx @tobisk/codecad app --rebuild` to build it again.
 No prebuilt macOS ZIP is downloaded or signed in GitHub.
 
+## Releases
+
+GitHub is the release authority. Pull requests and pushes validate with
+`npm run check`, `npm test`, and `npm run package:check`. A trusted push to
+`main` then runs semantic-release: it creates a release commit, updates the
+package and lockfile version plus `CHANGELOG.md`, pushes a `vX.Y.Z` source tag,
+and publishes `@tobisk/codecad` through npm trusted publishing (OIDC). It does
+not create a GitHub Release or upload a desktop binary.
+
+Conventional Commit messages control versioning: `fix:` and `perf:` publish a
+patch, `feat:` publishes a minor, and `type!:` or a `BREAKING CHANGE:` footer
+publishes a major. `docs:`, `test:`, `style:`, `refactor:`, `build:`, `ci:` and
+`chore:` do not release by themselves. Run `npm run release:dry-run` locally to
+preview a release without publishing.
+
+Before enabling the workflow, make the initial `v0.1.0` tag and publish it
+manually. Then configure npm's trusted publisher for `@tobisk/codecad` to use
+this GitHub repository and `.github/workflows/release.yml`; no `NPM_TOKEN` is
+stored in GitHub.
+
 ## Run
 
 ### Desktop app (Tauri)

@@ -22,7 +22,7 @@ test("native CAD rebuild preserves decorators, external helpers, assets, SDK ide
     await mkdir(join(temp, "sdk/src"), { recursive: true });
     await writeFile(
       join(temp, "sdk/package.json"),
-      JSON.stringify({ name: "@codecad/studio", type: "module" }),
+      JSON.stringify({ name: "@tobisk/codecad", type: "module" }),
     );
     await writeFile(
       join(temp, "sdk/src/index.ts"),
