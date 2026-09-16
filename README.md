@@ -32,6 +32,20 @@ export class Shelf extends Project {
 package export map a consumer receives. `npm pack --dry-run` shows the exact
 publish payload; it contains only `dist/`, the README, and license notices.
 
+### Build the desktop app through npm
+
+The package also exposes an explicit macOS launcher/build command:
+
+```sh
+npx @tobisk/codecad app
+```
+
+It downloads the source archive for the matching `v<package-version>` Git tag
+from GitHub into `~/Library/Caches/CodeCAD/source/`, builds the Tauri app with
+the local Xcode, Rust and Node toolchains, and opens it. A previously built copy
+is opened directly; use `npx @tobisk/codecad app --rebuild` to build it again.
+No prebuilt macOS ZIP is downloaded or signed in GitHub.
+
 ## Run
 
 ### Desktop app (Tauri)

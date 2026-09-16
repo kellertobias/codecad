@@ -19,7 +19,8 @@
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "files": ["dist", "bin", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "bin": { "codecad": "./bin/codecad.mjs" },
   "publishConfig": { "access": "public" },
   "scripts": {
     "check": "tsc --noEmit",
