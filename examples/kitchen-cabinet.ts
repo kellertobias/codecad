@@ -62,6 +62,9 @@ const backStock = new SheetMaterial({
 
 @cad.part({ id: "cabinet-drawer", revision: "1" })
 export class CabinetDrawer extends Assembly {
+  attachSlide(slide: DrawerSlide): void {
+    this.add(slide);
+  }
   constructor(id: string) {
     super({ id, label: "Drawer" });
     const width = WIDTH - 60,
@@ -148,7 +151,7 @@ export class CabinetDrawer extends Assembly {
 export class KitchenCabinet extends Project {
   private readonly drawerMotion: {
     joint: LinearJoint;
-    travel: number;
+    to: number;
     delaySeconds: number;
   }[] = [];
 
@@ -229,7 +232,7 @@ export class KitchenCabinet extends Project {
           axis: "y",
           limits: { min: -380, max: 0 },
         }),
-        travel: 380,
+        to: -380,
         delaySeconds: i * 0.75,
       });
       for (const [side, x] of [
@@ -240,11 +243,16 @@ export class KitchenCabinet extends Project {
           x,
           y: 20,
           z,
+          relativeTo: "world",
         });
         if (side === right) slide.mirror({ axis: "x" });
-        for (const [moving, travel] of [
+        drawer.attachSlide(slide);
+        // The rail assemblies live under the moving drawer in the registry.
+        // Counter-motion keeps the fixed stage on the cabinet and advances
+        // the middle stage only half as far as the drawer/inner stage.
+        for (const [moving, to] of [
+          [slide.fixed, 380],
           [slide.middle, 190],
-          [slide.inner, 380],
         ] as const)
           this.drawerMotion.push({
             joint: new LinearJoint({
@@ -252,9 +260,9 @@ export class KitchenCabinet extends Project {
               fixed: this,
               moving,
               axis: "y",
-              limits: { min: -travel, max: 0 },
+              limits: { min: 0, max: to },
             }),
-            travel,
+            to,
             delaySeconds: i * 0.75,
           });
         Arrangement.linear({
@@ -319,26 +327,42 @@ export class KitchenCabinet extends Project {
     return new StepModel({ of: this });
   }
 
-  @cad.output.motion({ fileName: "drawer-motion.glb" })
+  @cad.output.motion({
+    fileName: "drawer-motion.glb",
+    title: "Drawers · staggered",
+  })
   motion() {
+    return this.drawerStudy(true);
+  }
+
+  @cad.output.motion({
+    fileName: "drawer-motion-together.glb",
+    title: "Drawers · together",
+  })
+  motionTogether() {
+    return this.drawerStudy(false);
+  }
+
+  private drawerStudy(staggered: boolean) {
     const study = new MotionStudy({ of: this });
     // Each drawer starts 25% of the 3-second opening time after its predecessor.
-    for (const { joint, travel, delaySeconds } of this.drawerMotion)
+    for (const { joint, to, delaySeconds } of this.drawerMotion)
       study.animate({
         joint,
         from: 0,
-        to: -travel,
+        to,
         durationSeconds: 3,
-        delaySeconds,
+        delaySeconds: staggered ? delaySeconds : 0,
       });
-    study.checkClearance({
-      between: [
-        this.registry.require("drawer-1", CabinetDrawer),
-        this.parts.require("kitchen-cabinet/left", SheetPart),
-      ],
-      minimum: 1,
-      samples: 12,
-    });
+    if (staggered)
+      study.checkClearance({
+        between: [
+          this.registry.require("kitchen-cabinet/drawer-1/floor", SheetPart),
+          this.parts.require("kitchen-cabinet/left", SheetPart),
+        ],
+        minimum: 1,
+        samples: 12,
+      });
     return study;
   }
 }

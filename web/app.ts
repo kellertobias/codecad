@@ -21,6 +21,14 @@ type MeshData = {
   color: string;
   volume: number;
 };
+type MotionFrame = { t: number; matrices: Record<string, number[]> };
+type StudioAnimation = {
+  id: string;
+  title: string;
+  duration: number;
+  frames: MotionFrame[];
+  meshFrames?: MeshData[];
+};
 type Model = {
   components: {
     path: string;
@@ -36,7 +44,9 @@ type Model = {
   diagnostics: { severity: string; message: string }[];
   files: { name: string; kind: string; size: number }[];
   reports: ReportDownload[];
-  frames: { t: number; matrices: Record<string, number[]> }[];
+  frames: MotionFrame[];
+  animations: StudioAnimation[];
+  unfolds: { path: string; label: string; frames: MeshData[] }[];
   cutList: {
     path: string;
     label: string;
@@ -72,6 +82,55 @@ let version = "",
   playing = false,
   time = 0,
   shownGeneration = -1;
+const selectedAnimation = (): StudioAnimation | undefined => {
+  const id = $<HTMLSelectElement>("animation-select").value;
+  const unfold = model?.unfolds?.find((item) => id === `unfold:${item.path}`);
+  if (unfold)
+    return {
+      id,
+      title: `Unfold · ${unfold.label}`,
+      duration: 2,
+      meshFrames: unfold.frames,
+      frames: unfold.frames.map((_, index) => ({
+        t: index / (unfold.frames.length - 1),
+        matrices: {} as Record<string, number[]>,
+      })),
+    };
+  return model?.animations.find((animation) => animation.id === id);
+};
+const renderedGeometry = new Map<string, string>();
+function renderAnimationChoices() {
+  const selector = $<HTMLSelectElement>("animation-select"),
+    previous = selector.value;
+  selector.replaceChildren();
+  for (const animation of model?.animations ?? []) {
+    const option = document.createElement("option");
+    option.value = animation.id;
+    option.textContent = animation.title;
+    selector.append(option);
+  }
+  const unfold = model?.unfolds?.find((item) => item.path === selected);
+  if (unfold) {
+    const option = document.createElement("option");
+    option.value = `unfold:${unfold.path}`;
+    option.textContent = `Unfold · ${unfold.label}`;
+    selector.append(option);
+  }
+  if ([...selector.options].some((option) => option.value === previous))
+    selector.value = previous;
+  else if (unfold) selector.value = `unfold:${unfold.path}`;
+  if (selector.value !== previous) {
+    playing = false;
+    time = 0;
+    $<HTMLInputElement>("motion").value = "0";
+    $("play").textContent = "▶ Motion";
+  }
+  selector.hidden = !selector.options.length;
+  const frames =
+    selectedAnimation()?.frames.length ?? model?.frames.length ?? 0;
+  $<HTMLButtonElement>("play").disabled = !frames;
+  $<HTMLInputElement>("motion").disabled = !frames;
+}
 const canvas = $("canvas"),
   scene = new THREE.Scene(),
   camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100000);
@@ -144,6 +203,7 @@ function clearScene() {
   }
   objects.clear();
   edgeObjects.clear();
+  renderedGeometry.clear();
 }
 function showModel(data: Model) {
   const first = !model;
@@ -175,6 +235,7 @@ function showModel(data: Model) {
     mesh.userData.path = d.componentPath;
     group.add(mesh);
     objects.set(d.componentPath, mesh);
+    renderedGeometry.set(d.componentPath, "base");
     const edges = new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute(
         "position",
@@ -208,6 +269,7 @@ function showModel(data: Model) {
   renderParts();
   renderOutputs();
   renderCuts();
+  renderAnimationChoices();
   if (first) fit();
   applyPose();
   if (isolation.path) {
@@ -219,11 +281,10 @@ function showModel(data: Model) {
   }
   if (selected) select(selected);
   resize();
-  $<HTMLButtonElement>("play").disabled = !data.frames.length;
-  $<HTMLInputElement>("motion").disabled = !data.frames.length;
 }
 function select(path: string) {
   selected = path;
+  renderAnimationChoices();
   for (const [id, mesh] of objects)
     (mesh.material as THREE.MeshStandardMaterial).emissive.setHex(
       path && within(id, path) ? 0x244c43 : 0,
@@ -247,6 +308,7 @@ function select(path: string) {
       ? `${path} · ${new Set(lines).size} source lines${source.some((s) => s.file !== sourceFile) ? " · also defined in other files" : ""}`
       : "Select a component to highlight its source references.";
   renderParts();
+  applyPose();
 }
 function showOnly(path: string) {
   document.querySelector<HTMLButtonElement>('[data-tab="model"]')?.click();
@@ -415,11 +477,37 @@ function applyPose() {
   const slider = $<HTMLInputElement>("motion"),
     t = Number(slider.value) / 1000,
     explode = Number($<HTMLInputElement>("explode").value);
-  const frames = model.frames,
+  const animation = selectedAnimation(),
+    frames = animation?.frames ?? model.frames,
     index = Math.min(frames.length - 1, Math.round(t * (frames.length - 1)));
   for (const [i, d] of model.meshes.entries()) {
     const mesh = objects.get(d.componentPath)!,
       edges = edgeObjects.get(d.componentPath)!;
+    const candidate = animation?.meshFrames?.[index];
+    const animatedMesh =
+      candidate?.componentPath === d.componentPath ? candidate : undefined;
+    const geometryData = animatedMesh ?? d;
+    const geometryKey = animatedMesh ? `${animation!.id}:${index}` : "base";
+    if (renderedGeometry.get(d.componentPath) !== geometryKey) {
+      const geometry = new THREE.BufferGeometry()
+        .setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(geometryData.positions, 3),
+        )
+        .setAttribute(
+          "normal",
+          new THREE.Float32BufferAttribute(geometryData.normals, 3),
+        )
+        .setIndex(geometryData.indices);
+      mesh.geometry.dispose();
+      mesh.geometry = geometry;
+      edges.geometry.dispose();
+      edges.geometry = new THREE.BufferGeometry().setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(geometryData.edges, 3),
+      );
+      renderedGeometry.set(d.componentPath, geometryKey);
+    }
     mesh.matrix.fromArray(frames[index]?.matrices[d.componentPath] ?? d.matrix);
     if (explode) {
       const direction = new THREE.Vector3()
@@ -437,8 +525,15 @@ function applyPose() {
     edges.visible = mesh.visible && $<HTMLInputElement>("edges").checked;
     void i;
   }
-  $("motion-label").textContent =
-    t === 0 ? "Closed" : Math.round(t * 100) + "%";
+  $("motion-label").textContent = animation?.meshFrames
+    ? t === 0
+      ? "Folded"
+      : t === 1
+        ? "Flat"
+        : `${Math.round(t * 100)}% unfolded`
+    : t === 0
+      ? "Closed"
+      : `${Math.round(t * 100)}%`;
 }
 function artifactUrl(name: string) {
   return "/artifacts/" + encodeURIComponent(name) + "?v=" + shownGeneration;
@@ -645,6 +740,13 @@ $("motion").oninput = () => {
   $("play").textContent = "▶ Motion";
   applyPose();
 };
+$("animation-select").onchange = () => {
+  playing = false;
+  time = 0;
+  $<HTMLInputElement>("motion").value = "0";
+  $("play").textContent = "▶ Motion";
+  applyPose();
+};
 $("play").onclick = () => {
   playing = !playing;
   $("play").textContent = playing ? "Ⅱ Pause" : "▶ Motion";
@@ -725,8 +827,9 @@ function animate(now: number) {
   requestAnimationFrame(animate);
   const dt = (now - last) / 1000;
   last = now;
-  if (playing && model?.frames.length) {
-    time = (time + dt / model.duration) % 2;
+  const animation = selectedAnimation();
+  if (playing && (animation?.frames.length ?? model?.frames.length)) {
+    time = (time + dt / (animation?.duration ?? model!.duration)) % 2;
     $<HTMLInputElement>("motion").value = String(
       Math.round((time <= 1 ? time : 2 - time) * 1000),
     );

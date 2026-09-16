@@ -304,6 +304,9 @@ nav button.active {
 .motion-bar input {
   flex: 1;
 }
+.motion-bar select {
+  max-width: 190px;
+}
 .motion-bar span {
   font-size: 11px;
   color: #9cb2be;

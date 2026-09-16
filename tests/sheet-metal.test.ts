@@ -67,6 +67,11 @@ for (const relief of ["round", "rectangular"] as const)
       assert.ok(engine.bounds(engine.shapes.get(project.panel)!).max.z > 30);
       const flat = await engine.recipe(development.shape.recipe);
       assert.ok(Math.abs(engine.bounds(flat).max.z - 1.5) < 1e-6);
+      const unfold = await engine.unfoldFrames(project.panel, 5);
+      assert.equal(unfold.length, 5);
+      assert.deepEqual(unfold[0]?.matrix, result.meshes[0]?.matrix);
+      assert.ok(unfold[0]!.positions.length > 0);
+      assert.ok(unfold.at(-1)!.positions.length > 0);
       const entities = await partEntities(engine, project.panel);
       const cuts = entities.filter(
         (e) => e.kind === "polyline" && !/BEND|TANGENT/.test(e.layer),

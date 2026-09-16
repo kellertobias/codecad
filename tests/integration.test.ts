@@ -23,6 +23,13 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
       (c) => c.parent === drawer?.path && c.id === "handle",
     ),
   );
+  for (let number = 1; number <= 4; number++)
+    for (const side of ["left", "right"])
+      assert.equal(
+        result.components.find((c) => c.id === `rail-${side}-${number}`)
+          ?.parent,
+        `kitchen-cabinet/drawer-${number}`,
+      );
   const cabinetLeft = result.components.find(
     (c) => c.path === "kitchen-cabinet/left",
   )!;
@@ -70,6 +77,11 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
   const bottom = new TextDecoder().decode(zip["kitchen-cabinet_bottom.dxf"]);
   assert.match(bottom, /REFERENCE_EDGE_SETUP/);
   assert.equal(result.duration, 5.25);
+  assert.deepEqual(
+    result.animations.map((animation) => animation.title),
+    ["Drawers · staggered", "Drawers · together"],
+  );
+  assert.equal(result.animations[1]?.duration, 3);
   for (const frame of result.frames) {
     const seconds: number = frame.t * result.duration;
     for (let drawer = 1; drawer <= 4; drawer++) {
@@ -83,7 +95,7 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
         ) < 1e-6,
       );
       for (const side of ["left", "right"]) {
-        const prefix = `kitchen-cabinet/rail-${side}-${drawer}`;
+        const prefix = `kitchen-cabinet/drawer-${drawer}/rail-${side}-${drawer}`;
         assert.ok(
           Math.abs(frame.matrices[prefix + "/fixed"]![13]! - 20) < 1e-6,
         );
@@ -131,6 +143,12 @@ test("sheet-metal project exports folded solids and bend lines", async () => {
   );
   assert.deepEqual(result.diagnostics, []);
   assert.equal(result.meshes.length, 1);
+  assert.equal(result.unfolds.length, 1);
+  assert.equal(result.unfolds[0]?.frames.length, 9);
+  assert.notDeepEqual(
+    result.unfolds[0]?.frames[0]?.positions,
+    result.unfolds[0]?.frames.at(-1)?.positions,
+  );
   const zip = unzipSync(await readFile(join(directory, "manufacturing.zip")));
   assert.match(
     new TextDecoder().decode(Object.values(zip)[0]),

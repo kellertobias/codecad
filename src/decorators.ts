@@ -24,6 +24,7 @@ export interface TechniqueDecoratorOptions extends PartDecoratorOptions {}
 export interface OutputDecoratorOptions {
   readonly id?: string;
   readonly fileName?: string;
+  readonly title?: string;
 }
 type AnyConstructor = abstract new (...args: any[]) => any;
 export interface RegisteredClassDecorator {

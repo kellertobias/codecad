@@ -196,6 +196,54 @@ export class OpenCascadeEngine implements CadEngine {
       );
     return bounds;
   }
+  private meshData(part: Part, solid: b.Shape3D): MeshData {
+    const mesh = b.mesh(solid, {
+      tolerance: 0.025,
+      angularTolerance: 0.08,
+      cache: false,
+    });
+    const geometry = new BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new Float32BufferAttribute(mesh.vertices, 3),
+    );
+    geometry.setIndex(Array.from(mesh.triangles));
+    const features = new EdgesGeometry(geometry, 12);
+    const edges = new Float32Array(features.getAttribute("position").array);
+    geometry.dispose();
+    features.dispose();
+    return {
+      componentPath: part.path,
+      positions: mesh.vertices,
+      normals: mesh.normals,
+      indices: mesh.triangles,
+      edges,
+      matrix: part.worldMatrix().toArray(),
+      color:
+        part instanceof SheetPart || part instanceof BlockPart
+          ? (part.material.options.color ?? "#c9aa78")
+          : "#8b9da8",
+      volume: b.unwrap(b.measureVolume(solid)),
+    };
+  }
+  /** Geometry samples from the folded shape to its developed blank. */
+  async unfoldFrames(part: SheetMetalPart, count = 9): Promise<MeshData[]> {
+    if (!Number.isInteger(count) || count < 2)
+      throw new Error("At least two unfold frames required");
+    const flat = this.flatShapes.get(part);
+    if (!flat)
+      throw new Error("Evaluate the sheet-metal part before animating it");
+    const frames: MeshData[] = [];
+    for (let i = 0; i < count; i++) {
+      const fraction = 1 - i / (count - 1);
+      const shape =
+        fraction === 0 ? flat : await this.fold(part, flat, fraction);
+      if (!b.isValid(shape))
+        throw new Error(`Invalid unfold shape at frame ${i}`);
+      frames.push(this.meshData(part, shape));
+    }
+    return frames;
+  }
   async evaluate(snapshot: ModelSnapshot): Promise<EvaluatedModel> {
     this.dispose();
     this.root = snapshot.root;
@@ -214,36 +262,7 @@ export class OpenCascadeEngine implements CadEngine {
         if (!b.isValid(solid))
           throw new Error("Kernel produced an invalid solid");
         this.shapes.set(part, solid);
-        const mesh = b.mesh(solid, {
-          tolerance: 0.025,
-          angularTolerance: 0.08,
-          cache: false,
-        });
-        // Welded tessellation feature edges suppress cylinder seams and smooth
-        // profile chords, while retaining real rims, holes and sharp corners.
-        const geometry = new BufferGeometry();
-        geometry.setAttribute(
-          "position",
-          new Float32BufferAttribute(mesh.vertices, 3),
-        );
-        geometry.setIndex(Array.from(mesh.triangles));
-        const features = new EdgesGeometry(geometry, 12);
-        const edges = new Float32Array(features.getAttribute("position").array);
-        geometry.dispose();
-        features.dispose();
-        meshes.push({
-          componentPath: part.path,
-          positions: mesh.vertices,
-          normals: mesh.normals,
-          indices: mesh.triangles,
-          edges,
-          matrix: part.worldMatrix().toArray(),
-          color:
-            part instanceof SheetPart || part instanceof BlockPart
-              ? (part.material.options.color ?? "#c9aa78")
-              : "#8b9da8",
-          volume: b.unwrap(b.measureVolume(solid)),
-        });
+        meshes.push(this.meshData(part, solid));
       } catch (error) {
         diagnostics.push({
           severity: "error",
@@ -316,14 +335,15 @@ export class OpenCascadeEngine implements CadEngine {
   private async fold(
     part: SheetMetalPart,
     flat: b.Shape3D,
+    fraction = 1,
   ): Promise<b.Shape3D> {
     let result = flat;
     for (const bend of part.bends) {
       const o = bend.options,
         t = part.material.thickness,
-        R = o.insideRadius,
         BA = part.bendAllowance(bend),
-        angle = (o.angle * Math.PI) / 180;
+        angle = ((o.angle * Math.PI) / 180) * fraction,
+        R = BA / angle - part.bendRules.kFactor * t;
       let start = o.start,
         end = o.end;
       if (o.movingSide === "left") {

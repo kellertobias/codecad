@@ -38,6 +38,9 @@ test("keyboard shell has twelve slots, four bends, aligned MDF interfaces and no
     const result = await engine.evaluate({ root: project, revision: 1 });
     assert.deepEqual(result.diagnostics, []);
     assert.equal(result.meshes.length, 7);
+    const unfolding = await engine.unfoldFrames(project.shell, 5);
+    assert.equal(unfolding.length, 5);
+    assert.ok(unfolding.every((frame) => frame.indices.length > 0));
     const shell = engine.subject(project.shell);
     for (const wood of [project.left, project.right]) {
       const common = engine.own(
