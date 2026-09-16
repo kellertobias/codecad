@@ -52,8 +52,25 @@
               >Explode
               <input id="explode" type="range" min="0" max="300" value="0"
             /></label>
+            <button id="measure-toggle" aria-pressed="false">Measure</button>
           </div>
           <div id="canvas"></div>
+          <div id="measure-panel" hidden>
+            <p>
+              Choose a target type and click geometry. Hole centers glow cyan;
+              change type between picks.
+            </p>
+            <select id="measure-kind" aria-label="Measurement target">
+              <option value="point">Point</option>
+              <option value="edge">Edge</option>
+              <option value="face">Face</option>
+              <option value="hole">Hole center</option>
+            </select>
+            <button id="measure-clear">Clear</button>
+            <div id="measure-result" role="status" aria-live="polite">
+              Pick the first target.
+            </div>
+          </div>
           <div id="selection">Select a part to inspect it</div>
           <div class="motion-bar">
             <select id="animation-select" aria-label="Animation"></select>

@@ -51,7 +51,33 @@ export interface MeshData {
   readonly edges: Float32Array;
   readonly matrix: number[];
   readonly color: string;
+  readonly opacity: number;
+  readonly reflectivity: number;
+  readonly holes: readonly HoleAnchor[];
   readonly volume: number;
+}
+export interface HoleAnchor {
+  readonly center: readonly [number, number, number];
+  readonly axis: readonly [number, number, number];
+  readonly diameter: number;
+}
+function circularCut(
+  recipe: Recipe,
+  matrix = new Matrix4(),
+): HoleAnchor | undefined {
+  if (recipe.kind === "transform")
+    return circularCut(
+      recipe.source,
+      matrix.clone().multiply(new Matrix4().fromArray(recipe.matrix)),
+    );
+  if (recipe.kind !== "cylinder") return undefined;
+  const center = new Vector3().applyMatrix4(matrix);
+  const axis = new Vector3(0, 0, 1).transformDirection(matrix);
+  return {
+    center: [center.x, center.y, center.z],
+    axis: [axis.x, axis.y, axis.z],
+    diameter: recipe.diameter,
+  };
 }
 export interface EvaluatedModel {
   readonly meshes: readonly MeshData[];
@@ -212,6 +238,11 @@ export class OpenCascadeEngine implements CadEngine {
     const edges = new Float32Array(features.getAttribute("position").array);
     geometry.dispose();
     features.dispose();
+    const material =
+      part.drawingMaterial ??
+      (part instanceof SheetPart || part instanceof BlockPart
+        ? part.material
+        : undefined);
     return {
       componentPath: part.path,
       positions: mesh.vertices,
@@ -219,11 +250,17 @@ export class OpenCascadeEngine implements CadEngine {
       indices: mesh.triangles,
       edges,
       matrix: part.worldMatrix().toArray(),
-      color:
-        part.drawingMaterial?.options.color ??
-        (part instanceof SheetPart || part instanceof BlockPart
-          ? (part.material.options.color ?? "#c9aa78")
-          : "#8b9da8"),
+      color: material?.options.color ?? (material ? "#c9aa78" : "#8b9da8"),
+      opacity: material?.options.opacity ?? 1,
+      reflectivity: material?.options.reflectivity ?? 0.08,
+      holes: part.operations
+        .filter(
+          (operation) => operation.kind === "cut" || operation.kind === "drill",
+        )
+        .flatMap((operation) => {
+          const anchor = circularCut(operation.recipe);
+          return anchor ? [anchor] : [];
+        }),
       volume: b.unwrap(b.measureVolume(solid)),
     };
   }

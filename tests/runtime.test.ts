@@ -104,6 +104,23 @@ test("stock nests across multiple sheets and rejects oversize blanks", () => {
     /does not fit/,
   );
 });
+test("material visual properties stay within valid physical ranges", () => {
+  assert.throws(
+    () => new SheetMaterial({ thickness: 18, opacity: -0.1 }),
+    /opacity/,
+  );
+  assert.throws(
+    () => new SheetMaterial({ thickness: 18, reflectivity: 1.1 }),
+    /reflectivity/,
+  );
+  const glass = new SheetMaterial({
+    thickness: 6,
+    opacity: 0.3,
+    reflectivity: 0.8,
+  });
+  assert.equal(glass.options.opacity, 0.3);
+  assert.equal(glass.options.reflectivity, 0.8);
+});
 test("guillotine nesting preserves tall off-cuts and sequences kerf-aware cuts", () => {
   const stock = new SheetMaterial({
     width: 100,
@@ -193,6 +210,11 @@ test("real B-rep drilling uses local coordinates and copy snapshots", async () =
     assert.deepEqual(result.diagnostics, []);
     const left = result.meshes.find((m) => m.componentPath.endsWith("/left"))!,
       right = result.meshes.find((m) => m.componentPath.endsWith("/right"))!;
+    assert.equal(left.holes.length, 2);
+    assert.deepEqual(
+      left.holes.map((hole) => hole.diameter),
+      [8, 8],
+    );
     assert.ok(
       Math.abs(left.volume - (60 * 90 * 18 - 2 * Math.PI * 16 * 6)) < 0.01,
     );

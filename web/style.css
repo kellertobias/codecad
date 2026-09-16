@@ -288,6 +288,55 @@ nav button.active {
 .viewer-tools input[type="range"] {
   width: 60px;
 }
+#measure-toggle[aria-pressed="true"] {
+  border-color: #70d3bf;
+  color: #9ae8d9;
+}
+#measure-panel {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 3;
+  width: min(300px, calc(100% - 24px));
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid #426472;
+  border-radius: 7px;
+  background: #15232bf0;
+  color: #d5e5eb;
+  font-size: 12px;
+}
+#measure-panel[hidden] {
+  display: none;
+}
+#measure-panel p {
+  margin: 0 0 8px;
+  color: #a6bcc7;
+  line-height: 1.4;
+}
+#measure-kind {
+  padding: 6px;
+  margin-right: 5px;
+  background: #121b22;
+  color: #d5e5eb;
+  border: 1px solid #426472;
+}
+#measure-result {
+  margin-top: 8px;
+  line-height: 1.45;
+}
+.measure-label {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  padding: 5px 7px;
+  border-radius: 4px;
+  color: #09211d;
+  background: #9ae8d9;
+  font-size: 11px;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
 .motion-bar {
   position: absolute;
   bottom: 12px;

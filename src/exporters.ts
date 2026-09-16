@@ -152,7 +152,14 @@ export async function glb(
       .setIndex(new THREE.BufferAttribute(data.indices, 1));
     const mesh = new THREE.Mesh(
       geometry,
-      new THREE.MeshStandardMaterial({ color: data.color }),
+      new THREE.MeshPhysicalMaterial({
+        color: data.color,
+        opacity: data.opacity,
+        transparent: data.opacity < 1,
+        reflectivity: data.reflectivity,
+        roughness: 0.8 - data.reflectivity * 0.65,
+        clearcoat: data.reflectivity * 0.35,
+      }),
     );
     mesh.name = "part_" + i;
     mesh.userData = { componentPath: data.componentPath };

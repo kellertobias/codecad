@@ -35,6 +35,11 @@ test("apartment has four windowed rooms, actual openings and a north-up cut floo
     );
     const result = await engine.evaluate({ root: project, revision: 1 });
     assert.deepEqual(result.diagnostics, []);
+    const glazing = result.meshes.find((mesh) =>
+      mesh.componentPath.endsWith("/glass"),
+    );
+    assert.equal(glazing?.opacity, 0.38);
+    assert.equal(glazing?.reflectivity, 0.72);
     assert.equal(
       result.meshes.length,
       60,

@@ -19,6 +19,8 @@ export interface MaterialOptions {
   readonly id?: string;
   readonly name?: string;
   readonly color?: `#${string}`;
+  readonly opacity?: number;
+  readonly reflectivity?: number;
   readonly densityKgPerM3?: number;
   readonly drawingStyle?: MaterialDrawingStyle;
 }
@@ -29,6 +31,15 @@ export class Material {
   readonly name: string;
   constructor(readonly options: MaterialOptions) {
     if (options.drawingStyle) validateDrawingStyle(options.drawingStyle);
+    for (const [name, value] of [
+      ["opacity", options.opacity],
+      ["reflectivity", options.reflectivity],
+    ] as const)
+      if (
+        value !== undefined &&
+        (!Number.isFinite(value) || value < 0 || value > 1)
+      )
+        throw new Error(`Material ${name} must be between 0 and 1`);
     this.id = options.id ?? `material-${++materialId}`;
     this.name = options.name ?? this.id;
   }

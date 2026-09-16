@@ -37,7 +37,12 @@ const plaster = new BlockMaterial({
   },
 });
 const joinery = new BlockMaterial({ name: "Painted frames", color: "#d3dedc" });
-const glass = new BlockMaterial({ name: "Glazing envelope", color: "#98c9d1" });
+const glass = new BlockMaterial({
+  name: "Glazing envelope",
+  color: "#98c9d1",
+  opacity: 0.38,
+  reflectivity: 0.72,
+});
 const timber = new BlockMaterial({
   name: "Timber / furniture",
   color: "#bd966d",

@@ -6,6 +6,11 @@ import { IsolationSession } from "./isolation.js";
 import { setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import {
+  measure,
+  type MeasurePick,
+  type MeasureResult,
+} from "./measurement.js";
+import {
   codeEditor,
   configureEditor,
   setSource,
@@ -20,6 +25,13 @@ type MeshData = {
   edges: number[];
   matrix: number[];
   color: string;
+  opacity: number;
+  reflectivity: number;
+  holes: {
+    center: [number, number, number];
+    axis: [number, number, number];
+    diameter: number;
+  }[];
   volume: number;
 };
 type MotionFrame = { t: number; matrices: Record<string, number[]> };
@@ -156,6 +168,16 @@ grid.position.z = -1;
 scene.add(grid);
 const group = new THREE.Group();
 scene.add(group);
+const holeGroup = new THREE.Group(),
+  measurementGroup = new THREE.Group();
+scene.add(holeGroup, measurementGroup);
+const measureLabel = document.createElement("div");
+measureLabel.className = "measure-label";
+measureLabel.hidden = true;
+canvas.append(measureLabel);
+let measurementMode = false,
+  measurePicks: MeasurePick[] = [],
+  measured: MeasureResult | undefined;
 const objects = new Map<string, THREE.Mesh>(),
   edgeObjects = new Map<string, THREE.LineSegments>();
 let bounds = new THREE.Box3(),
@@ -206,6 +228,44 @@ function clearScene() {
   objects.clear();
   edgeObjects.clear();
   renderedGeometry.clear();
+  for (const overlay of [holeGroup, measurementGroup]) {
+    for (const child of [...overlay.children]) {
+      const drawable = child as THREE.Mesh;
+      drawable.geometry.dispose();
+      const material = drawable.material;
+      if (Array.isArray(material)) material.forEach((item) => item.dispose());
+      else material.dispose();
+      overlay.remove(child);
+    }
+  }
+  measurePicks = [];
+  measured = undefined;
+  measureLabel.hidden = true;
+}
+function updateHoleMarkers() {
+  if (!model) return;
+  for (const mesh of model.meshes)
+    for (const [index, hole] of mesh.holes.entries()) {
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(
+          Math.max(10, Math.min(30, hole.diameter * 1.5)),
+          12,
+          8,
+        ),
+        new THREE.MeshBasicMaterial({ color: 0x70e3d0, depthTest: false }),
+      );
+      marker.position
+        .fromArray(hole.center)
+        .applyMatrix4(new THREE.Matrix4().fromArray(mesh.matrix));
+      marker.renderOrder = 1000;
+      marker.userData.componentPath = mesh.componentPath;
+      marker.userData.localCenter = hole.center;
+      marker.userData.diameter = hole.diameter;
+      marker.userData.label = `${mesh.componentPath} · hole ${index + 1} (Ø${hole.diameter} mm)`;
+      holeGroup.add(marker);
+    }
+  holeGroup.visible =
+    measurementMode && $<HTMLSelectElement>("measure-kind").value === "hole";
 }
 function showModel(data: Model) {
   const first = !model;
@@ -226,10 +286,14 @@ function showModel(data: Model) {
       .setIndex(d.indices);
     const mesh = new THREE.Mesh(
       geometry,
-      new THREE.MeshStandardMaterial({
+      new THREE.MeshPhysicalMaterial({
         color: d.color,
-        roughness: 0.72,
-        metalness: 0.06,
+        opacity: d.opacity,
+        transparent: d.opacity < 1,
+        depthWrite: d.opacity >= 1,
+        reflectivity: d.reflectivity,
+        roughness: 0.8 - d.reflectivity * 0.65,
+        clearcoat: d.reflectivity * 0.35,
       }),
     );
     mesh.matrixAutoUpdate = false;
@@ -254,6 +318,7 @@ function showModel(data: Model) {
     group.add(edges);
     edgeObjects.set(d.componentPath, edges);
   }
+  updateHoleMarkers();
   $("count").textContent = String(data.meshes.length);
   $("summary").textContent =
     data.meshes.length + " solids · " + data.files.length + " outputs";
@@ -610,6 +675,14 @@ function applyPose() {
     edges.visible = mesh.visible && $<HTMLInputElement>("edges").checked;
     void i;
   }
+  for (const marker of holeGroup.children) {
+    const mesh = objects.get(marker.userData.componentPath);
+    if (!mesh) continue;
+    marker.position
+      .fromArray(marker.userData.localCenter)
+      .applyMatrix4(mesh.matrix);
+    marker.visible = mesh.visible;
+  }
   $("motion-label").textContent = animation?.meshFrames
     ? t === 0
       ? "Folded"
@@ -823,10 +896,14 @@ document
   .forEach((button) => (button.onclick = () => fit(button.dataset.camera)));
 $("filter").oninput = renderParts;
 $("edges").onchange = applyPose;
-$("explode").oninput = applyPose;
+$("explode").oninput = () => {
+  clearMeasurement();
+  applyPose();
+};
 $("motion").oninput = () => {
   playing = false;
   $("play").textContent = "▶ Motion";
+  clearMeasurement();
   applyPose();
 };
 $("animation-select").onchange = () => {
@@ -834,10 +911,12 @@ $("animation-select").onchange = () => {
   time = 0;
   $<HTMLInputElement>("motion").value = "0";
   $("play").textContent = "▶ Motion";
+  clearMeasurement();
   applyPose();
 };
 $("play").onclick = () => {
   playing = !playing;
+  if (playing) clearMeasurement();
   $("play").textContent = playing ? "Ⅱ Pause" : "▶ Motion";
 };
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach(
@@ -857,6 +936,155 @@ document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach(
     }),
 );
 const raycaster = new THREE.Raycaster();
+function clearMeasurement() {
+  for (const child of [...measurementGroup.children]) {
+    const drawable = child as THREE.Mesh;
+    drawable.geometry.dispose();
+    (drawable.material as THREE.Material).dispose();
+    measurementGroup.remove(child);
+  }
+  measurePicks = [];
+  measured = undefined;
+  measureLabel.hidden = true;
+  $("measure-result").textContent = "Pick the first target.";
+}
+function measurementMarker(point: THREE.Vector3, color = 0xffd277) {
+  const radius = Math.max(
+    2,
+    Math.min(8, bounds.getSize(new THREE.Vector3()).length() * 0.001),
+  );
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 12, 8),
+    new THREE.MeshBasicMaterial({ color, depthTest: false }),
+  );
+  marker.position.copy(point);
+  marker.renderOrder = 1001;
+  measurementGroup.add(marker);
+}
+function measurementLine(a: THREE.Vector3, b: THREE.Vector3) {
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([a, b]),
+    new THREE.LineBasicMaterial({ color: 0xffd277, depthTest: false }),
+  );
+  line.renderOrder = 1001;
+  measurementGroup.add(line);
+}
+function showMeasurement() {
+  for (const child of [...measurementGroup.children]) {
+    const drawable = child as THREE.Mesh;
+    drawable.geometry.dispose();
+    (drawable.material as THREE.Material).dispose();
+    measurementGroup.remove(child);
+  }
+  for (const pick of measurePicks) {
+    if (pick.kind === "point" || pick.kind === "hole")
+      measurementMarker(pick.point);
+    else if (pick.kind === "edge") measurementLine(pick.a, pick.b);
+    else {
+      measurementMarker(pick.point);
+      measurementLine(
+        pick.point,
+        pick.point.clone().addScaledVector(pick.normal, 30),
+      );
+    }
+  }
+  if (!measured) return;
+  for (const [a, b] of measured.guides)
+    if (a.distanceTo(b) > 1e-7) measurementLine(a, b);
+  if (measured.intersection) measurementMarker(measured.intersection, 0x70e3d0);
+  measureLabel.textContent = measured.description;
+  measureLabel.hidden = false;
+}
+function geometryPick(
+  hit: THREE.Intersection,
+  kind: string,
+): MeasurePick | undefined {
+  const mesh = hit.object as THREE.Mesh,
+    face = hit.face,
+    positions = mesh.geometry.getAttribute("position");
+  if (!face || !positions) return undefined;
+  const world = (index: number) =>
+    new THREE.Vector3()
+      .fromBufferAttribute(positions, index)
+      .applyMatrix4(mesh.matrix);
+  if (kind === "face")
+    return {
+      kind: "face",
+      point: hit.point.clone(),
+      normal: face.normal.clone().transformDirection(mesh.matrix),
+    };
+  const corners = [world(face.a), world(face.b), world(face.c)];
+  if (kind === "point")
+    return {
+      kind: "point",
+      point: corners.reduce((closest, candidate) =>
+        candidate.distanceToSquared(hit.point) <
+        closest.distanceToSquared(hit.point)
+          ? candidate
+          : closest,
+      ),
+    };
+  const data = model?.meshes.find(
+    (item) => item.componentPath === mesh.userData.path,
+  );
+  let nearest:
+    { a: THREE.Vector3; b: THREE.Vector3; distance: number } | undefined;
+  const consider = (a: THREE.Vector3, b: THREE.Vector3) => {
+    const foot = new THREE.Line3(a, b).closestPointToPoint(
+      hit.point,
+      true,
+      new THREE.Vector3(),
+    );
+    const distance = foot.distanceTo(hit.point);
+    if (!nearest || distance < nearest.distance) nearest = { a, b, distance };
+  };
+  if (data?.edges.length) {
+    for (let i = 0; i < data.edges.length; i += 6)
+      consider(
+        new THREE.Vector3(
+          data.edges[i]!,
+          data.edges[i + 1]!,
+          data.edges[i + 2]!,
+        ).applyMatrix4(mesh.matrix),
+        new THREE.Vector3(
+          data.edges[i + 3]!,
+          data.edges[i + 4]!,
+          data.edges[i + 5]!,
+        ).applyMatrix4(mesh.matrix),
+      );
+  } else {
+    for (let i = 0; i < 3; i++) consider(corners[i]!, corners[(i + 1) % 3]!);
+  }
+  if (
+    !nearest ||
+    nearest.distance >
+      Math.max(
+        3,
+        Math.min(20, bounds.getSize(new THREE.Vector3()).length() * 0.004),
+      )
+  )
+    return undefined;
+  return { kind: "edge", a: nearest.a, b: nearest.b };
+}
+$<HTMLButtonElement>("measure-toggle").onclick = () => {
+  measurementMode = !measurementMode;
+  if (measurementMode) {
+    playing = false;
+    $("play").textContent = "▶ Motion";
+  }
+  $("measure-panel").hidden = !measurementMode;
+  $("measure-toggle").setAttribute("aria-pressed", String(measurementMode));
+  holeGroup.visible =
+    measurementMode && $<HTMLSelectElement>("measure-kind").value === "hole";
+  clearMeasurement();
+};
+$<HTMLSelectElement>("measure-kind").onchange = () => {
+  holeGroup.visible =
+    measurementMode && $<HTMLSelectElement>("measure-kind").value === "hole";
+  if (measurePicks.length === 1)
+    $("measure-result").textContent = "Pick the second target.";
+};
+$("measure-clear").onclick = clearMeasurement;
 let downX = 0,
   downY = 0;
 renderer.domElement.addEventListener("pointerdown", (event) => {
@@ -873,6 +1101,48 @@ renderer.domElement.addEventListener("pointerup", (event) => {
     ),
     camera,
   );
+  if (measurementMode) {
+    const kind = $<HTMLSelectElement>("measure-kind").value;
+    const hit =
+      kind === "hole"
+        ? raycaster.intersectObjects(holeGroup.children)[0]
+        : raycaster.intersectObjects(
+            [...objects.values()].filter((mesh) => mesh.visible),
+          )[0];
+    const pick =
+      kind === "hole"
+        ? hit
+          ? ({
+              kind: "hole",
+              point: hit.object.position.clone(),
+              diameter: hit.object.userData.diameter,
+            } as MeasurePick)
+          : undefined
+        : hit
+          ? geometryPick(hit, kind)
+          : undefined;
+    if (!pick) {
+      $("measure-result").textContent =
+        kind === "hole"
+          ? "Click a cyan hole center."
+          : `Click closer to a ${kind}.`;
+      return;
+    }
+    if (measurePicks.length === 2) clearMeasurement();
+    measurePicks.push(pick);
+    if (measurePicks.length === 2) {
+      try {
+        measured = measure(measurePicks[0]!, measurePicks[1]!);
+        $("measure-result").textContent = measured.description;
+      } catch (error) {
+        $("measure-result").textContent = String(error);
+      }
+    } else
+      $("measure-result").textContent =
+        "Pick the second target (change target type if needed).";
+    showMeasurement();
+    return;
+  }
   const hit = raycaster.intersectObjects(
     [...objects.values()].filter((m) => m.visible),
   )[0];
@@ -930,6 +1200,11 @@ function animate(now: number) {
     applyPose();
   }
   controls.update();
+  if (measured && !measureLabel.hidden) {
+    const projected = measured.labelAt.clone().project(camera);
+    measureLabel.style.left = `${((projected.x + 1) / 2) * canvas.clientWidth}px`;
+    measureLabel.style.top = `${((1 - projected.y) / 2) * canvas.clientHeight}px`;
+  }
   renderer.render(scene, camera);
 }
 requestAnimationFrame(animate);
