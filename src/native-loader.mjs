@@ -65,7 +65,10 @@ registerHooks({
             sdk,
             path.split("/").at(-1).replace(/\.js$/, ".ts"),
           );
-          if (pkg.name === "@tobisk/codecad" && existsSync(target))
+          if (
+            ["@tobisk/codecad", "@codecad/studio"].includes(pkg.name) &&
+            existsSync(target)
+          )
             return nextResolve(pathToFileURL(target).href, context);
         } catch {
           /* Unrelated module: retain its original identity. */

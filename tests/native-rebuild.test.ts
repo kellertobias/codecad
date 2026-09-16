@@ -76,6 +76,50 @@ export class NativeTest extends Project {
       JSON.stringify(model).includes('"line":8'),
       "construction traces map back from decorated emitted JS",
     );
+    // Existing desktop example copies may still carry the pre-rename package name.
+    await writeFile(
+      join(temp, "sdk/package.json"),
+      JSON.stringify({ name: "@codecad/studio", type: "module" }),
+    );
+    const legacyOutput = join(temp, "legacy-output");
+    const legacyEmitted = await compileCad(entry, legacyOutput);
+    const legacy = await promisify(execFile)(
+      process.execPath,
+      [
+        "--enable-source-maps",
+        "--import",
+        resolve("src/native-loader.mjs"),
+        resolve("src/worker.ts"),
+        entry,
+        legacyOutput,
+      ],
+      {
+        env: { ...process.env, CODECAD_NATIVE_OUTPUT: legacyEmitted },
+        timeout: 30000,
+      },
+    );
+    assert.match(legacy.stdout, /"parts":1/);
+    // The shared SDK identity must not relax the one-Project export rule.
+    await writeFile(entry, "export class NotAProject {}");
+    const invalidOutput = join(temp, "no-project");
+    const invalidEmitted = await compileCad(entry, invalidOutput);
+    await assert.rejects(
+      promisify(execFile)(
+        process.execPath,
+        [
+          "--import",
+          resolve("src/native-loader.mjs"),
+          resolve("src/worker.ts"),
+          entry,
+          invalidOutput,
+        ],
+        {
+          env: { ...process.env, CODECAD_NATIVE_OUTPUT: invalidEmitted },
+          timeout: 30000,
+        },
+      ),
+      /Project file must export exactly one decorated Project class/,
+    );
     await writeFile(entry, "export class { broken = ;");
     await assert.rejects(compileCad(entry, join(temp, "invalid")));
   } finally {

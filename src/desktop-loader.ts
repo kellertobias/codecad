@@ -21,7 +21,10 @@ registerHooks({
         readFileSync(join(parent, "../package.json"), "utf8"),
       );
       const target = join(sdk, relative(parent, path).replace(/\.js$/, ".ts"));
-      if (pkg.name === "@tobisk/codecad" && existsSync(target))
+      if (
+        ["@tobisk/codecad", "@codecad/studio"].includes(pkg.name) &&
+        existsSync(target)
+      )
         return nextResolve(pathToFileURL(target).href, context);
     } catch {
       /* Not a CodeCAD SDK; retain the project's own module. */
