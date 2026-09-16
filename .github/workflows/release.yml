@@ -1,4 +1,4 @@
-name: Release npm package
+name: Release CodeCAD
 
 on:
   push:
@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-main
@@ -17,7 +16,10 @@ jobs:
   release:
     # Only trusted code from this repository's default branch can mint npm OIDC credentials.
     if: github.repository == 'kellertobias/codecad' && github.ref == 'refs/heads/main' && vars.NPM_PUBLISH_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: macos-15
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -34,7 +36,8 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run package:check
-      - name: Release, tag, and publish through npm OIDC
+      - run: npm pack --dry-run
+      - name: Release npm package and macOS archive
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release

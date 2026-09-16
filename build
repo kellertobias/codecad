@@ -78,7 +78,8 @@ ensure_dependencies
 # Do not inherit a target override: APP must identify the bundle actually built.
 export CARGO_TARGET_DIR="$ROOT/src-tauri/target"
 if [[ "$ACTION" == archive ]]; then
-  cargo clean --manifest-path src-tauri/Cargo.toml --release -p codecad-desktop
+  # Build-script outputs can embed absolute paths; clear dependencies as well.
+  cargo clean --manifest-path src-tauri/Cargo.toml --release
 fi
 npm run check
 npm run desktop:build -- --bundles app -- --locked

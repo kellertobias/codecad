@@ -50,16 +50,19 @@ It downloads the source archive for the matching `v<package-version>` Git tag
 from GitHub into `~/Library/Caches/CodeCAD/source/`, builds the Tauri app with
 the local Xcode, Rust and Node toolchains, and opens it. A previously built copy
 is opened directly; use `npx @tobisk/codecad app --rebuild` to build it again.
-No prebuilt macOS ZIP is downloaded or signed in GitHub.
+This command still builds locally; it does not download the GitHub Release ZIP.
 
 ## Releases
 
 GitHub is the release authority. Pull requests and pushes validate with
 `npm run check`, `npm test`, and `npm run package:check`. A trusted push to
-`main` then runs semantic-release: it creates a release commit, updates the
-package and lockfile version plus `CHANGELOG.md`, pushes a `vX.Y.Z` source tag,
-and publishes `@tobisk/codecad` through npm trusted publishing (OIDC). It does
-not create a GitHub Release or upload a desktop binary.
+`main` runs semantic-release on a macOS runner. It prepares one version across
+the npm package, lockfile, Tauri configuration, and Rust crate, updates
+`CHANGELOG.md`, builds a macOS archive, commits those version files, and creates
+a `vX.Y.Z` tag. It then publishes `@tobisk/codecad` through npm trusted
+publishing (OIDC) and creates a hosted GitHub Release with the macOS ZIP and
+SHA-256 checksum. The archive is ad-hoc signed and not notarized; macOS may
+require an explicit trust override before opening it.
 
 Conventional Commit messages control versioning: `fix:` and `perf:` publish a
 patch, `feat:` publishes a minor, and `type!:` or a `BREAKING CHANGE:` footer
@@ -67,11 +70,16 @@ publishes a major. `docs:`, `test:`, `style:`, `refactor:`, `build:`, `ci:` and
 `chore:` do not release by themselves. Run `npm run release:dry-run` locally to
 preview a release without publishing.
 
-Before enabling the workflow, make the initial `v0.1.0` tag and publish it
-manually. Then configure npm's trusted publisher for `@tobisk/codecad` to use
-this GitHub repository and `.github/workflows/release.yml`, and set the GitHub
-repository variable `NPM_PUBLISH_ENABLED` to `true`. Until that variable is set,
-the release job is intentionally skipped; no `NPM_TOKEN` is stored in GitHub.
+The existing npm trusted publisher for `@tobisk/codecad` must name this GitHub
+repository and `.github/workflows/release.yml`; the repository variable
+`NPM_PUBLISH_ENABLED` must be `true`. Until it is set, the entire release job is
+intentionally skipped. No `NPM_TOKEN` is stored in GitHub. The release job needs
+GitHub `contents: write` for the release commit, tag, and hosted assets, and
+`id-token: write` for npm OIDC. Only the trusted `main` release job receives
+those permissions. A fresh checkout with full history and tags is required for
+semantic-release. Run `npm run release:dry-run` locally to preview versioning;
+it does not build an archive or publish anything. CI runs the build only after
+tests pass and semantic-release finds a releasable commit.
 
 ## Run
 
