@@ -80,23 +80,36 @@ export class DominoJoint extends Technique {
       throw new Error("Domino count must be positive");
     const w = Math.min(width(o.first), width(o.second)),
       edge = o.edgeOffset ?? this.options.width;
+    if (!Number.isFinite(edge) || edge < 0)
+      throw new Error("Domino edge offset must be non-negative");
     if (w < 2 * edge)
       throw new Error("Domino edge offset exceeds joint length");
-    for (let n = 0; n < o.count; n++) {
-      const x =
-        o.distribution && typeof o.distribution === "object"
-          ? edge + n * o.distribution.spacing
-          : o.count === 1
-            ? w / 2
-            : edge + (n * (w - 2 * edge)) / (o.count - 1);
-      if (x + this.options.width / 2 > w)
-        throw new Error("Domino spacing exceeds joint length");
+    if (this.options.width <= this.options.thickness)
+      throw new Error("Domino width must exceed its thickness");
+    if (
+      o.distribution &&
+      typeof o.distribution === "object" &&
+      (!Number.isFinite(o.distribution.spacing) || o.distribution.spacing <= 0)
+    )
+      throw new Error("Domino spacing must be positive");
+    const positions = Array.from({ length: o.count }, (_, n) =>
+      o.distribution && typeof o.distribution === "object"
+        ? edge + n * o.distribution.spacing
+        : o.count === 1
+          ? w / 2
+          : edge + (n * (w - 2 * edge)) / (o.count - 1),
+    );
+    if (
+      positions.some(
+        (x) => x - this.options.width / 2 < 0 || x + this.options.width / 2 > w,
+      )
+    )
+      throw new Error("Domino spacing exceeds joint length");
+    for (const x of positions) {
       for (const i of [o.first, o.second]) {
         const d = this.options.depthPerSide;
         const radius = this.options.thickness / 2,
           straight = this.options.width - this.options.thickness;
-        if (straight <= 0)
-          throw new Error("Domino width must exceed its thickness");
         const middle = new Shapes.Box({
           width: straight,
           depth: radius * 2,
