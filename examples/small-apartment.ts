@@ -6,8 +6,12 @@ import {
   Shapes,
   TechnicalDrawing,
   StepModel,
+  MotionStudy,
+  RevoluteJoint,
+  PartInterface,
   cad,
   type Point2,
+  type Part,
   type BlockPart,
 } from "../src/index.js";
 
@@ -63,6 +67,21 @@ export interface Opening {
   sill: number;
   height: number;
 }
+function cutOpening(host: BlockPart, opening: Opening) {
+  host.subtract(
+    new Shapes.Box({
+      width: opening.width,
+      depth: opening.depth,
+      height: opening.height,
+    }),
+    {
+      relativeTo: "world",
+      x: opening.x,
+      y: opening.y,
+      z: opening.sill,
+    },
+  );
+}
 function wall(
   id: string,
   x: number,
@@ -72,11 +91,7 @@ function wall(
   openings: Opening[] = [],
 ) {
   const part = box(plaster, id, x, y, width, depth, apartment.height);
-  for (const o of openings)
-    part.subtract(
-      new Shapes.Box({ width: o.width, depth: o.depth, height: o.height }),
-      { x: o.x - x, y: o.y - y, z: o.sill },
-    );
+  for (const o of openings) cutOpening(part, o);
   return part;
 }
 function floor(id: string, points: Point2[], color: `#${string}`) {
@@ -101,17 +116,22 @@ class Room extends Assembly {
   }
 }
 @cad.part({ id: "window", revision: "1" })
-class Window extends Assembly {
+export class Window extends Assembly {
+  readonly sash: Assembly;
+  readonly openingMotion: MotionStudy;
   constructor(
     id: string,
-    x: number,
-    y: number,
-    width: number,
+    host: BlockPart,
+    opening: Opening,
+    readonly x: number,
+    readonly y: number,
+    readonly width: number,
     sill = 900,
     height = 1300,
-    rotation = 0,
+    readonly rotation = 0,
   ) {
     super({ id, label: `Window ${width} x ${height}, sill ${sill}` });
+    cutOpening(host, opening);
     box(joinery, "sill", 0, 40, width, 120, 50, sill);
     box(joinery, "head", 0, 60, width, 80, 50, sill + height - 50);
     box(joinery, "jamb-left", 0, 60, 50, 80, height - 100, sill + 50);
@@ -126,23 +146,94 @@ class Window extends Assembly {
       height - 100,
       sill + 50,
     );
-    box(glass, "glass", 50, 95, width - 100, 10, height - 100, sill + 50);
+    this.sash = new Room("opening-sash", "Opening casement", () => {
+      box(glass, "glass", 50, 95, width - 100, 10, height - 100, sill + 50);
+    });
     this.place({ x, y, rotate: { z: rotation } });
+    const hinge = new PartInterface({
+      frame: {
+        origin: { x: 50, y: 100, z: sill + height / 2 },
+        xAxis: { x: 1, y: 0, z: 0 },
+        yAxis: { x: 0, y: 1, z: 0 },
+      },
+    }).bind(this);
+    this.openingMotion = new MotionStudy({ of: this }).animate({
+      joint: new RevoluteJoint({
+        id: `${id}-casement`,
+        fixed: hinge,
+        moving: this.sash,
+        axis: "z",
+        limits: { min: 0, max: 70 },
+      }),
+      from: 0,
+      to: 70,
+      durationSeconds: 2,
+    });
+  }
+  planSymbol(drawing: TechnicalDrawing, view: string) {
+    const angle = (this.rotation * Math.PI) / 180;
+    drawing.path({
+      view,
+      layer: "WINDOW_FRAME",
+      points: [0, this.width].map((distance) => ({
+        x: this.x + distance * Math.cos(angle) - 100 * Math.sin(angle),
+        y: this.y + distance * Math.sin(angle) + 100 * Math.cos(angle),
+        z: 0,
+      })),
+    });
   }
 }
 @cad.part({ id: "door", revision: "1" })
-class Door extends Assembly {
+export class Door extends Assembly {
+  readonly leaf: Assembly;
+  readonly openingMotion: MotionStudy;
   constructor(
     id: string,
-    x: number,
-    y: number,
-    width: number,
-    rotation: number,
+    host: BlockPart,
+    opening: Opening,
+    readonly x: number,
+    readonly y: number,
+    readonly width: number,
+    readonly rotation: number,
+    readonly swingDegrees = 90,
   ) {
     super({ id, label: `${width} mm door - open` });
-    box(timber, "leaf", 0, 0, width, 40, 2100);
-    box(joinery, "handle", width - 100, -25, 90, 90, 25, 1000);
+    cutOpening(host, opening);
+    this.leaf = new Room("opening-leaf", "Hinged leaf", () => {
+      box(timber, "leaf", 0, 0, width, 40, 2100);
+      box(joinery, "handle", width - 100, -25, 90, 90, 25, 1000);
+    });
     this.place({ x, y, rotate: { z: rotation } });
+    this.openingMotion = new MotionStudy({ of: this }).animate({
+      joint: new RevoluteJoint({
+        id: `${id}-hinge`,
+        fixed: this,
+        moving: this.leaf,
+        axis: "z",
+        limits: {
+          min: Math.min(0, swingDegrees),
+          max: Math.max(0, swingDegrees),
+        },
+      }),
+      from: 0,
+      to: swingDegrees,
+      durationSeconds: 2,
+    });
+  }
+  planSymbol(drawing: TechnicalDrawing, view: string) {
+    drawing.path({
+      view,
+      layer: "DOOR_SWING",
+      points: Array.from({ length: 33 }, (_, i) => {
+        const angle =
+          ((this.rotation + (this.swingDegrees * i) / 32) * Math.PI) / 180;
+        return {
+          x: this.x + this.width * Math.cos(angle),
+          y: this.y + this.width * Math.sin(angle),
+          z: 0,
+        };
+      }),
+    });
   }
 }
 
@@ -152,7 +243,8 @@ class Door extends Assembly {
   units: "mm",
 })
 export class SmallApartment extends Project {
-  readonly walls: BlockPart[] = [];
+  readonly walls: Part[] = [];
+  readonly openings: (Door | Window)[] = [];
   readonly hallway;
   readonly living;
   readonly bedroom;
@@ -163,42 +255,13 @@ export class SmallApartment extends Project {
       label: "Small apartment - approx. 44 m2 internal",
     });
     new Room("exterior", "Exterior walls - 200 mm", () => {
-      this.walls.push(
-        wall("south", 0, 0, 8000, 200, [
-          { x: 550, y: -1, width: 900, depth: 202, sill: 0, height: 2150 },
-        ]),
-      );
-      this.walls.push(
-        wall("north", 0, 6200, 8000, 200, [
-          {
-            x: 1100,
-            y: 6199,
-            width: 2200,
-            depth: 202,
-            sill: 900,
-            height: 1300,
-          },
-          {
-            x: 5700,
-            y: 6199,
-            width: 1400,
-            depth: 202,
-            sill: 900,
-            height: 1300,
-          },
-        ]),
-      );
-      this.walls.push(
-        wall("west", 0, 200, 200, 6000, [
-          { x: -1, y: 900, width: 202, depth: 800, sill: 900, height: 1300 },
-        ]),
-      );
-      this.walls.push(
-        wall("east", 7800, 200, 200, 6000, [
-          { x: 7799, y: 900, width: 202, depth: 800, sill: 1100, height: 1100 },
-        ]),
-      );
+      this.walls.push(wall("south", 0, 0, 8000, 200));
+      this.walls.push(wall("north", 0, 6200, 8000, 200));
+      this.walls.push(wall("west", 0, 200, 200, 6000));
+      this.walls.push(wall("east", 7800, 200, 200, 6000));
     });
+    const wallById = (id: string) =>
+      this.walls.find((part) => part.id === id)! as BlockPart;
     this.hallway = new Room("hallway", "Hallway - 3.60 m2", () => {
       floor("Hall tiles", rect(200, 200, 1800, 2000), "#d5cdbb")
         .union(new Shapes.Box({ width: 1000, depth: 150, height: 80 }), {
@@ -215,8 +278,30 @@ export class SmallApartment extends Project {
           { x: 700, y: 2199, width: 1000, depth: 152, sill: 0, height: 2200 },
         ]),
       );
-      new Window("west-window", 200, 900, 800, 900, 1300, 90);
-      new Door("entrance-door", 550, 200, 900, 90);
+      this.openings.push(
+        new Window(
+          "west-window",
+          wallById("west"),
+          { x: -1, y: 900, width: 202, depth: 800, sill: 900, height: 1300 },
+          200,
+          900,
+          800,
+          900,
+          1300,
+          90,
+        ),
+      );
+      this.openings.push(
+        new Door(
+          "entrance-door",
+          wallById("south"),
+          { x: 550, y: -1, width: 900, depth: 202, sill: 0, height: 2150 },
+          550,
+          200,
+          900,
+          0,
+        ),
+      );
       box(timber, "shoe-bench", 1580, 350, 350, 900, 450);
     });
     this.living = new Room(
@@ -235,13 +320,24 @@ export class SmallApartment extends Project {
           ],
           "#d5b98d",
         );
-        this.walls.push(
-          wall("bed-bath-partition", 4900, 200, 150, 6000, [
-            { x: 4899, y: 700, width: 152, depth: 800, sill: 0, height: 2150 },
-            { x: 4899, y: 3400, width: 152, depth: 900, sill: 0, height: 2150 },
-          ]),
+        this.walls.push(wall("bed-bath-partition", 4900, 200, 150, 6000));
+        this.openings.push(
+          new Window(
+            "north-window",
+            wallById("north"),
+            {
+              x: 1100,
+              y: 6199,
+              width: 2200,
+              depth: 202,
+              sill: 900,
+              height: 1300,
+            },
+            1100,
+            6200,
+            2200,
+          ),
         );
-        new Window("north-window", 1100, 6200, 2200);
         box(fabric, "sofa", 350, 3500, 900, 2000, 450);
         box(fabric, "sofa-back", 350, 3500, 220, 2000, 850);
         box(timber, "coffee-table", 1550, 4050, 800, 650, 420);
@@ -258,8 +354,35 @@ export class SmallApartment extends Project {
         new Shapes.Box({ width: 150, depth: 900, height: 80 }),
         { x: 4900, y: 3400 },
       );
-      new Window("north-window", 5700, 6200, 1400);
-      new Door("bedroom-door", 5050, 3400, 900, 0);
+      this.openings.push(
+        new Window(
+          "north-window",
+          wallById("north"),
+          {
+            x: 5700,
+            y: 6199,
+            width: 1400,
+            depth: 202,
+            sill: 900,
+            height: 1300,
+          },
+          5700,
+          6200,
+          1400,
+        ),
+      );
+      this.openings.push(
+        new Door(
+          "bedroom-door",
+          wallById("bed-bath-partition"),
+          { x: 4899, y: 3400, width: 152, depth: 900, sill: 0, height: 2150 },
+          5050,
+          3400,
+          900,
+          90,
+          -90,
+        ),
+      );
       box(timber, "bed-base", 5800, 4000, 1600, 2000, 300);
       box(ceramic, "mattress", 5800, 4000, 1600, 2000, 200, 300);
       box(fabric, "pillow-left", 5900, 5600, 600, 300, 100, 500);
@@ -272,14 +395,54 @@ export class SmallApartment extends Project {
         { x: 4900, y: 700 },
       );
       this.walls.push(wall("bedroom-partition", 5050, 2700, 2750, 150));
-      new Window("east-window", 8000, 900, 800, 1100, 1100, 90);
-      new Door("bathroom-door", 5050, 700, 800, 0);
+      this.openings.push(
+        new Window(
+          "east-window",
+          wallById("east"),
+          { x: 7799, y: 900, width: 202, depth: 800, sill: 1100, height: 1100 },
+          8000,
+          900,
+          800,
+          1100,
+          1100,
+          90,
+        ),
+      );
+      this.openings.push(
+        new Door(
+          "bathroom-door",
+          wallById("bed-bath-partition"),
+          { x: 4899, y: 700, width: 152, depth: 800, sill: 0, height: 2150 },
+          5050,
+          700,
+          800,
+          90,
+          -90,
+        ),
+      );
       box(ceramic, "shower-tray", 6700, 1600, 1000, 1000, 100);
       box(glass, "shower-screen", 6700, 1600, 1000, 20, 1900, 100);
       box(ceramic, "vanity", 5350, 2200, 800, 450, 850);
       box(ceramic, "basin", 5450, 2225, 600, 400, 100, 850);
       box(ceramic, "toilet", 6900, 300, 400, 700, 430);
     });
+    const joinInnerWalls = (first: string, second: string, id: string) => {
+      const a = this.walls.find((part) => part.id === first)!;
+      const b = this.walls.find((part) => part.id === second)!;
+      const joined = this.joinSolids([a, b], {
+        id,
+        label: "Joined interior wall",
+      });
+      this.walls.splice(this.walls.indexOf(a), 1);
+      this.walls.splice(this.walls.indexOf(b), 1);
+      this.walls.push(joined);
+    };
+    joinInnerWalls("east-partition", "open-doorway", "hallway-partition");
+    joinInnerWalls(
+      "bed-bath-partition",
+      "bedroom-partition",
+      "bed-bath-partition",
+    );
   }
 
   @cad.output.technicalDrawing({ fileName: "apartment-plan.pdf" })
@@ -394,18 +557,7 @@ export class SmallApartment extends Project {
       [5350, 1700, "04 BATH"],
     ] as const)
       drawing.label({ view: "plan", at: { x, y, z: 0 }, text, height: 3 });
-    const swing = (x: number, y: number, r: number, from: number, to: number) =>
-      drawing.path({
-        view: "plan",
-        layer: "DOOR_SWING",
-        points: Array.from({ length: 33 }, (_, i) => {
-          const a = ((from + ((to - from) * i) / 32) * Math.PI) / 180;
-          return { x: x + r * Math.cos(a), y: y + r * Math.sin(a), z: 0 };
-        }),
-      });
-    swing(550, 200, 900, 0, 90);
-    swing(5050, 3400, 900, 0, 90);
-    swing(5050, 700, 800, 0, 90);
+    for (const opening of this.openings) opening.planSymbol(drawing, "plan");
     drawing.label({
       view: "plan",
       at: { x: 740, y: 2440, z: 0 },
@@ -438,5 +590,16 @@ export class SmallApartment extends Project {
   @cad.output.step({ fileName: "apartment.step" })
   step() {
     return new StepModel({ of: this });
+  }
+  @cad.output.motion({
+    fileName: "apartment-openings.glb",
+    title: "Doors and windows · open",
+  })
+  openingMotion() {
+    const study = new MotionStudy({ of: this });
+    for (const opening of this.openings)
+      for (const animation of opening.openingMotion.animations)
+        study.animate(animation);
+    return study;
   }
 }

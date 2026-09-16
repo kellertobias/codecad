@@ -342,9 +342,10 @@ async function drawingPage(
       const shapes = parts.flatMap((part, i) => {
         let shape = engine.subject(part);
         const material =
-          part instanceof SheetPart || part instanceof BlockPart
+          part.drawingMaterial ??
+          (part instanceof SheetPart || part instanceof BlockPart
             ? part.material
-            : undefined;
+            : undefined);
         const style = material?.options.drawingStyle;
         const materialLayer = (material?.id ?? "material").replace(
           /[^a-zA-Z0-9_-]/g,

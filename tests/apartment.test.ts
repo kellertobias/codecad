@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as b from "brepjs/quick";
 import { Matrix4 } from "three";
-import { SmallApartment, apartment } from "../examples/small-apartment.js";
+import {
+  SmallApartment,
+  Window,
+  Door,
+  apartment,
+} from "../examples/small-apartment.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { renderDrawingFormats } from "../src/drawing.js";
 import { descendants } from "../src/model.js";
@@ -30,7 +35,35 @@ test("apartment has four windowed rooms, actual openings and a north-up cut floo
     );
     const result = await engine.evaluate({ root: project, revision: 1 });
     assert.deepEqual(result.diagnostics, []);
-    assert.equal(result.meshes.length, 62);
+    assert.equal(
+      result.meshes.length,
+      60,
+      "two pairs of inner walls are fused",
+    );
+    assert.equal(project.walls.length, 6);
+    for (const id of ["hallway-partition", "bed-bath-partition"])
+      assert.equal(
+        project.walls.find((wall) => wall.id === id)?.drawingMaterial?.name,
+        "Plastered wall",
+      );
+    assert.equal(
+      project.openings.filter((opening) => opening instanceof Window).length,
+      4,
+    );
+    assert.equal(
+      project.openings.filter((opening) => opening instanceof Door).length,
+      3,
+    );
+    const motion = project.openingMotion();
+    assert.equal(motion.animations.length, 7);
+    for (const opening of project.openings) {
+      const moving = opening instanceof Door ? opening.leaf : opening.sash;
+      assert.ok(moving.children.length > 0);
+      assert.notDeepEqual(
+        motion.pose(moving, 0).elements,
+        motion.pose(moving, 1).elements,
+      );
+    }
     const walls = engine.own(
       b.compound(project.walls.map((p) => engine.subject(p))),
     );
@@ -64,6 +97,12 @@ test("apartment has four windowed rooms, actual openings and a north-up cut floo
       "floor must not occlude furniture and window edges",
     );
     assert.match(new TextDecoder().decode(drawing.dxf), /DOOR_SWING/);
+    assert.match(new TextDecoder().decode(drawing.dxf), /WINDOW_FRAME/);
+    assert.match(
+      svg,
+      /stroke="#777777"/,
+      "sectioned plaster walls retain hatching",
+    );
     assert.equal(
       engine.bounds(engine.subject(project.walls[0]!)).max.z,
       apartment.height,

@@ -220,9 +220,10 @@ export class OpenCascadeEngine implements CadEngine {
       edges,
       matrix: part.worldMatrix().toArray(),
       color:
-        part instanceof SheetPart || part instanceof BlockPart
+        part.drawingMaterial?.options.color ??
+        (part instanceof SheetPart || part instanceof BlockPart
           ? (part.material.options.color ?? "#c9aa78")
-          : "#8b9da8",
+          : "#8b9da8"),
       volume: b.unwrap(b.measureVolume(solid)),
     };
   }

@@ -1,4 +1,5 @@
 import { Matrix4, Euler, Vector3 as V3 } from "three";
+import type { Material } from "./stock.js";
 
 export type Length = number;
 export type Angle = number;
@@ -559,6 +560,8 @@ export interface MachiningOperation {
 export class Part extends Component {
   recipe: Recipe;
   operations: MachiningOperation[] = [];
+  /** Display material retained when homogeneous stock parts are fused. */
+  drawingMaterial?: Material;
   constructor(o: ComponentOptions & { shape: Shape }) {
     super(o);
     this.recipe = structuredClone(o.shape.recipe);
@@ -714,6 +717,16 @@ export abstract class Assembly extends Component {
         }),
       true,
     );
+    const materials = parts.map(
+      (part) =>
+        part.drawingMaterial ??
+        ("material" in part ? (part.material as Material) : undefined),
+    );
+    if (
+      materials[0] &&
+      materials.every((material) => material === materials[0])
+    )
+      result.drawingMaterial = materials[0];
     result.sourceTraces.push(
       ...parts.flatMap((part) => part.sourceTraces),
       new Error().stack ?? "",
