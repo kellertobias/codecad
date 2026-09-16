@@ -29,6 +29,10 @@
       <p class="muted">
         Choose a TypeScript project entry (.ts). Only open code you trust.
       </p>
+      <section id="recent-projects" hidden>
+        <h2>Recent projects</h2>
+        <div class="examples" id="recent-list"></div>
+      </section>
       <h2>Explore an example</h2>
       <div class="examples">
         <button data-example="cabinet">
@@ -41,6 +45,18 @@
       </div>
       <p id="message" role="status"></p>
     </main>
+    <dialog id="project-picker" aria-label="Open project">
+      <div class="picker-head">
+        <h2>Open project</h2>
+        <button id="close-picker" aria-label="Close">×</button>
+      </div>
+      <div class="picker-tabs" role="tablist">
+        <button data-picker-tab="recent" role="tab">Recent</button>
+        <button data-picker-tab="examples" role="tab">Examples</button>
+        <button data-picker-tab="disk" role="tab">From disk</button>
+      </div>
+      <div id="picker-content"></div>
+    </dialog>
     <script src="desktop.js"></script>
   </body>
 </html>

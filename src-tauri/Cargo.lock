@@ -516,6 +516,7 @@ dependencies = [
  "libc",
  "rfd",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]

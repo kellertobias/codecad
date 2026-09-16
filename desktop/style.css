@@ -114,3 +114,50 @@ small {
 #message {
   color: #f1c399;
 }
+dialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: 80vh;
+  padding: 22px;
+  border: 1px solid #477267;
+  border-radius: 12px;
+  background: #172228;
+  color: inherit;
+}
+dialog::backdrop {
+  background: #000a;
+}
+.picker-head,
+.picker-tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.picker-head {
+  justify-content: space-between;
+}
+.picker-head h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.picker-head button {
+  padding: 4px 12px;
+}
+.picker-tabs {
+  margin: 20px 0;
+}
+.picker-tabs button {
+  flex: 1;
+  padding: 9px;
+}
+.picker-tabs [aria-selected="true"] {
+  border-color: #71dfc0;
+}
+#picker-content {
+  display: grid;
+  gap: 8px;
+}
+.picker-item {
+  text-align: left;
+  width: 100%;
+  overflow-wrap: anywhere;
+}

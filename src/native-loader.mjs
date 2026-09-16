@@ -1,6 +1,6 @@
 import { registerHooks } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const sdk = fileURLToPath(new URL(".", import.meta.url));
@@ -34,8 +34,20 @@ registerHooks({
         const source = path.replace(/\.(mjs|cjs|js)$/, (_, ext) =>
           ext === "mjs" ? ".mts" : ext === "cjs" ? ".cts" : ".ts",
         );
-        if (source === path || !existsSync(source)) throw error;
-        result = nextResolve(pathToFileURL(source).href, context);
+        const candidates =
+          source !== path
+            ? [source]
+            : extname(path)
+              ? []
+              : [
+                  ...[".ts", ".mts", ".cts", ".tsx"].map((ext) => path + ext),
+                  ...[".ts", ".mts", ".cts", ".tsx"].map((ext) =>
+                    join(path, "index" + ext),
+                  ),
+                ];
+        const match = candidates.find((candidate) => existsSync(candidate));
+        if (!match) throw error;
+        result = nextResolve(pathToFileURL(match).href, context);
       }
     }
     if (result.url.startsWith("file:")) {

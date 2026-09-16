@@ -36,7 +36,7 @@ test("native CAD rebuild preserves decorators, external helpers, assets, SDK ide
     await writeFile(
       entry,
       `import { Project, SheetMaterial, cad } from "./sdk/src/index.js";
-import { size } from "./helper.ts";
+import { size } from "./helper";
 @cad.project({ id: "native-test", units: "mm" })
 export class NativeTest extends Project {
   constructor() {

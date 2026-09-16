@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-available-editors"
+description = "Enables the available_editors command without any pre-configured scope."
+commands.allow = ["available_editors"]
+
+[[permission]]
+identifier = "deny-available-editors"
+description = "Denies the available_editors command without any pre-configured scope."
+commands.deny = ["available_editors"]

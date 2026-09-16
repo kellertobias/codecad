@@ -11,6 +11,167 @@ use std::{
 };
 use tauri::{Manager, WebviewWindow};
 
+const RECENT_LIMIT: usize = 12;
+
+fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("recent-projects.json"))
+}
+
+fn read_recent(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
+    let file = recent_file(app)?;
+    read_recent_file(&file)
+}
+
+fn read_recent_file(file: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries: Vec<PathBuf> = match std::fs::read(file) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(entries
+        .into_iter()
+        .filter(|path| path.is_file())
+        .take(RECENT_LIMIT)
+        .collect())
+}
+
+fn remember_project(app: &tauri::AppHandle, entry: &Path) -> Result<(), String> {
+    remember_project_file(&recent_file(app)?, entry)
+}
+
+fn remember_project_file(file: &Path, entry: &Path) -> Result<(), String> {
+    let entry = entry.canonicalize().map_err(|e| e.to_string())?;
+    let mut entries = read_recent_file(file)?;
+    entries.retain(|path| path != &entry);
+    entries.insert(0, entry);
+    entries.truncate(RECENT_LIMIT);
+    std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+    let temporary = file.with_extension("json.tmp");
+    std::fs::write(
+        &temporary,
+        serde_json::to_vec(&entries).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(temporary, file).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_projects_are_deduplicated_ordered_and_pruned() {
+        let root = std::env::temp_dir().join(format!(
+            "codecad-recent-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let first = root.join("first.ts");
+        let second = root.join("second.ts");
+        let list = root.join("recent.json");
+        std::fs::write(&first, "").unwrap();
+        std::fs::write(&second, "").unwrap();
+        remember_project_file(&list, &first).unwrap();
+        remember_project_file(&list, &second).unwrap();
+        remember_project_file(&list, &first).unwrap();
+        assert_eq!(
+            read_recent_file(&list).unwrap(),
+            vec![
+                first.canonicalize().unwrap(),
+                second.canonicalize().unwrap()
+            ]
+        );
+        std::fs::remove_file(first).unwrap();
+        assert_eq!(
+            read_recent_file(&list).unwrap(),
+            vec![second.canonicalize().unwrap()]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+fn editor_app(id: &str) -> Option<PathBuf> {
+    let bundle = match id {
+        "vscode" => "Visual Studio Code.app",
+        "cursor" => "Cursor.app",
+        "codex" => "Codex.app",
+        _ => return None,
+    };
+    let mut roots = vec![PathBuf::from("/Applications")];
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Applications"));
+    }
+    roots
+        .into_iter()
+        .map(|root| root.join(bundle))
+        .find(|path| path.is_dir())
+}
+
+#[tauri::command]
+fn available_editors(
+    window: WebviewWindow,
+    state: tauri::State<Desktop>,
+) -> Result<Vec<String>, String> {
+    trusted(&window, &state)?;
+    if state.session.lock().unwrap().is_none() {
+        return Ok(Vec::new());
+    }
+    Ok(["vscode", "cursor", "codex"]
+        .into_iter()
+        .filter(|id| editor_app(id).is_some())
+        .map(str::to_owned)
+        .collect())
+}
+
+#[tauri::command]
+fn open_in_editor(
+    window: WebviewWindow,
+    state: tauri::State<Desktop>,
+    editor: String,
+) -> Result<(), String> {
+    trusted(&window, &state)?;
+    let app = editor_app(&editor).ok_or("Editor is not installed")?;
+    let entry = state
+        .session
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("No active project")?
+        .entry
+        .clone();
+    let status = Command::new("open")
+        .arg("-a")
+        .arg(app)
+        .arg(entry)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("Could not open the project in the selected editor".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn recent_projects(
+    window: WebviewWindow,
+    state: tauri::State<Desktop>,
+    app: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    trusted(&window, &state)?;
+    Ok(read_recent(&app)?
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect())
+}
+
 #[cfg(unix)]
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 #[cfg(unix)]
@@ -21,6 +182,7 @@ extern "C" fn request_termination(_: libc::c_int) {
 struct Session {
     child: Child,
     url: String,
+    entry: PathBuf,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -113,7 +275,7 @@ fn launch(app: &tauri::AppHandle, entry: PathBuf) -> Result<Session, String> {
     command
         .args(["--import", "tsx"])
         .arg(root.join("src/server.ts"))
-        .arg(entry)
+        .arg(&entry)
         .current_dir(&root)
         .env("PORT", "0")
         .env("CODECAD_STORAGE", &cache)
@@ -139,6 +301,7 @@ fn launch(app: &tauri::AppHandle, entry: PathBuf) -> Result<Session, String> {
     let mut candidate = Session {
         child,
         url: String::new(),
+        entry,
     };
     let stdout = candidate.child.stdout.take().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -166,6 +329,7 @@ async fn open_project(
     window: WebviewWindow,
     state: tauri::State<'_, Desktop>,
     example: Option<String>,
+    path: Option<String>,
 ) -> Result<Option<String>, String> {
     trusted(&window, &state)?;
     if state.opening.swap(true, Ordering::SeqCst) {
@@ -173,6 +337,7 @@ async fn open_project(
     }
     let result = async {
         let entry = if let Some(example) = example {
+            if path.is_some() { return Err("Choose either an example or a recent project".into()); }
             let file = match example.as_str() { "cabinet" => "kitchen-cabinet.ts", "keyboard" => "keyboard-case.ts", "apartment" => "small-apartment.ts", _ => return Err("Unknown example".into()) };
             // Copy the entire example workspace once so relative imports stay valid
             // and editing examples never changes signed application resources.
@@ -186,17 +351,27 @@ async fn open_project(
             }
             workspace.join("examples").join(file)
         } else {
-            let picked = rfd::AsyncFileDialog::new().set_parent(&window).set_title("Open CodeCAD project entry file").add_filter("TypeScript project", &["ts", "mts"]).pick_file().await;
-            let Some(picked) = picked else { return Ok(None); };
+            let entry = if let Some(path) = path {
+                let path = PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
+                if !read_recent(&app)?.contains(&path) { return Err("Project is not in Recent".into()); }
+                path
+            } else {
+                let picked = rfd::AsyncFileDialog::new().set_parent(&window).set_title("Open CodeCAD project entry file").add_filter("TypeScript project", &["ts", "mts"]).pick_file().await;
+                let Some(picked) = picked else { return Ok(None); };
+                picked.path().to_path_buf()
+            };
             let accepted = rfd::AsyncMessageDialog::new().set_parent(&window).set_title("Trust this project?")
                 .set_description("CodeCAD executes TypeScript with your account's file and network access. Only open projects you trust.")
                 .set_buttons(rfd::MessageButtons::OkCancel).show().await;
             if accepted != rfd::MessageDialogResult::Ok { return Ok(None); }
-            picked.path().to_path_buf()
+            entry
         };
         if !entry.is_file() { return Err("Project entry file does not exist".into()); }
+        if !matches!(entry.extension().and_then(|ext| ext.to_str()), Some("ts" | "mts")) { return Err("Choose a TypeScript project entry".into()); }
+        let recent_entry = entry.clone();
         let handle = app.clone();
         let next = tauri::async_runtime::spawn_blocking(move || launch(&handle, entry)).await.map_err(|e|e.to_string())??;
+        remember_project(&app, &recent_entry)?;
         let url = format!("{}/", next.url);
         *state.session.lock().unwrap() = Some(next);
         Ok(Some(url))
@@ -223,7 +398,12 @@ fn main() {
         .setup(|app| {
             #[cfg(unix)]
             {
-                unsafe { libc::signal(libc::SIGTERM, request_termination as *const () as libc::sighandler_t); }
+                unsafe {
+                    libc::signal(
+                        libc::SIGTERM,
+                        request_termination as *const () as libc::sighandler_t,
+                    );
+                }
                 let handle = app.handle().clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(Duration::from_millis(100));
@@ -236,7 +416,13 @@ fn main() {
             Ok(())
         })
         .manage(Desktop::default())
-        .invoke_handler(tauri::generate_handler![open_project, window_action])
+        .invoke_handler(tauri::generate_handler![
+            open_project,
+            recent_projects,
+            available_editors,
+            open_in_editor,
+            window_action
+        ])
         .build(tauri::generate_context!())
         .expect("Cannot create CodeCAD window")
         .run(|app, event| {

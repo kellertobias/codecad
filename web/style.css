@@ -564,6 +564,56 @@ h2 {
 #toggle-source {
   display: none;
 }
+.project-picker {
+  width: min(540px, calc(100vw - 32px));
+  max-height: 80vh;
+  padding: 24px;
+  border: 1px solid #54746c;
+  border-radius: 12px;
+  background: #172228;
+  color: #e0eceb;
+}
+.project-picker::backdrop {
+  background: #000a;
+}
+.project-picker h2 {
+  margin: 0 0 18px;
+}
+.desktop.source-hidden main {
+  grid-template-columns: minmax(380px, 1fr) 220px;
+}
+.desktop.source-hidden .editor-pane {
+  display: none;
+}
+@media (max-width: 1150px) {
+  .desktop.source-hidden main {
+    grid-template-columns: 1fr;
+  }
+}
+.picker-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.picker-tabs button {
+  flex: 1;
+}
+.picker-tabs [aria-selected="true"] {
+  border-color: #71dfc0;
+}
+.picker-content {
+  display: grid;
+  gap: 8px;
+}
+.picker-item {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.picker-item small {
+  display: block;
+  opacity: 0.7;
+  margin-top: 4px;
+}
 @media (max-width: 760px) {
   #toggle-source {
     display: block;
