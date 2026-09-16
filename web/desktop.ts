@@ -39,7 +39,11 @@ export function setupDesktop(canLeave: () => boolean) {
   home.title = "Close project and return home";
   home.innerHTML =
     '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  bar.querySelector(".toolbar-start")!.append(home);
+  const toolbarStart = bar.querySelector<HTMLElement>(".toolbar-start")!;
+  const sourceHeader = document.querySelector<HTMLElement>(".source-identity")!;
+  const brand = sourceHeader.querySelector<HTMLElement>(".source-brand")!;
+  const workspace = document.querySelector<HTMLElement>(".workspace")!;
+  toolbarStart.append(home);
   home.onclick = async () => {
     if (!canLeave()) return;
     home.disabled = true;
@@ -52,6 +56,7 @@ export function setupDesktop(canLeave: () => boolean) {
     }
   };
   const source = document.getElementById("toggle-source")!;
+  sourceHeader.append(source, home);
   source.setAttribute("aria-label", "Hide code");
   source.title = "Hide code";
   source.onclick = () => {
@@ -61,6 +66,12 @@ export function setupDesktop(canLeave: () => boolean) {
     source.setAttribute("aria-label", hidden ? "Show code" : "Hide code");
     source.title = hidden ? "Show code" : "Hide code";
     source.setAttribute("aria-pressed", String(hidden));
+    if (hidden) {
+      toolbarStart.prepend(brand, home);
+      workspace.append(source);
+    } else {
+      sourceHeader.append(brand, source, home);
+    }
   };
   const editors = document.createElement("select");
   editors.id = "external-editor";
@@ -225,7 +236,7 @@ export function setupDesktop(canLeave: () => boolean) {
   }
   if (document.body.classList.contains("platform-macos")) bar.prepend(controls);
   else bar.append(controls);
-  bar.onmousedown = (e) => {
+  const dragWindow = (e: MouseEvent) => {
     if (
       e.button === 0 &&
       !(e.target as HTMLElement).closest(
@@ -236,6 +247,8 @@ export function setupDesktop(canLeave: () => boolean) {
         action: e.detail === 2 ? "maximize" : "drag",
       });
   };
+  bar.onmousedown = dragWindow;
+  sourceHeader.onmousedown = dragWindow;
   window.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
       e.preventDefault();

@@ -11,10 +11,13 @@
     <main>
       <section class="editor-pane">
         <div class="source-identity">
-          <img src="/codecad-icon.png" alt="" width="30" height="30" />
-          <div>
-            <strong>CodeCAD</strong
-            ><small id="project-name">Loading project…</small>
+          <div class="source-brand">
+            <img src="/codecad-icon.png" alt="" width="30" height="30" />
+            <div>
+              <strong>CodeCAD</strong
+              ><small id="project-name">Loading project…</small
+              ><small id="project-file"></small>
+            </div>
           </div>
         </div>
         <div id="source-selection" aria-live="polite">
@@ -87,13 +90,6 @@
               <path d="m12 7.5 4.5 4.5M9.5 10l2.5 2.5M7 12.5l2.5 2.5" />
             </svg>
           </button>
-          <label class="tool-option"
-            ><input id="edges" type="checkbox" checked /> Edges</label
-          >
-          <label class="tool-option"
-            >Explode
-            <input id="explode" type="range" min="0" max="300" value="0"
-          /></label>
         </div>
         <button id="rebuild" hidden aria-label="Rebuild project">
           ↻ Rebuild
@@ -102,6 +98,25 @@
       <section class="workspace">
         <div id="model" class="tab active">
           <div id="canvas"></div>
+          <div class="model-overlay-tools">
+            <button
+              id="edges"
+              type="button"
+              aria-pressed="true"
+              title="Hide edges"
+            >
+              Edges
+            </button>
+            <label class="tool-option" for="explode">Explode</label>
+            <input
+              id="explode"
+              aria-label="Explode"
+              type="range"
+              min="0"
+              max="300"
+              value="0"
+            />
+          </div>
           <div id="measure-panel" hidden>
             <p>
               Hover to inspect a target. Click two targets to measure; hold

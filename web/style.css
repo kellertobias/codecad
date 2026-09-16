@@ -50,7 +50,7 @@ body {
   z-index: 30;
   gap: 8px;
 }
-.desktop.platform-macos .source-identity {
+.desktop.platform-macos:not(.source-hidden) .source-identity {
   padding-left: 75px;
 }
 .desktop.platform-macos.source-hidden .toolbar-start {
@@ -166,24 +166,56 @@ main {
   background: #1b292d;
   border-bottom: 1px solid #33414a;
 }
-.source-identity img {
+.source-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+}
+.source-brand img {
   flex: none;
   border-radius: 5px;
 }
-.source-identity div {
+.source-brand > div {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-.source-identity strong {
+.source-brand strong {
   font-size: 14px;
 }
-.source-identity small {
+.source-brand small {
   color: #95a9b4;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 28vw;
+}
+.source-brand #project-file {
+  display: none;
+}
+.toolbar-start .source-brand {
+  flex: none;
+  max-width: 210px;
+  margin-right: 6px;
+}
+.toolbar-start .source-brand img {
+  width: 26px;
+  height: 26px;
+}
+.toolbar-start .source-brand #project-name {
+  display: none;
+}
+.toolbar-start .source-brand #project-file {
+  display: block;
+}
+.source-identity > button {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  font-size: 18px;
 }
 .pane-head {
   padding: 12px 13px;
@@ -286,6 +318,7 @@ main {
 }
 .workspace {
   grid-area: workspace;
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -379,8 +412,9 @@ nav details[open] summary {
   font-size: 11px;
   white-space: nowrap;
 }
-.tool-option input[type="range"] {
-  width: 50px;
+#explode {
+  width: 78px;
+  accent-color: #69d2ba;
 }
 #rebuild:not([hidden]) {
   align-self: center;
@@ -413,6 +447,42 @@ nav button.active {
   position: relative;
   overflow: hidden;
   background: radial-gradient(ellipse at 45% 35%, #30434c 0, #1b2830 65%);
+}
+.model-overlay-tools {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border: 1px solid #42605b;
+  border-radius: 7px;
+  background: #1b292dd9;
+  box-shadow: 0 4px 16px #0005;
+}
+.model-overlay-tools button {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.model-overlay-tools button[aria-pressed="true"] {
+  color: #9ae8d9;
+  border-color: #70d3bf;
+  background: #29433f;
+}
+.workspace > #toggle-source {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 6;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  font-size: 18px;
+  background: #1b292d;
+  border-color: #42605b;
+  box-shadow: 0 4px 16px #0005;
 }
 #canvas {
   position: absolute;

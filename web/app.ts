@@ -76,6 +76,7 @@ type Model = {
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let sourceFile = "";
+const edgesEnabled = () => $("edges").getAttribute("aria-pressed") === "true";
 const isolation = new IsolationSession<{
   visible: Map<string, boolean>;
   position: THREE.Vector3;
@@ -636,7 +637,7 @@ function renderParts() {
       meshes.forEach((mesh) => {
         mesh.visible = visible.checked;
         edgeObjects.get(mesh.userData.path)!.visible =
-          visible.checked && $<HTMLInputElement>("edges").checked;
+          visible.checked && edgesEnabled();
       });
       renderParts();
     });
@@ -743,7 +744,7 @@ function applyPose() {
     mesh.matrixWorldNeedsUpdate = true;
     edges.matrix.copy(mesh.matrix);
     edges.matrixWorldNeedsUpdate = true;
-    edges.visible = mesh.visible && $<HTMLInputElement>("edges").checked;
+    edges.visible = mesh.visible && edgesEnabled();
     void i;
   }
   for (const marker of holeGroup.children) {
@@ -919,6 +920,9 @@ async function loadSource() {
   const response = await fetch("/api/source"),
     data = await response.json();
   sourceFile = data.file;
+  const projectFile = $("project-file");
+  projectFile.textContent = data.file.split(/[\\/]/).at(-1) ?? data.file;
+  projectFile.title = data.file;
   setSource(data.source, data.file);
   version = data.version;
   token = data.token;
@@ -997,7 +1001,13 @@ document.querySelectorAll<HTMLButtonElement>("[data-camera]").forEach(
     }),
 );
 $("filter").oninput = renderParts;
-$("edges").onchange = applyPose;
+$("edges").onclick = () => {
+  const button = $("edges");
+  const enabled = !edgesEnabled();
+  button.setAttribute("aria-pressed", String(enabled));
+  button.title = enabled ? "Hide edges" : "Show edges";
+  applyPose();
+};
 $("explode").oninput = () => {
   clearMeasurement();
   applyPose();
