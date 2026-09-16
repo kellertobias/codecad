@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cutListPages, pageSvg, pagesDxf } from "../src/reports.js";
+import {
+  cutListPages,
+  pageSvg,
+  pagesDxf,
+  sheetLayoutPages,
+} from "../src/reports.js";
+import { csv } from "../src/manufacturing.js";
+import { SheetMaterial } from "../src/stock.js";
 import { pdfPages } from "../src/exporters.js";
 
 test("cut-list reports paginate and keep complete labels across all formats", async () => {
@@ -31,4 +38,48 @@ test("cut-list reports paginate and keep complete labels across all formats", as
   assert.match(dxf, /cabinet\/part-79/);
   const pdf = Buffer.from(await pdfPages(pages.map(pageSvg)));
   assert.match(pdf.toString("latin1"), new RegExp(`/Count ${pages.length}\\b`));
+});
+
+test("configured millimetre precision reaches cut-list legends and CSV", () => {
+  const rows = [
+    {
+      path: "panel",
+      label: "Panel",
+      material: "Plywood",
+      width: 125.678,
+      height: 80,
+      thickness: 18.25,
+      quantity: 1,
+    },
+  ];
+  const svg = new TextDecoder().decode(
+    pageSvg(cutListPages(rows, "Cut list", 1)[0]!),
+  );
+  assert.match(svg, />125\.7</);
+  assert.match(svg, />80\.0</);
+  assert.match(svg, />18\.3</);
+  const output = csv(rows, 1);
+  assert.match(output, /"125\.7","80\.0","18\.3"/);
+  const material = new SheetMaterial({
+    id: "plywood",
+    thickness: 18.25,
+    width: 1250,
+    height: 2500,
+  });
+  const part = material.makePart({ id: "panel", width: 125.678, height: 80 });
+  const layout = sheetLayoutPages(
+    {
+      material,
+      number: 1,
+      parts: [
+        { part, copy: 0, x: 0, y: 0, width: 125.678, height: 80, rotation: 0 },
+      ],
+    },
+    1,
+  );
+  assert.match(
+    new TextDecoder().decode(pageSvg(layout[0]!)),
+    /1250\.0 × 2500\.0 × 18\.3 mm/,
+  );
+  assert.match(new TextDecoder().decode(pageSvg(layout[1]!)), />125\.7</);
 });

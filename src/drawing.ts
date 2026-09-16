@@ -16,6 +16,7 @@ import {
 import type { TechnicalDrawing, DrawingSubject } from "./outputs.js";
 import type { OpenCascadeEngine } from "./engine.js";
 import { partEntities } from "./manufacturing.js";
+import { formatMm } from "./precision.js";
 import {
   line,
   text,
@@ -237,21 +238,27 @@ function titleBlock(
     cell(label, value, x + dx, y + 27, 2.6);
   }
   const s = drawing.views[0]?.scale ?? 1,
-    bx = 18,
-    by = page.height - 19;
-  text(page, `GRAPHIC SCALE ${scaleLabel(s)} - PRINT AT 100%`, bx, by - 8, 2.4);
-  line(page, bx, by - 4, bx + 50, by - 4, "BORDER");
-  for (let i = 0; i <= 5; i++) {
-    line(page, bx + i * 10, by - 6, bx + i * 10, by - 2, "BORDER");
-    text(
+    bx = x,
+    by = y - 15;
+  text(page, `GRAPHIC SCALE ${scaleLabel(s)} · PRINT AT 100%`, bx, by - 2, 2.4);
+  for (let i = 0; i < 5; i++)
+    rectangle(
       page,
-      Number(((i * 10) / s).toFixed(1)).toString(),
-      bx + i * 10 - 1,
-      by + 2,
-      2.2,
+      bx + i * 10,
+      by,
+      10,
+      3.5,
+      i % 2 ? "SCALE_LIGHT" : "SCALE_DARK",
     );
-  }
-  text(page, "mm", bx + 55, by + 2, 2.2);
+  text(page, "0", bx, by + 7, 2.2);
+  text(page, "50 mm PRINTED", bx + 50, by + 7, 2.2);
+  text(
+    page,
+    `${formatMm(50 / s, o.mmPrecision, 2)} mm REAL`,
+    bx + 95,
+    by + 7,
+    2.2,
+  );
 }
 
 async function drawingPage(
@@ -609,7 +616,8 @@ async function drawingPage(
           P.y + oy + uy * 2.5 * sign + ux * 0.7 * side,
           "DIMENSIONS",
         );
-    const label = dim.label ?? `${Number(distance.toFixed(2))}`;
+    const label =
+      dim.label ?? formatMm(distance, drawing.options.mmPrecision, 2);
     const rotation = (Math.atan2(uy, ux) * 180) / Math.PI;
     page.entities.push({
       kind: "text",
@@ -745,14 +753,27 @@ export async function renderDrawing(
 ): Promise<Uint8Array> {
   return (await renderDrawingFormats(engine, drawing)).svg;
 }
+async function drawingReports(
+  engine: OpenCascadeEngine,
+  drawing: TechnicalDrawing,
+): Promise<ReportPage[]> {
+  const drawings = [drawing, ...drawing.additionalPages],
+    reports: ReportPage[] = [];
+  for (const [i, page] of drawings.entries())
+    reports.push(await drawingPage(engine, page, i + 1, drawings.length));
+  return reports;
+}
+export async function renderDrawingPreviews(
+  engine: OpenCascadeEngine,
+  drawing: TechnicalDrawing,
+): Promise<Uint8Array[]> {
+  return (await drawingReports(engine, drawing)).map(pageSvg);
+}
 export async function renderDrawingFormats(
   engine: OpenCascadeEngine,
   drawing: TechnicalDrawing,
 ): Promise<{ svg: Uint8Array; pages: Uint8Array[]; dxf: Uint8Array }> {
-  const drawings = [drawing, ...drawing.additionalPages],
-    reports: ReportPage[] = [];
-  for (const [i, d] of drawings.entries())
-    reports.push(await drawingPage(engine, d, i + 1, drawings.length));
+  const reports = await drawingReports(engine, drawing);
   const pages = reports.map(pageSvg);
   return { svg: pages[0]!, pages, dxf: pagesDxf(reports) };
 }

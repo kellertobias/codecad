@@ -42,7 +42,7 @@ type Model = {
   title: string;
   meshes: MeshData[];
   diagnostics: { severity: string; message: string }[];
-  files: { name: string; kind: string; size: number }[];
+  files: { name: string; kind: string; size: number; ready?: boolean }[];
   reports: ReportDownload[];
   frames: MotionFrame[];
   animations: StudioAnimation[];
@@ -613,7 +613,10 @@ function renderOutputs() {
     link.href = url + "&download";
     link.textContent = file.name;
     const size = document.createElement("small");
-    size.textContent = (file.size / 1024).toFixed(1) + " KB · " + file.kind;
+    size.textContent =
+      file.ready === false
+        ? `Generated when requested · ${file.kind}`
+        : `${(file.size / 1024).toFixed(1)} KB · ${file.kind}`;
     row.append(link, size);
     $("exports").append(row);
   }
@@ -622,6 +625,7 @@ function renderOutputs() {
     const viewer = pdfViewer(pdfReports[id]);
     pdfViewers.push(viewer);
     $(id).append(viewer.element);
+    if ($(id).classList.contains("active")) viewer.start();
   }
 }
 function renderCuts() {
@@ -759,6 +763,11 @@ document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach(
         .forEach((el) => el.classList.remove("active"));
       button.classList.add("active");
       $(button.dataset.tab!).classList.add("active");
+      pdfViewers
+        .filter(
+          (viewer) => viewer.element.parentElement?.id === button.dataset.tab,
+        )
+        .forEach((viewer) => viewer.start());
       resize();
     }),
 );

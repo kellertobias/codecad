@@ -19,7 +19,7 @@ import {
 } from "./outputs.js";
 import { MotionStudy } from "./motion.js";
 import { cutRows, csv, nest, layoutDxf, sheetParts } from "./manufacturing.js";
-import { renderDrawingFormats } from "./drawing.js";
+import { renderDrawingFormats, renderDrawingPreviews } from "./drawing.js";
 import {
   cutListPages,
   sheetLayoutPages,
@@ -43,7 +43,11 @@ const serializeMesh = (mesh: MeshData) => ({
   edges: Array.from(mesh.edges),
 });
 
-export async function buildProject(entry: string, directory: string) {
+export async function buildProject(
+  entry: string,
+  directory: string,
+  options: { lazyExports?: boolean; exportOnly?: string | undefined } = {},
+) {
   entry = await realpath(entry);
   const module = await import(pathToFileURL(resolve(entry)).href);
   const constructors = Object.values(module).filter(
@@ -57,9 +61,15 @@ export async function buildProject(entry: string, directory: string) {
   const project = new constructors[0]!(),
     engine = new OpenCascadeEngine();
   await mkdir(directory, { recursive: true });
-  const files: { name: string; kind: string; size: number }[] = [],
+  const files: { name: string; kind: string; size: number; ready: boolean }[] =
+      [],
     diagnostics: EngineDiagnostic[] = [];
   const reports: ReportDownload[] = [];
+  const pending = (name: string, kind: string) => {
+    if (basename(name) !== name || name.startsWith("."))
+      throw new Error("Output filename must be a plain filename");
+    files.push({ name, kind, size: 0, ready: false });
+  };
   const save = async (
     name: string,
     kind: string,
@@ -72,6 +82,7 @@ export async function buildProject(entry: string, directory: string) {
       name,
       kind,
       size: typeof data === "string" ? Buffer.byteLength(data) : data.length,
+      ready: true,
     });
   };
   try {
@@ -99,11 +110,24 @@ export async function buildProject(entry: string, directory: string) {
         const value = (project as any)[output.name](),
           requested = output.options.fileName;
         if (value instanceof TechnicalDrawing) {
-          const { svg, dxf, pages } = await renderDrawingFormats(engine, value);
           const stem = (requested ?? output.name).replace(
             /\.(svg|pdf|dxf)$/i,
             "",
           );
+          if (
+            options.exportOnly &&
+            !options.exportOnly.startsWith(stem + ".") &&
+            !options.exportOnly.startsWith(stem + "-page-")
+          )
+            continue;
+          const rendered = options.lazyExports
+            ? {
+                pages: await renderDrawingPreviews(engine, value),
+                dxf: undefined,
+              }
+            : await renderDrawingFormats(engine, value);
+          const { pages } = rendered,
+            svg = pages[0]!;
           await save(stem + ".svg", "drawing", svg);
           const previews = [stem + ".svg"];
           for (let i = 1; i < pages.length; i++) {
@@ -111,8 +135,13 @@ export async function buildProject(entry: string, directory: string) {
             await save(name, "drawing", pages[i]!);
             previews.push(name);
           }
-          await save(stem + ".pdf", "pdf", await pdfPages(pages));
-          await save(stem + ".dxf", "drawing-dxf", dxf);
+          if (options.lazyExports) {
+            pending(stem + ".pdf", "pdf");
+            pending(stem + ".dxf", "drawing-dxf");
+          } else {
+            await save(stem + ".pdf", "pdf", await pdfPages(pages));
+            await save(stem + ".dxf", "drawing-dxf", rendered.dxf!);
+          }
           reports.push({
             title: stem,
             kind: "drawing",
@@ -125,12 +154,33 @@ export async function buildProject(entry: string, directory: string) {
             /\.(svg|pdf|dxf|csv)$/i,
             "",
           );
+          if (
+            options.exportOnly &&
+            !options.exportOnly.startsWith(stem + ".") &&
+            !options.exportOnly.startsWith(stem + "-")
+          )
+            continue;
           const rows = cutRows(project, value),
-            pages = cutListPages(rows, stem);
-          await save(stem + ".csv", "cutList", csv(rows));
+            pages = cutListPages(rows, stem, value.options.mmPrecision);
+          if (options.lazyExports) pending(stem + ".csv", "cutList");
+          else
+            await save(
+              stem + ".csv",
+              "cutList",
+              csv(rows, value.options.mmPrecision),
+            );
           await save(stem + ".svg", "cutList-preview", pageSvg(pages[0]!));
-          await save(stem + ".pdf", "pdf", await pdfPages(pages.map(pageSvg)));
-          await save(stem + ".dxf", "cutList-dxf", pagesDxf(pages));
+          if (options.lazyExports) {
+            pending(stem + ".pdf", "pdf");
+            pending(stem + ".dxf", "cutList-dxf");
+          } else {
+            await save(
+              stem + ".pdf",
+              "pdf",
+              await pdfPages(pages.map(pageSvg)),
+            );
+            await save(stem + ".dxf", "cutList-dxf", pagesDxf(pages));
+          }
           reports.push({
             title: stem,
             kind: "cutList",
@@ -154,18 +204,23 @@ export async function buildProject(entry: string, directory: string) {
             for (const layout of nest(selected)) {
               const layoutStem =
                 stem + "-" + layout.material.id + "-sheet-" + layout.number;
-              const pages = sheetLayoutPages(layout);
+              const pages = sheetLayoutPages(layout, value.options.mmPrecision);
               await save(layoutStem + ".svg", "nesting", pageSvg(pages[0]!));
-              await save(
-                layoutStem + ".pdf",
-                "pdf",
-                await pdfPages(pages.map(pageSvg)),
-              );
-              await save(
-                layoutStem + ".dxf",
-                "nesting-dxf",
-                await layoutDxf(engine, layout),
-              );
+              if (options.lazyExports) {
+                pending(layoutStem + ".pdf", "pdf");
+                pending(layoutStem + ".dxf", "nesting-dxf");
+              } else {
+                await save(
+                  layoutStem + ".pdf",
+                  "pdf",
+                  await pdfPages(pages.map(pageSvg)),
+                );
+                await save(
+                  layoutStem + ".dxf",
+                  "nesting-dxf",
+                  await layoutDxf(engine, layout),
+                );
+              }
               reports.push({
                 title: `${layout.material.name} · Sheet ${layout.number}`,
                 kind: "nesting",
@@ -175,25 +230,33 @@ export async function buildProject(entry: string, directory: string) {
             }
           }
         } else if (value instanceof ManufacturingDxf) {
+          const name = requested ?? "manufacturing.zip";
+          if (options.exportOnly && options.exportOnly !== name) continue;
+          if (options.lazyExports) {
+            pending(name, "dxf");
+            continue;
+          }
           const exports = await engine.exportDxf(value);
-          await save(
-            requested ?? "manufacturing.zip",
-            "dxf",
-            zipSync(Object.fromEntries(exports)),
-          );
+          await save(name, "dxf", zipSync(Object.fromEntries(exports)));
           for (const [name, data] of exports)
             await save(name, "dxf-part", data);
         } else if (value instanceof StepModel) {
+          const name = requested ?? "model.step";
+          if (options.exportOnly && options.exportOnly !== name) continue;
           if (Array.isArray(value.options.of) || value.options.placement)
             throw new Error(
               "STEP output currently takes a placed component or assembly",
             );
-          await save(
-            requested ?? "model.step",
-            "step",
-            await engine.exportStep(value.options.of as Project),
-          );
+          if (options.lazyExports) pending(name, "step");
+          else
+            await save(
+              name,
+              "step",
+              await engine.exportStep(value.options.of as Project),
+            );
         } else if (value instanceof MotionStudy) {
+          const name = requested ?? "motion.glb";
+          if (options.exportOnly && options.exportOnly !== name) continue;
           const parts = descendants(project).filter(
             (p): p is Part => p instanceof Part,
           );
@@ -217,11 +280,13 @@ export async function buildProject(entry: string, directory: string) {
                 code: "CLEARANCE",
                 message: `${r.between.join(" / ")}: ${r.measured.toFixed(2)} mm; requested ${r.minimum} mm (sampled)`,
               });
-          await save(
-            requested ?? "motion.glb",
-            "motion",
-            await glb(model.meshes, currentFrames, value.duration),
-          );
+          if (options.lazyExports) pending(name, "motion");
+          else
+            await save(
+              name,
+              "motion",
+              await glb(model.meshes, currentFrames, value.duration),
+            );
         } else throw new Error("Output method returned the wrong output type");
       } catch (error) {
         diagnostics.push({
@@ -231,13 +296,15 @@ export async function buildProject(entry: string, directory: string) {
         });
       }
     }
-    await save("preview.glb", "model", await glb(model.meshes));
+    if (options.lazyExports) pending("preview.glb", "model");
+    else if (!options.exportOnly || options.exportOnly === "preview.glb")
+      await save("preview.glb", "model", await glb(model.meshes));
     const unfolds: {
       path: string;
       label: string;
       frames: ReturnType<typeof serializeMesh>[];
     }[] = [];
-    for (const part of descendants(project).filter(
+    for (const part of (options.exportOnly ? [] : descendants(project)).filter(
       (component): component is SheetMetalPart =>
         component instanceof SheetMetalPart,
     )) {
@@ -280,7 +347,8 @@ export async function buildProject(entry: string, directory: string) {
       })),
       meshes: model.meshes.map(serializeMesh),
     };
-    await writeFile(join(directory, "model.json"), JSON.stringify(manifest));
+    if (!options.exportOnly)
+      await writeFile(join(directory, "model.json"), JSON.stringify(manifest));
     return manifest;
   } finally {
     engine.dispose();
@@ -290,7 +358,10 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)
 ) {
-  buildProject(process.argv[2]!, process.argv[3]!)
+  buildProject(process.argv[2]!, process.argv[3]!, {
+    lazyExports: process.env.CODECAD_LAZY_EXPORTS === "1",
+    exportOnly: process.env.CODECAD_EXPORT_ONLY,
+  })
     .then((result) => {
       console.log(
         JSON.stringify({

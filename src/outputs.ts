@@ -5,6 +5,7 @@ import type {
   Point2,
   Point3,
 } from "./model.js";
+import { validateMmPrecision } from "./precision.js";
 import type { Material, SheetPart } from "./stock.js";
 export interface DrawingOptions {
   readonly id?: string;
@@ -16,6 +17,7 @@ export interface DrawingOptions {
   readonly revision?: string;
   readonly author?: string;
   readonly material?: string;
+  readonly mmPrecision?: number;
 }
 export type DrawingSubject = Component | readonly Component[];
 export interface DrawingView {
@@ -89,7 +91,9 @@ export class TechnicalDrawing {
     text: string;
     height?: number;
   }[] = [];
-  constructor(readonly options: DrawingOptions) {}
+  constructor(readonly options: DrawingOptions) {
+    validateMmPrecision(options.mmPrecision);
+  }
   view(o: DrawingView): this {
     if (this.views.some((v) => v.id === o.id))
       throw new Error("Duplicate view id");
@@ -153,8 +157,11 @@ export class CutList {
       readonly materials?: readonly Material[];
       readonly nesting?: "automatic" | "rectangular" | "none";
       readonly includeLayouts?: boolean;
+      readonly mmPrecision?: number;
     } = {},
-  ) {}
+  ) {
+    validateMmPrecision(options.mmPrecision);
+  }
 }
 export class ManufacturingDxf {
   constructor(

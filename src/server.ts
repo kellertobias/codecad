@@ -86,7 +86,11 @@ function rebuild() {
       entry,
       directory,
     ],
-    { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CODECAD_LAZY_EXPORTS: "1" },
+    },
   );
   child = processHandle;
   let log = "";
@@ -140,6 +144,79 @@ const watchers = [...new Set([dirname(entry), join(root, "src")])].map((path) =>
 );
 function hash(text: string) {
   return createHash("sha256").update(text).digest("hex");
+}
+const generating = new Map<string, Promise<void>>();
+async function generateArtifact(
+  name: string,
+  directory: string,
+): Promise<void> {
+  const path = join(directory, name);
+  try {
+    await stat(path);
+    return;
+  } catch {
+    /* Not generated yet. */
+  }
+  // One export worker per snapshot avoids overlapping writes when two
+  // formats of the same report are requested at the same time.
+  const previous = generating.get(directory);
+  const running = (previous ?? Promise.resolve())
+    .catch(() => {})
+    .then(async () => {
+      try {
+        await stat(path);
+        return;
+      } catch {
+        /* Another request may have completed it. */
+      }
+      await new Promise<void>((resolve, reject) => {
+        const native = process.env.CODECAD_COMPILER !== "esbuild";
+        const child = spawn(
+          process.execPath,
+          [
+            "--enable-source-maps",
+            "--import",
+            native ? join(root, "src/native-loader.mjs") : "tsx",
+            join(root, "src/worker.ts"),
+            entry,
+            directory,
+          ],
+          {
+            cwd: root,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: {
+              ...process.env,
+              CODECAD_EXPORT_ONLY: name,
+              ...(native
+                ? { CODECAD_NATIVE_OUTPUT: join(directory, ".native/js") }
+                : {}),
+            },
+          },
+        );
+        let log = "";
+        for (const stream of [child.stdout, child.stderr])
+          stream?.on("data", (chunk: Buffer) => {
+            log = (log + chunk.toString()).slice(-4000);
+          });
+        const timeout = setTimeout(() => child.kill("SIGTERM"), 120000);
+        child.on("error", reject);
+        child.on("close", (code) => {
+          clearTimeout(timeout);
+          if (code === 0) resolve();
+          else
+            reject(
+              new Error(`Export failed (${code ?? "terminated"}): ${log}`),
+            );
+        });
+      });
+    });
+  generating.set(directory, running);
+  try {
+    await running;
+  } finally {
+    if (generating.get(directory) === running) generating.delete(directory);
+  }
+  await stat(path);
 }
 const server = createServer(async (req, res) => {
   try {
@@ -264,8 +341,9 @@ const server = createServer(async (req, res) => {
         res.writeHead(404).end();
         return;
       }
+      const activeDirectory = currentDirectory;
       const manifest = JSON.parse(
-        await readFile(join(currentDirectory, "model.json"), "utf8"),
+        await readFile(join(activeDirectory, "model.json"), "utf8"),
       );
       if (!manifest.files.some((f: { name: string }) => f.name === name)) {
         res.writeHead(404).end();
@@ -278,6 +356,7 @@ const server = createServer(async (req, res) => {
           : name.endsWith(".csv")
             ? "text/csv"
             : "application/octet-stream";
+      await generateArtifact(name, activeDirectory);
       res.writeHead(200, {
         "Content-Type": mime,
         "Cache-Control": "no-store",
@@ -287,7 +366,7 @@ const server = createServer(async (req, res) => {
             }
           : {}),
       });
-      res.end(await readFile(join(currentDirectory, name)));
+      res.end(await readFile(join(activeDirectory, name)));
       return;
     }
     const resources: Record<string, [string, string]> = {

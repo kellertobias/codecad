@@ -15,6 +15,7 @@ import {
 } from "./stock.js";
 import type { CutList, ManufacturingDxf } from "./outputs.js";
 import type { OpenCascadeEngine } from "./engine.js";
+import { formatMm } from "./precision.js";
 
 export interface CutRow {
   path: string;
@@ -80,7 +81,7 @@ export function cutRows(root: Component, output?: CutList): CutRow[] {
       quantity: p.quantity,
     }));
 }
-export function csv(rows: CutRow[]): string {
+export function csv(rows: CutRow[], mmPrecision?: number): string {
   const quote = (s: unknown) => '"' + String(s).replaceAll('"', '""') + '"';
   return (
     [
@@ -97,9 +98,9 @@ export function csv(rows: CutRow[]): string {
         r.path,
         r.label,
         r.material,
-        r.width,
-        r.height,
-        r.thickness,
+        formatMm(r.width, mmPrecision),
+        formatMm(r.height, mmPrecision),
+        formatMm(r.thickness, mmPrecision),
         r.quantity,
       ]),
     ]

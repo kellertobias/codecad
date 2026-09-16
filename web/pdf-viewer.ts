@@ -44,6 +44,7 @@ export function pdfViewer(reports: PdfReport[]) {
   let scale = 1,
     fit = true,
     disposed = false,
+    started = false,
     frame = 0;
   const readout = document.createElement("span");
   const pageNumber = document.createElement("input");
@@ -250,45 +251,50 @@ export function pdfViewer(reports: PdfReport[]) {
   };
   const observer = new ResizeObserver(layout);
   observer.observe(viewport);
-  void (async () => {
-    try {
-      for (const report of reports) {
-        if (disposed) return;
-        const heading = document.createElement("h3");
-        heading.textContent = report.title;
-        heading.append(report.download);
-        stack.append(heading);
-        const task = getDocument({ url: report.url });
-        loading.push(task);
-        const pdf = await task.promise;
-        if (disposed) return;
-        for (let n = 1; n <= pdf.numPages; n++) {
-          const page = await pdf.getPage(n);
+  const start = () => {
+    if (started || disposed) return;
+    started = true;
+    void (async () => {
+      try {
+        for (const report of reports) {
           if (disposed) return;
-          const size = page.getViewport({ scale: 1 }),
-            slot = document.createElement("div");
-          slot.className = "pdf-page";
-          slot.setAttribute("aria-label", `${report.title} · page ${n}`);
-          stack.append(slot);
-          pages.push({
-            page,
-            slot,
-            width: size.width,
-            height: size.height,
-            rendered: 0,
-          });
+          const heading = document.createElement("h3");
+          heading.textContent = report.title;
+          heading.append(report.download);
+          stack.append(heading);
+          const task = getDocument({ url: report.url });
+          loading.push(task);
+          const pdf = await task.promise;
+          if (disposed) return;
+          for (let n = 1; n <= pdf.numPages; n++) {
+            const page = await pdf.getPage(n);
+            if (disposed) return;
+            const size = page.getViewport({ scale: 1 }),
+              slot = document.createElement("div");
+            slot.className = "pdf-page";
+            slot.setAttribute("aria-label", `${report.title} · page ${n}`);
+            stack.append(slot);
+            pages.push({
+              page,
+              slot,
+              width: size.width,
+              height: size.height,
+              rendered: 0,
+            });
+          }
         }
+        status.textContent = `${pages.length} pages`;
+        pageNumber.max = String(pages.length);
+        layout();
+      } catch (error) {
+        if (!disposed)
+          status.textContent = `Could not load PDF: ${String(error)}`;
       }
-      status.textContent = `${pages.length} pages`;
-      pageNumber.max = String(pages.length);
-      layout();
-    } catch (error) {
-      if (!disposed)
-        status.textContent = `Could not load PDF: ${String(error)}`;
-    }
-  })();
+    })();
+  };
   return {
     element,
+    start,
     dispose() {
       disposed = true;
       observer.disconnect();

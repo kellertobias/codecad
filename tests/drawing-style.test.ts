@@ -77,6 +77,41 @@ test("material regular and cutaway styles reach SVG and DXF; openings stay unhat
     engine.dispose();
   }
 });
+
+test("title block has an alternating printed scale and configured dimension precision", async () => {
+  const project = new Styled(),
+    engine = new OpenCascadeEngine();
+  try {
+    await engine.evaluate({ root: project, revision: 1 });
+    const drawing = new TechnicalDrawing({
+      title: "Scale test",
+      mmPrecision: 1,
+    })
+      .view({
+        id: "plan",
+        of: project,
+        kind: "top",
+        at: { x: 30, y: 30 },
+        scale: 0.5,
+      })
+      .dimension({
+        view: "plan",
+        from: { x: 0, y: 0, z: 0 },
+        to: { x: 12.34, y: 0, z: 0 },
+        offset: 8,
+      });
+    const { svg, dxf } = await renderDrawingFormats(engine, drawing);
+    const text = new TextDecoder().decode(svg);
+    assert.equal((text.match(/<path[^>]+fill="#20252a"/g) ?? []).length, 3);
+    assert.equal((text.match(/<path[^>]+fill="white"/g) ?? []).length, 2);
+    assert.match(text, /50 mm PRINTED/);
+    assert.match(text, /100\.0 mm REAL/);
+    assert.match(text, />12\.3</);
+    assert.match(new TextDecoder().decode(dxf), /SCALE_DARK/);
+  } finally {
+    engine.dispose();
+  }
+});
 test("hatching merges triangle seams and respects line spacing", () => {
   const lines = hatchTriangles(
     [

@@ -6,6 +6,7 @@ import {
   type CutRow,
   type SheetLayout,
 } from "./manufacturing.js";
+import { formatMm } from "./precision.js";
 
 export interface ReportDownload {
   title: string;
@@ -81,7 +82,13 @@ export function pageSvg(page: ReportPage): Uint8Array {
       const weight =
         e.style?.lineWidth ??
         (/BORDER|VISIBLE|BLANK_OUTLINE/.test(e.layer) ? 0.35 : 0.18);
-      return `<path d="${e.points.map((p, i) => (i ? "L" : "M") + p.x + "," + p.y).join("")}${e.closed ? "Z" : ""}" fill="none" stroke="${escapeXml(e.style?.stroke ?? "#20252a")}" stroke-width="${weight}" ${dashed ? 'stroke-dasharray="3,1,0.5,1"' : ""}/>`;
+      const fill =
+        e.layer === "SCALE_DARK"
+          ? "#20252a"
+          : e.layer === "SCALE_LIGHT"
+            ? "white"
+            : "none";
+      return `<path d="${e.points.map((p, i) => (i ? "L" : "M") + p.x + "," + p.y).join("")}${e.closed ? "Z" : ""}" fill="${fill}" stroke="${escapeXml(e.style?.stroke ?? "#20252a")}" stroke-width="${weight}" ${dashed ? 'stroke-dasharray="3,1,0.5,1"' : ""}/>`;
     })
     .join("");
   return new TextEncoder().encode(
@@ -125,7 +132,11 @@ function wrap(value: string, limit: number): string[] {
   return result;
 }
 /** Tables paginate instead of shrinking or truncating long part/material names. */
-export function cutListPages(rows: CutRow[], title = "Cut list"): ReportPage[] {
+export function cutListPages(
+  rows: CutRow[],
+  title = "Cut list",
+  mmPrecision?: number,
+): ReportPage[] {
   const pages: ReportPage[] = [],
     columns = [12, 111, 194, 215, 237, 261, 285];
   let page: ReportPage = { width: 297, height: 210, entities: [] },
@@ -160,9 +171,9 @@ export function cutListPages(rows: CutRow[], title = "Cut list"): ReportPage[] {
     const cells = [
       names,
       materials,
-      [String(row.width)],
-      [String(row.height)],
-      [String(row.thickness)],
+      [formatMm(row.width, mmPrecision)],
+      [formatMm(row.height, mmPrecision)],
+      [formatMm(row.thickness, mmPrecision)],
       [String(row.quantity)],
     ];
     cells.forEach((lines, i) =>
@@ -186,7 +197,10 @@ export function cutListPages(rows: CutRow[], title = "Cut list"): ReportPage[] {
   return pages;
 }
 /** Scaled A4 layout overview plus a legible numbered part legend. DXF stays 1:1. */
-export function sheetLayoutPages(layout: SheetLayout): ReportPage[] {
+export function sheetLayoutPages(
+  layout: SheetLayout,
+  mmPrecision?: number,
+): ReportPage[] {
   const page: ReportPage = { width: 210, height: 297, entities: [] },
     w = layout.material.width!,
     h = layout.material.height!;
@@ -196,7 +210,7 @@ export function sheetLayoutPages(layout: SheetLayout): ReportPage[] {
   text(page, `Sheet ${layout.number} · ${layout.material.name}`, 12, 16, 4);
   text(
     page,
-    `${w} × ${h} × ${layout.material.thickness} mm · ${layout.parts.length} blanks`,
+    `${formatMm(w, mmPrecision)} × ${formatMm(h, mmPrecision)} × ${formatMm(layout.material.thickness, mmPrecision)} mm · ${layout.parts.length} blanks`,
     12,
     24,
     3.2,
@@ -242,5 +256,8 @@ export function sheetLayoutPages(layout: SheetLayout): ReportPage[] {
     thickness: layout.material.thickness,
     quantity: 1,
   }));
-  return [page, ...cutListPages(rows, `Sheet ${layout.number} · part legend`)];
+  return [
+    page,
+    ...cutListPages(rows, `Sheet ${layout.number} · part legend`, mmPrecision),
+  ];
 }
