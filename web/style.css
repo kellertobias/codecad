@@ -568,15 +568,14 @@ aside {
   flex-direction: column;
   min-height: 0;
 }
-.parts-tools {
-  min-height: 34px;
+.parts-filter-row {
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
-  padding: 5px 9px;
-  border-bottom: 1px solid #33414a;
-  color: #92a9b2;
-  font-size: 11px;
+  align-items: center;
+  padding: 10px;
+}
+.parts-filter-row #show-all {
+  flex: none;
 }
 #parameters-panel {
   border-bottom: 1px solid #33414a;
@@ -610,7 +609,7 @@ aside {
   font-size: 11px;
 }
 #filter {
-  margin: 10px;
+  flex: 1;
   background: #121b22;
   border: 1px solid #33434e;
   border-radius: 5px;

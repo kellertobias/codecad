@@ -272,8 +272,14 @@ function setProjection(parallel: boolean) {
   controls.enableDamping = true;
   controls.target.copy(target);
   fit();
-  $("projection-parallel").setAttribute("aria-pressed", String(parallel));
-  $("projection-perspective").setAttribute("aria-pressed", String(!parallel));
+  const toggle = $("projection-toggle");
+  toggle.setAttribute("aria-pressed", String(parallel));
+  toggle.setAttribute(
+    "aria-label",
+    `Switch to ${parallel ? "perspective" : "parallel"} projection`,
+  );
+  toggle.title = `${parallel ? "Parallel" : "Perspective"} projection · switch to ${parallel ? "perspective" : "parallel"}`;
+  toggle.textContent = parallel ? "▱" : "◈";
 }
 function clearScene() {
   for (const child of [...group.children]) {
@@ -379,7 +385,6 @@ function showModel(data: Model) {
     edgeObjects.set(d.componentPath, edges);
   }
   updateHoleMarkers();
-  $("count").textContent = String(data.meshes.length);
   $("summary").textContent =
     data.meshes.length + " solids · " + data.files.length + " outputs";
   $("messages").replaceChildren();
@@ -578,7 +583,6 @@ function renderParts() {
   const filter = $<HTMLInputElement>("filter").value.toLowerCase();
   $("parts").replaceChildren();
   const components = model?.components ?? [];
-  $("count").textContent = String(components.length);
   const children = (path?: string) =>
     components.filter((c) => c.parent === path);
   const matches = (c: Model["components"][number]) =>
@@ -982,8 +986,8 @@ $("fit").onclick = () => {
   fit();
   $("view-presets").removeAttribute("open");
 };
-$("projection-parallel").onclick = () => setProjection(true);
-$("projection-perspective").onclick = () => setProjection(false);
+$("projection-toggle").onclick = () =>
+  setProjection(!(camera instanceof THREE.OrthographicCamera));
 $("show-all").onclick = () => showOnly("");
 document.querySelectorAll<HTMLButtonElement>("[data-camera]").forEach(
   (button) =>

@@ -57,20 +57,11 @@
             </div>
           </details>
           <button
-            id="projection-parallel"
+            id="projection-toggle"
             class="tool-icon"
-            aria-label="Parallel projection"
-            title="Parallel projection"
+            aria-label="Switch to parallel projection"
+            title="Perspective projection · switch to parallel"
             aria-pressed="false"
-          >
-            ▱
-          </button>
-          <button
-            id="projection-perspective"
-            class="tool-icon"
-            aria-label="Perspective projection"
-            title="Perspective projection"
-            aria-pressed="true"
           >
             ◈
           </button>
@@ -81,7 +72,20 @@
             title="Measure"
             aria-pressed="false"
           >
-            ⌁
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 16.5 16.5 3 21 7.5 7.5 21 3 16.5Z" />
+              <path d="m12 7.5 4.5 4.5M9.5 10l2.5 2.5M7 12.5l2.5 2.5" />
+            </svg>
           </button>
           <label class="tool-option"
             ><input id="edges" type="checkbox" checked /> Edges</label
@@ -145,15 +149,14 @@
           <form id="parameters"></form>
           <div id="parameter-status" role="status" aria-live="polite"></div>
         </section>
-        <div class="parts-tools">
-          <span id="count">0</span>
+        <div class="parts-filter-row">
+          <input
+            id="filter"
+            placeholder="Filter parts…"
+            aria-label="Filter parts"
+          />
           <button id="show-all" hidden>Show all</button>
         </div>
-        <input
-          id="filter"
-          placeholder="Filter parts…"
-          aria-label="Filter parts"
-        />
         <div id="parts" role="tree" aria-label="Component hierarchy"></div>
         <div class="aside-foot">
           Local coordinates for machining<br />World coordinates for assembly
