@@ -161,6 +161,11 @@ let controls: OrbitControls<
   THREE.PerspectiveCamera | THREE.OrthographicCamera
 > = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.mouseButtons = {
+  LEFT: null,
+  MIDDLE: THREE.MOUSE.ROTATE,
+  RIGHT: THREE.MOUSE.PAN,
+};
 scene.add(new THREE.HemisphereLight(0xe7f4ff, 0x766a55, 2.4));
 const sun = new THREE.DirectionalLight(0xffffff, 3);
 sun.position.set(700, -900, 1800);
@@ -175,39 +180,19 @@ scene.add(grid);
 const group = new THREE.Group();
 scene.add(group);
 const holeGroup = new THREE.Group(),
-  measurementGroup = new THREE.Group();
-scene.add(holeGroup, measurementGroup);
+  measurementGroup = new THREE.Group(),
+  hoverGroup = new THREE.Group();
+scene.add(holeGroup, measurementGroup, hoverGroup);
 const measureLabel = document.createElement("div");
 measureLabel.className = "measure-label";
 measureLabel.hidden = true;
 canvas.append(measureLabel);
-const measureGuide = document.createElementNS(
-  "http://www.w3.org/2000/svg",
-  "svg",
-);
-measureGuide.classList.add("measure-guide");
-measureGuide.setAttribute("aria-hidden", "true");
-measureGuide.setAttribute("hidden", "");
-const guideLine = document.createElementNS(
-  "http://www.w3.org/2000/svg",
-  "line",
-);
-const guideStart = document.createElementNS(
-  "http://www.w3.org/2000/svg",
-  "circle",
-);
-const guideEnd = document.createElementNS(
-  "http://www.w3.org/2000/svg",
-  "circle",
-);
-for (const marker of [guideStart, guideEnd]) marker.setAttribute("r", "5");
-measureGuide.append(guideLine, guideStart, guideEnd);
-canvas.append(measureGuide);
 let measurementMode = false,
   measurePicks: MeasurePick[] = [],
   measured: MeasureResult | undefined;
 const objects = new Map<string, THREE.Mesh>(),
   edgeObjects = new Map<string, THREE.LineSegments>();
+let hoveredPath = "";
 let bounds = new THREE.Box3(),
   center = new THREE.Vector3();
 function resize() {
@@ -271,6 +256,11 @@ function setProjection(parallel: boolean) {
   camera.position.copy(position);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
+  controls.mouseButtons = {
+    LEFT: null,
+    MIDDLE: THREE.MOUSE.ROTATE,
+    RIGHT: THREE.MOUSE.PAN,
+  };
   controls.target.copy(target);
   fit();
   const toggle = $("projection-toggle");
@@ -294,7 +284,7 @@ function clearScene() {
   objects.clear();
   edgeObjects.clear();
   renderedGeometry.clear();
-  for (const overlay of [holeGroup, measurementGroup]) {
+  for (const overlay of [holeGroup, measurementGroup, hoverGroup]) {
     for (const child of [...overlay.children]) {
       const drawable = child as THREE.Mesh;
       drawable.geometry.dispose();
@@ -307,7 +297,7 @@ function clearScene() {
   measurePicks = [];
   measured = undefined;
   measureLabel.hidden = true;
-  measureGuide.setAttribute("hidden", "");
+  hoveredPath = "";
 }
 function updateHoleMarkers() {
   if (!model) return;
@@ -505,13 +495,20 @@ function renderParameters(state: ParameterState | null) {
     }
   };
 }
+function updateMeshHighlights() {
+  for (const [id, mesh] of objects)
+    (mesh.material as THREE.MeshStandardMaterial).emissive.setHex(
+      hoveredPath === id
+        ? 0x248f70
+        : selected && within(id, selected)
+          ? 0x244c43
+          : 0,
+    );
+}
 function select(path: string) {
   selected = path;
   renderAnimationChoices();
-  for (const [id, mesh] of objects)
-    (mesh.material as THREE.MeshStandardMaterial).emissive.setHex(
-      path && within(id, path) ? 0x244c43 : 0,
-    );
+  updateMeshHighlights();
   const part = model?.meshes.find((m) => m.componentPath === path);
   $("selection").textContent = part
     ? path + " · " + (part.volume / 1000).toFixed(1) + " cm³"
@@ -525,11 +522,13 @@ function select(path: string) {
     .flatMap((c) => c.source ?? []);
   const lines = source.filter((s) => s.file === sourceFile).map((s) => s.line);
   highlightLines(dirty ? [] : lines);
-  $("source-selection").textContent = dirty
+  const sourceSelection = $("source-selection");
+  sourceSelection.textContent = dirty
     ? "Source changed · save and rebuild to refresh component links."
     : path
       ? `${path} · ${new Set(lines).size} source lines${source.some((s) => s.file !== sourceFile) ? " · also defined in other files" : ""}`
-      : "Select a component to highlight its source references.";
+      : "";
+  sourceSelection.hidden = !sourceSelection.textContent;
   renderParts();
   applyPose();
 }
@@ -955,6 +954,7 @@ onSourceChange(() => {
   highlightLines([], false);
   $("source-selection").textContent =
     "Source changed · save and rebuild to refresh component links.";
+  $("source-selection").hidden = false;
   $("source-status").textContent = "Unsaved changes · Ctrl / ⌘ + S";
 });
 window.addEventListener("keydown", (event) => {
@@ -1065,8 +1065,47 @@ function clearMeasurement() {
   measurePicks = [];
   measured = undefined;
   measureLabel.hidden = true;
-  measureGuide.setAttribute("hidden", "");
   $("measure-result").textContent = "Pick the first target.";
+}
+function clearHover() {
+  for (const child of [...hoverGroup.children]) {
+    const drawable = child as THREE.Mesh;
+    drawable.geometry.dispose();
+    (drawable.material as THREE.Material).dispose();
+    hoverGroup.remove(child);
+  }
+  hoveredPath = "";
+  updateMeshHighlights();
+}
+function showHover(pick: MeasurePick | undefined, path: string) {
+  clearHover();
+  if (!pick) return;
+  hoveredPath = path;
+  updateMeshHighlights();
+  if (pick.kind === "face") return;
+  const radius = Math.max(
+    3,
+    Math.min(8, bounds.getSize(new THREE.Vector3()).length() * 0.001),
+  );
+  const marker =
+    pick.kind === "edge"
+      ? new THREE.Mesh(
+          new THREE.TubeGeometry(
+            new THREE.LineCurve3(pick.a, pick.b),
+            1,
+            Math.max(2, radius * 0.5),
+            8,
+            false,
+          ),
+          new THREE.MeshBasicMaterial({ color: 0x70e3b0, depthTest: false }),
+        )
+      : new THREE.Mesh(
+          new THREE.SphereGeometry(radius, 12, 8),
+          new THREE.MeshBasicMaterial({ color: 0x70e3b0, depthTest: false }),
+        );
+  if (pick.kind !== "edge") marker.position.copy(pick.point);
+  marker.renderOrder = 1003;
+  hoverGroup.add(marker);
 }
 function measurementMarker(point: THREE.Vector3, color = 0xffd277) {
   const radius = Math.max(
@@ -1131,10 +1170,6 @@ function showMeasurement() {
   if (measured.intersection) measurementMarker(measured.intersection, 0x70e3d0);
   measureLabel.textContent = measured.description;
   measureLabel.hidden = false;
-  measureGuide.toggleAttribute(
-    "hidden",
-    !measured.guides.some(([a, b]) => a.distanceTo(b) > 1e-7),
-  );
 }
 function geometryPick(
   hit: THREE.Intersection,
@@ -1261,6 +1296,7 @@ $<HTMLButtonElement>("measure-toggle").onclick = () => {
   $("measure-panel").hidden = !measurementMode;
   $("measure-toggle").setAttribute("aria-pressed", String(measurementMode));
   clearMeasurement();
+  clearHover();
 };
 $("measure-clear").onclick = clearMeasurement;
 let downX = 0,
@@ -1268,6 +1304,7 @@ let downX = 0,
 renderer.domElement.addEventListener("pointerdown", (event) => {
   downX = event.clientX;
   downY = event.clientY;
+  if (event.button !== 0) clearHover();
 });
 function raycastAt(event: PointerEvent) {
   const rect = renderer.domElement.getBoundingClientRect();
@@ -1297,14 +1334,22 @@ function pickLabel(pick: MeasurePick | undefined) {
 }
 renderer.domElement.addEventListener("pointermove", (event) => {
   if (!measurementMode) return;
-  const { pick } = raycastAt(event);
+  if (event.buttons) {
+    clearHover();
+    return;
+  }
+  const { hit, pick } = raycastAt(event);
   $("measure-hover").textContent = pickLabel(pick);
+  showHover(pick, hit?.object.userData.path ?? "");
 });
+renderer.domElement.addEventListener("pointerleave", clearHover);
 renderer.domElement.addEventListener("pointerup", (event) => {
+  if (event.button !== 0) return;
   if (Math.hypot(event.clientX - downX, event.clientY - downY) > 4) return;
   const { hit, pick } = raycastAt(event);
   if (measurementMode) {
     $("measure-hover").textContent = pickLabel(pick);
+    showHover(pick, hit?.object.userData.path ?? "");
     if (!pick) {
       $("measure-result").textContent =
         "Click geometry to choose a point, edge or face.";
@@ -1398,23 +1443,6 @@ function animate(now: number) {
     const projected = measured.labelAt.clone().project(camera);
     measureLabel.style.left = `${((projected.x + 1) / 2) * canvas.clientWidth}px`;
     measureLabel.style.top = `${((1 - projected.y) / 2) * canvas.clientHeight}px`;
-    if (!measureGuide.hasAttribute("hidden")) {
-      const [a, b] = measured.guides[0]!;
-      const start = a.clone().project(camera),
-        end = b.clone().project(camera);
-      const sx = ((start.x + 1) / 2) * canvas.clientWidth;
-      const sy = ((1 - start.y) / 2) * canvas.clientHeight;
-      const ex = ((end.x + 1) / 2) * canvas.clientWidth;
-      const ey = ((1 - end.y) / 2) * canvas.clientHeight;
-      guideLine.setAttribute("x1", String(sx));
-      guideLine.setAttribute("y1", String(sy));
-      guideLine.setAttribute("x2", String(ex));
-      guideLine.setAttribute("y2", String(ey));
-      guideStart.setAttribute("cx", String(sx));
-      guideStart.setAttribute("cy", String(sy));
-      guideEnd.setAttribute("cx", String(ex));
-      guideEnd.setAttribute("cy", String(ey));
-    }
   }
   renderer.render(scene, camera);
 }
