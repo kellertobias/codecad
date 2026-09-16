@@ -1,8 +1,14 @@
 # CodeCAD Studio
 
+<p align="center">
+  <img src="assets/codecad-icon.png" alt="CodeCAD Studio icon" width="144">
+</p>
+
 A local TypeScript CAD application with classes, standard decorators, automatic
 part registration, an OpenCascade geometry engine, live preview, and manufacturing
 outputs.
+
+![CodeCAD Studio displaying the four-drawer kitchen cabinet](assets/codecad-studio-kitchen-cabinet.png)
 
 ## Use as a library
 
