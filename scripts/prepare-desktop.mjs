@@ -54,13 +54,16 @@ if (!existsSync(join(out, "node"))) {
   );
 }
 // Recreate generated inputs so removed files/dependencies cannot leak into a bundle.
-for (const name of ["src", "web", "examples", "node_modules", "ui"])
+for (const name of ["src", "web", "examples", "desktop", "node_modules", "ui"])
   await rm(join(out, name), { recursive: true, force: true });
 for (const name of ["src", "web", "examples", "package.json", "tsconfig.json"])
   await cp(join(root, name), join(out, name), {
     recursive: true,
     dereference: true,
   });
+await cp(join(root, "desktop/previews"), join(out, "desktop/previews"), {
+  recursive: true,
+});
 await mkdir(join(out, "node_modules"), { recursive: true });
 for (const name of await readdir(join(root, "node_modules"))) {
   if (name.startsWith(".") || name === "@tauri-apps") continue;

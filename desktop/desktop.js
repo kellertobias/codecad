@@ -15,13 +15,53 @@ document
   );
 const picker = document.getElementById("project-picker");
 const pickerContent = document.getElementById("picker-content");
-let recent = [];
+let catalog = { recent: [], examples: [] };
 let activeTab = "recent";
-const examples = [
-  ["cabinet", "Kitchen cabinet"],
-  ["keyboard", "Keyboard case"],
-  ["apartment", "Small apartment"],
-];
+const exampleDetails = {
+  cabinet: "Joinery · hardware · motion",
+  keyboard: "Sheet metal · MDF interfaces",
+  apartment: "Rooms · windows · floor plans",
+};
+function projectButton(item) {
+  const button = document.createElement("button");
+  button.className = "picker-item";
+  const preview = document.createElement("span");
+  preview.className = "project-preview";
+  if (item.preview) {
+    const image = document.createElement("img");
+    image.src = item.preview;
+    image.alt = "";
+    preview.append(image);
+  } else {
+    preview.textContent = "Preview after opening";
+    preview.classList.add("preview-pending");
+  }
+  const text = document.createElement("span");
+  text.className = "project-card-text";
+  const title = document.createElement("strong");
+  title.textContent = item.title;
+  text.append(title);
+  const detail = document.createElement("small");
+  detail.textContent = item.path ?? exampleDetails[item.id] ?? "";
+  text.append(detail);
+  button.append(preview, text);
+  button.title = item.path ?? item.title;
+  button.onclick = () => openProject(item.id ?? null, item.path ?? null);
+  return button;
+}
+function renderHome() {
+  document
+    .getElementById("recent-list")
+    .replaceChildren(...catalog.recent.map(projectButton));
+  document.getElementById("recent-projects").hidden = !catalog.recent.length;
+  document
+    .getElementById("example-list")
+    .replaceChildren(...catalog.examples.map(projectButton));
+}
+async function refreshCatalog() {
+  catalog = await invoke("project_catalog", {});
+  renderHome();
+}
 async function openProject(example = null, path = null) {
   const buttons = document.querySelectorAll("main button");
   buttons.forEach((b) => (b.disabled = true));
@@ -45,44 +85,24 @@ function renderPicker(tab) {
     );
   });
   pickerContent.replaceChildren();
-  if (tab === "disk") {
-    const button = document.createElement("button");
-    button.textContent = "Choose a TypeScript file…";
-    button.onclick = () => openProject();
-    pickerContent.append(button);
-    return;
-  }
-  const items =
-    tab === "recent"
-      ? recent.map((path) => [path, path.split(/[\\/]/).pop(), path])
-      : examples.map(([id, title]) => [id, title, null]);
+  const items = tab === "recent" ? catalog.recent : catalog.examples;
   if (!items.length)
     pickerContent.textContent =
       "No recent projects yet. Open an example or choose a file from disk.";
-  for (const [id, title, path] of items) {
-    const button = document.createElement("button");
-    button.className = "picker-item";
-    button.textContent = title;
-    if (path) {
-      const detail = document.createElement("small");
-      detail.textContent = path;
-      button.append(detail);
-    }
-    button.onclick = () => openProject(path ? null : id, path);
-    pickerContent.append(button);
-  }
+  for (const item of items) pickerContent.append(projectButton(item));
 }
 async function showPicker() {
   try {
-    recent = await invoke("recent_projects", {});
+    await refreshCatalog();
   } catch (e) {
     document.getElementById("message").textContent = String(e);
     return;
   }
-  renderPicker(recent.length ? "recent" : "examples");
+  renderPicker(catalog.recent.length ? "recent" : "examples");
   picker.showModal();
 }
-document.getElementById("open-project").onclick = showPicker;
+document.getElementById("open-disk").onclick = () => openProject();
+document.getElementById("browse-projects").onclick = showPicker;
 document.getElementById("close-picker").onclick = () => picker.close();
 picker.onclick = (event) => {
   if (event.target === picker) picker.close();
@@ -90,24 +110,12 @@ picker.onclick = (event) => {
 document
   .querySelectorAll("[data-picker-tab]")
   .forEach(
-    (button) => (button.onclick = () => renderPicker(button.dataset.pickerTab)),
+    (button) =>
+      (button.onclick = () =>
+        button.dataset.pickerTab === "disk"
+          ? openProject()
+          : renderPicker(button.dataset.pickerTab)),
   );
-document
-  .querySelectorAll("[data-example]")
-  .forEach((b) => (b.onclick = () => openProject(b.dataset.example)));
-void invoke("recent_projects", {})
-  .then((entries) => {
-    recent = entries;
-    const list = document.getElementById("recent-list");
-    for (const path of recent) {
-      const button = document.createElement("button");
-      button.textContent = path.split(/[\\/]/).pop();
-      button.title = path;
-      button.onclick = () => openProject(null, path);
-      list.append(button);
-    }
-    document.getElementById("recent-projects").hidden = !recent.length;
-  })
-  .catch((e) => {
-    document.getElementById("message").textContent = String(e);
-  });
+void refreshCatalog().catch((e) => {
+  document.getElementById("message").textContent = String(e);
+});

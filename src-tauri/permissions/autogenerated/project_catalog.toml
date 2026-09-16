@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-catalog"
+description = "Enables the project_catalog command without any pre-configured scope."
+commands.allow = ["project_catalog"]
+
+[[permission]]
+identifier = "deny-project-catalog"
+description = "Denies the project_catalog command without any pre-configured scope."
+commands.deny = ["project_catalog"]

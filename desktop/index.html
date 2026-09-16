@@ -25,7 +25,10 @@
       />
       <h1>Build with code.<br />Make it real.</h1>
       <p>Parametric parts, woodworking, sheet metal and room plans.</p>
-      <button id="open-project" class="primary">Open project…</button>
+      <div class="start-actions">
+        <button id="open-disk" class="primary">Open from disk…</button>
+        <button id="browse-projects">Browse projects</button>
+      </div>
       <p class="muted">
         Choose a TypeScript project entry (.ts). Only open code you trust.
       </p>
@@ -34,15 +37,7 @@
         <div class="examples" id="recent-list"></div>
       </section>
       <h2>Explore an example</h2>
-      <div class="examples">
-        <button data-example="cabinet">
-          Kitchen cabinet<small>Joinery · hardware · motion</small></button
-        ><button data-example="keyboard">
-          Keyboard case<small>Sheet metal · MDF interfaces</small></button
-        ><button data-example="apartment">
-          Small apartment<small>Rooms · windows · floor plans</small>
-        </button>
-      </div>
+      <div class="examples" id="example-list"></div>
       <p id="message" role="status"></p>
     </main>
     <dialog id="project-picker" aria-label="Open project">

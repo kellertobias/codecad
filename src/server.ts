@@ -440,6 +440,18 @@ const server = createServer(async (req, res) => {
         "text/javascript",
       ],
       "/style.css": [join(root, "web/style.css"), "text/css"],
+      "/previews/cabinet.png": [
+        join(root, "desktop/previews/cabinet.png"),
+        "image/png",
+      ],
+      "/previews/keyboard.png": [
+        join(root, "desktop/previews/keyboard.png"),
+        "image/png",
+      ],
+      "/previews/apartment.png": [
+        join(root, "desktop/previews/apartment.png"),
+        "image/png",
+      ],
     };
     const resource = resources[url.pathname];
     if (!resource) {

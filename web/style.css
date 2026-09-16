@@ -32,6 +32,18 @@ body {
   display: flex;
   gap: 2px;
 }
+#desktop-home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+}
+#desktop-toggle-source {
+  padding: 4px 6px;
+  min-width: 28px;
+  font-size: 17px;
+  line-height: 1;
+}
 .window-controls button {
   padding: 5px 10px;
   border: 0;
@@ -382,6 +394,17 @@ input[type="range"] {
   min-height: 34px;
   padding: 8px 12px;
 }
+#copy-build-output {
+  white-space: nowrap;
+}
+#copy-build-status {
+  color: #7dcab5;
+  font-size: 11px;
+  padding: 0 12px;
+}
+#copy-build-status:empty {
+  display: none;
+}
 #messages {
   padding: 8px 12px;
   font: 11px/1.5 monospace;
@@ -663,14 +686,21 @@ h2 {
   margin: 0 0 18px;
 }
 .desktop.source-hidden main {
-  grid-template-columns: minmax(380px, 1fr) 220px;
+  grid-template-columns: 42px minmax(380px, 1fr) 220px;
 }
 .desktop.source-hidden .editor-pane {
+  display: flex;
+}
+.desktop.source-hidden .editor-pane > :not(.pane-head),
+.desktop.source-hidden .editor-pane .pane-head > :not(#desktop-toggle-source) {
   display: none;
+}
+.desktop.source-hidden .editor-pane .pane-head {
+  padding: 7px;
 }
 @media (max-width: 1150px) {
   .desktop.source-hidden main {
-    grid-template-columns: 1fr;
+    grid-template-columns: 42px 1fr;
   }
 }
 .picker-tabs {
@@ -689,8 +719,37 @@ h2 {
   gap: 8px;
 }
 .picker-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   text-align: left;
   overflow-wrap: anywhere;
+}
+.picker-item .project-preview {
+  width: 112px;
+  height: 72px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #102027;
+}
+.picker-item .project-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.picker-item .preview-pending {
+  color: #829c9c;
+  font-size: 10px;
+}
+.picker-item .project-card-text {
+  min-width: 0;
+}
+.picker-item .project-card-text strong {
+  display: block;
 }
 .picker-item small {
   display: block;

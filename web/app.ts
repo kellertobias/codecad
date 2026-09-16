@@ -3,7 +3,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ReportDownload } from "../src/reports.js";
 import type { ParameterState } from "../src/parameters.js";
 import { IsolationSession } from "./isolation.js";
-import { setupDesktop } from "./desktop.js";
+import { saveDesktopPreview, setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import {
   measure,
@@ -349,6 +349,12 @@ function showModel(data: Model) {
   }
   if (selected) select(selected);
   resize();
+  requestAnimationFrame(() => {
+    renderer.render(scene, camera);
+    void saveDesktopPreview(renderer.domElement).catch(() => {
+      // Preview persistence must never prevent a successful CAD build.
+    });
+  });
 }
 function renderParameters(state: ParameterState | null) {
   const panel = $("parameters-panel"),
@@ -1149,6 +1155,23 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   select(hit?.object.userData.path ?? "");
 });
 setupDesktop(() => !dirty || confirm("Discard unsaved editor changes?"));
+$<HTMLButtonElement>("copy-build-output").onclick = async () => {
+  const status = $("copy-build-status");
+  const output = [$("summary").textContent, $("messages").innerText]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  if (!output) {
+    status.textContent = "Nothing to copy yet.";
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(output);
+    status.textContent = "Build output copied.";
+  } catch {
+    status.textContent = "Could not copy build output.";
+  }
+};
 await loadSource();
 await configureEditor(token);
 const events = new EventSource("/api/events");

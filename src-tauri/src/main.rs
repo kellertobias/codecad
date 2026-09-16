@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use serde::Serialize;
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -12,13 +14,73 @@ use std::{
 use tauri::{Manager, WebviewWindow};
 
 const RECENT_LIMIT: usize = 12;
+const PREVIEW_LIMIT: usize = 400_000;
 
-fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn data_file(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
     Ok(app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
-        .join("recent-projects.json"))
+        .join(name))
+}
+
+fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    data_file(app, "recent-projects.json")
+}
+
+fn read_trusted_file(file: &Path) -> Result<Vec<PathBuf>, String> {
+    match std::fs::read(file) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn remember_trusted_file(file: &Path, entry: &Path) -> Result<(), String> {
+    let entry = entry.canonicalize().map_err(|e| e.to_string())?;
+    let mut entries = read_trusted_file(file)?;
+    if entries.contains(&entry) {
+        return Ok(());
+    }
+    entries.push(entry);
+    std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+    let temporary = file.with_extension("json.tmp");
+    std::fs::write(
+        &temporary,
+        serde_json::to_vec(&entries).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(temporary, file).map_err(|e| e.to_string())
+}
+
+fn read_previews(file: &Path) -> Result<HashMap<String, String>, String> {
+    match std::fs::read(file) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn write_previews(file: &Path, previews: &HashMap<String, String>) -> Result<(), String> {
+    std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+    let temporary = file.with_extension("json.tmp");
+    std::fs::write(
+        &temporary,
+        serde_json::to_vec(previews).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(temporary, file).map_err(|e| e.to_string())
+}
+
+fn valid_preview(image: &str) -> bool {
+    let Some(encoded) = image.strip_prefix("data:image/png;base64,") else {
+        return false;
+    };
+    image.len() <= PREVIEW_LIMIT
+        && encoded.starts_with("iVBORw0KGgo")
+        && encoded.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/' || byte == b'='
+        })
 }
 
 fn read_recent(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
@@ -94,6 +156,56 @@ mod tests {
             read_recent_file(&list).unwrap(),
             vec![second.canonicalize().unwrap()]
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn trusted_projects_outlive_the_bounded_recent_list() {
+        let root = std::env::temp_dir().join(format!(
+            "codecad-trust-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let entry = root.join("project.ts");
+        let trusted = root.join("trusted-projects.json");
+        std::fs::write(&entry, "").unwrap();
+        remember_trusted_file(&trusted, &entry).unwrap();
+        remember_trusted_file(&trusted, &entry).unwrap();
+        assert_eq!(
+            read_trusted_file(&trusted).unwrap(),
+            vec![entry.canonicalize().unwrap()]
+        );
+        std::fs::remove_file(&entry).unwrap();
+        assert_eq!(read_trusted_file(&trusted).unwrap().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_preview_cache_accepts_only_small_png_data_urls() {
+        let png = "data:image/png;base64,iVBORw0KGgoAAA==";
+        assert!(valid_preview(png));
+        assert!(!valid_preview("data:text/html;base64,iVBORw0KGgoAAA=="));
+        assert!(!valid_preview("data:image/png;base64,not-png"));
+        assert!(!valid_preview(&format!(
+            "data:image/png;base64,iVBORw0KGgo{}",
+            "A".repeat(PREVIEW_LIMIT)
+        )));
+        let root = std::env::temp_dir().join(format!(
+            "codecad-preview-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let file = root.join("previews.json");
+        let map = HashMap::from([("/project.ts".to_owned(), png.to_owned())]);
+        write_previews(&file, &map).unwrap();
+        assert_eq!(read_previews(&file).unwrap(), map);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -172,6 +284,97 @@ fn recent_projects(
         .collect())
 }
 
+#[derive(Serialize)]
+struct ProjectCard {
+    id: Option<String>,
+    path: Option<String>,
+    title: String,
+    preview: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ProjectCatalog {
+    recent: Vec<ProjectCard>,
+    examples: Vec<ProjectCard>,
+}
+
+#[tauri::command]
+fn project_catalog(
+    window: WebviewWindow,
+    state: tauri::State<Desktop>,
+    app: tauri::AppHandle,
+) -> Result<ProjectCatalog, String> {
+    trusted(&window, &state)?;
+    let previews = read_previews(&data_file(&app, "project-previews.json")?)?;
+    let recent = read_recent(&app)?
+        .into_iter()
+        .map(|path| {
+            let key = path.to_string_lossy().into_owned();
+            ProjectCard {
+                id: None,
+                title: path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Project")
+                    .to_owned(),
+                path: Some(key.clone()),
+                preview: previews.get(&key).cloned(),
+            }
+        })
+        .collect();
+    let example_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("examples-workspace/examples");
+    let examples = [
+        ("cabinet", "Kitchen cabinet", "kitchen-cabinet.ts"),
+        ("keyboard", "Keyboard case", "keyboard-case.ts"),
+        ("apartment", "Small apartment", "small-apartment.ts"),
+    ]
+    .into_iter()
+    .map(|(id, title, file)| {
+        let key = example_root.join(file).to_string_lossy().into_owned();
+        ProjectCard {
+            id: Some(id.into()),
+            title: title.into(),
+            path: None,
+            preview: previews
+                .get(&key)
+                .cloned()
+                .or_else(|| Some(format!("/previews/{id}.png"))),
+        }
+    })
+    .collect();
+    Ok(ProjectCatalog { recent, examples })
+}
+
+#[tauri::command]
+fn save_project_preview(
+    window: WebviewWindow,
+    state: tauri::State<Desktop>,
+    app: tauri::AppHandle,
+    image: String,
+) -> Result<(), String> {
+    trusted(&window, &state)?;
+    if !valid_preview(&image) {
+        return Err("Invalid or oversized project preview".into());
+    }
+    let entry = state
+        .session
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("No active project")?
+        .entry
+        .to_string_lossy()
+        .into_owned();
+    let file = data_file(&app, "project-previews.json")?;
+    let mut previews = read_previews(&file)?;
+    previews.insert(entry, image);
+    write_previews(&file, &previews)
+}
+
 #[cfg(unix)]
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 #[cfg(unix)]
@@ -245,6 +448,23 @@ fn window_action(
         _ => return Err("Unknown window action".into()),
     };
     result.map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn close_project(window: WebviewWindow, state: tauri::State<Desktop>) -> Result<(), String> {
+    trusted(&window, &state)?;
+    if state.opening.load(Ordering::SeqCst) {
+        return Err("A project is still opening".into());
+    }
+    let home = if cfg!(target_os = "macos") {
+        "tauri://localhost/"
+    } else {
+        "http://tauri.localhost/"
+    };
+    window
+        .navigate(tauri::Url::parse(home).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    state.session.lock().unwrap().take();
+    Ok(())
 }
 fn runtime(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
@@ -358,12 +578,15 @@ async fn open_project(
             } else {
                 let picked = rfd::AsyncFileDialog::new().set_parent(&window).set_title("Open CodeCAD project entry file").add_filter("TypeScript project", &["ts", "mts"]).pick_file().await;
                 let Some(picked) = picked else { return Ok(None); };
-                picked.path().to_path_buf()
+                picked.path().canonicalize().map_err(|e| e.to_string())?
             };
-            let accepted = rfd::AsyncMessageDialog::new().set_parent(&window).set_title("Trust this project?")
-                .set_description("CodeCAD executes TypeScript with your account's file and network access. Only open projects you trust.")
-                .set_buttons(rfd::MessageButtons::OkCancel).show().await;
-            if accepted != rfd::MessageDialogResult::Ok { return Ok(None); }
+            let trusted_entries = read_trusted_file(&data_file(&app, "trusted-projects.json")?)?;
+            if !trusted_entries.contains(&entry) && !read_recent(&app)?.contains(&entry) {
+                let accepted = rfd::AsyncMessageDialog::new().set_parent(&window).set_title("Trust this project?")
+                    .set_description("CodeCAD executes TypeScript with your account's file and network access. Only open projects you trust.")
+                    .set_buttons(rfd::MessageButtons::OkCancel).show().await;
+                if accepted != rfd::MessageDialogResult::Ok { return Ok(None); }
+            }
             entry
         };
         if !entry.is_file() { return Err("Project entry file does not exist".into()); }
@@ -372,6 +595,7 @@ async fn open_project(
         let handle = app.clone();
         let next = tauri::async_runtime::spawn_blocking(move || launch(&handle, entry)).await.map_err(|e|e.to_string())??;
         remember_project(&app, &recent_entry)?;
+        remember_trusted_file(&data_file(&app, "trusted-projects.json")?, &recent_entry)?;
         let url = format!("{}/", next.url);
         *state.session.lock().unwrap() = Some(next);
         Ok(Some(url))
@@ -418,7 +642,10 @@ fn main() {
         .manage(Desktop::default())
         .invoke_handler(tauri::generate_handler![
             open_project,
+            close_project,
             recent_projects,
+            project_catalog,
+            save_project_preview,
             available_editors,
             open_in_editor,
             window_action

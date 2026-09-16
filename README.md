@@ -111,16 +111,21 @@ are not removed. `/Applications` must be writable. Builds use local ad-hoc signi
 unless `CODECAD_SIGN_IDENTITY` is set; no notarization is performed.
 
 The macOS app has a custom draggable window frame with minimize, maximize/restore
-and close controls. **Open project…** on the welcome screen or editor toolbar
-(Cmd/Ctrl+O) opens a native file picker: select a project's `.ts` or `.mts` entry
-file, not its folder. Opening a project executes local TypeScript, so accept the
-trust prompt only for code you trust. Switching projects stops the previous CAD
-engine; closing the app stops its engine and workers.
+and close controls. **Open from disk…** on the welcome screen opens a native file
+picker directly: select a project's `.ts` or `.mts` entry file, not its folder.
+**Browse projects** shows recent projects and examples with model previews; the
+picker also offers direct opening from disk. Cmd/Ctrl+O opens that picker from
+the editor. Opening a new project executes local TypeScript and asks for trust
+the first time only. The editor's home button closes the current project and
+stops its CAD engine; the icon beside **Project source** hides or shows the code
+sidebar. **Build & checks** can copy its visible output for bug reports.
 
 The welcome screen also offers editable copies of the cabinet, keyboard and
-apartment examples. Copies live in the application's data directory, separate
-from bundled resources. The app bundles Node.js, OpenCascade and its TypeScript
-tools; users do not need a separately installed Node runtime.
+apartment examples with previews rendered from their actual models. Copies live
+in the application's data directory, separate from bundled resources. Recent
+project previews are captured after a successful build. The app bundles Node.js,
+OpenCascade and its TypeScript tools; users do not need a separately installed
+Node runtime.
 
 To develop/build, install Node.js 22+, Rust and the platform's Tauri prerequisites
 (Xcode Command Line Tools on macOS), then run:

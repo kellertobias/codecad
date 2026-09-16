@@ -90,6 +90,11 @@ p {
   font-weight: 650;
   margin-top: 15px;
 }
+.start-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 h2 {
   font-size: 15px;
   margin-top: 60px;
@@ -101,6 +106,28 @@ h2 {
 .examples button {
   text-align: left;
   flex: 1;
+}
+.project-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  height: 108px;
+  margin: -5px -13px 12px;
+  border-radius: 5px;
+  background: #15242a;
+}
+.project-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.preview-pending {
+  color: #79928d;
+  font-size: 11px;
+}
+.project-card-text strong {
+  display: block;
 }
 small {
   display: block;
@@ -160,4 +187,23 @@ dialog::backdrop {
   text-align: left;
   width: 100%;
   overflow-wrap: anywhere;
+}
+#picker-content .picker-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+#picker-content .project-preview {
+  width: 112px;
+  height: 72px;
+  margin: 0;
+  flex: none;
+}
+#picker-content .project-card-text {
+  min-width: 0;
+}
+@media (max-width: 620px) {
+  .examples {
+    flex-direction: column;
+  }
 }
