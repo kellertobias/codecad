@@ -355,6 +355,37 @@ aside {
   flex-direction: column;
   min-height: 0;
 }
+#parameters-panel {
+  border-bottom: 1px solid #33414a;
+  max-height: 44%;
+  overflow: auto;
+}
+#parameters {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+.parameter-row {
+  display: grid;
+  gap: 4px;
+  color: #c6d5dd;
+  font-size: 11px;
+}
+.parameter-row input:not([type="checkbox"]),
+.parameter-row select {
+  width: 100%;
+  box-sizing: border-box;
+  color: #d4e2e9;
+  background: #121b22;
+  border: 1px solid #33434e;
+  border-radius: 5px;
+  padding: 7px;
+}
+#parameter-status {
+  padding: 0 10px 10px;
+  color: #e7c57d;
+  font-size: 11px;
+}
 #filter {
   margin: 10px;
   background: #121b22;

@@ -327,6 +327,7 @@ export async function buildProject(
     const manifest = {
       title: project.label,
       id: project.id,
+      parameters: project.parameterState ?? null,
       engine: engine.capabilities,
       files,
       reports,

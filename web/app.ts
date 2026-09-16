@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ReportDownload } from "../src/reports.js";
+import type { ParameterState } from "../src/parameters.js";
 import { IsolationSession } from "./isolation.js";
 import { setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
@@ -30,6 +31,7 @@ type StudioAnimation = {
   meshFrames?: MeshData[];
 };
 type Model = {
+  parameters: ParameterState | null;
   components: {
     path: string;
     id: string;
@@ -269,6 +271,7 @@ function showModel(data: Model) {
   renderParts();
   renderOutputs();
   renderCuts();
+  renderParameters(data.parameters);
   renderAnimationChoices();
   if (first) fit();
   applyPose();
@@ -281,6 +284,88 @@ function showModel(data: Model) {
   }
   if (selected) select(selected);
   resize();
+}
+function renderParameters(state: ParameterState | null) {
+  const panel = $("parameters-panel"),
+    form = $<HTMLFormElement>("parameters"),
+    status = $("parameter-status");
+  panel.hidden = !state || !Object.keys(state.definitions).length;
+  form.replaceChildren();
+  status.textContent = "";
+  if (!state) return;
+  const controls = new Map<string, HTMLInputElement | HTMLSelectElement>();
+  for (const [key, definition] of Object.entries(state.definitions)) {
+    const row = document.createElement("label"),
+      caption = document.createElement("span");
+    row.className = "parameter-row";
+    caption.textContent =
+      definition.label +
+      ("unit" in definition && definition.unit ? ` (${definition.unit})` : "");
+    row.append(caption);
+    if (definition.type === "select") {
+      const control = document.createElement("select");
+      for (const option of definition.options) {
+        const item = document.createElement("option");
+        item.value = option.value;
+        item.textContent = option.label;
+        control.append(item);
+      }
+      control.value = String(state.values[key]);
+      row.append(control);
+      controls.set(key, control);
+    } else {
+      const control = document.createElement("input");
+      control.type = definition.type === "boolean" ? "checkbox" : "number";
+      if (definition.type === "number") {
+        control.value = String(state.values[key]);
+        control.step =
+          definition.step === undefined ? "any" : String(definition.step);
+        if (definition.min !== undefined) control.min = String(definition.min);
+        if (definition.max !== undefined) control.max = String(definition.max);
+      } else control.checked = Boolean(state.values[key]);
+      row.append(control);
+      controls.set(key, control);
+    }
+    form.append(row);
+  }
+  const apply = document.createElement("button");
+  apply.type = "submit";
+  apply.textContent = "Apply & rebuild";
+  form.append(apply);
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const values: Record<string, string | number | boolean> = {};
+    for (const [key, definition] of Object.entries(state.definitions)) {
+      const control = controls.get(key)!;
+      values[key] =
+        definition.type === "boolean"
+          ? (control as HTMLInputElement).checked
+          : definition.type === "number"
+            ? Number(control.value)
+            : control.value;
+    }
+    apply.disabled = true;
+    status.textContent = "Saving parameters…";
+    try {
+      const response = await fetch("/api/parameters", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CodeCAD-Token": token,
+        },
+        body: JSON.stringify({ values }),
+      });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error ?? "Parameter update failed");
+      status.textContent = "Saved · rebuilding all outputs";
+    } catch (error) {
+      status.textContent = String(error);
+    } finally {
+      apply.disabled = false;
+    }
+  };
 }
 function select(path: string) {
   selected = path;

@@ -1,11 +1,12 @@
 import { createServer, type ServerResponse } from "node:http";
-import { readFile, writeFile, mkdir, stat, cp } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, cp, rename } from "node:fs/promises";
 import { watch } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve, join, dirname, basename } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { build } from "esbuild";
 import { editorService } from "./editor-service.js";
+import { resolveParameters, type ParameterSchema } from "./parameters.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const entry = resolve(
@@ -16,6 +17,17 @@ const token = randomBytes(24).toString("hex");
 const storage = process.env.CODECAD_STORAGE ?? join(root, ".codecad"),
   ui = join(storage, "ui");
 await mkdir(ui, { recursive: true });
+const parameterFile = join(
+  storage,
+  "parameters",
+  createHash("sha256").update(entry).digest("hex") + ".json",
+);
+let parameterValues: Record<string, number | boolean | string> = {};
+try {
+  parameterValues = JSON.parse(await readFile(parameterFile, "utf8"));
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+}
 if (process.env.CODECAD_DESKTOP) {
   await cp(join(root, "ui"), ui, { recursive: true });
 } else {
@@ -52,6 +64,7 @@ let generation = 0,
   currentDirectory = "",
   child: ChildProcess | undefined,
   timer: NodeJS.Timeout | undefined;
+const snapshotParameters = new Map<string, string>();
 let state: { phase: string; generation: number; message: string; log: string } =
   { phase: "starting", generation: 0, message: "Loading project", log: "" };
 function broadcast() {
@@ -62,6 +75,8 @@ function rebuild() {
   const id = ++generation;
   if (child) child.kill("SIGTERM");
   const directory = join(storage, "run-" + id + "-" + Date.now());
+  const activeParameters = JSON.stringify(parameterValues);
+  snapshotParameters.set(directory, activeParameters);
   state = {
     phase: "building",
     generation: id,
@@ -89,7 +104,11 @@ function rebuild() {
     {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CODECAD_LAZY_EXPORTS: "1" },
+      env: {
+        ...process.env,
+        CODECAD_LAZY_EXPORTS: "1",
+        CODECAD_PARAMETER_VALUES: activeParameters,
+      },
     },
   );
   child = processHandle;
@@ -187,6 +206,8 @@ async function generateArtifact(
             env: {
               ...process.env,
               CODECAD_EXPORT_ONLY: name,
+              CODECAD_PARAMETER_VALUES:
+                snapshotParameters.get(directory) ?? "{}",
               ...(native
                 ? { CODECAD_NATIVE_OUTPUT: join(directory, ".native/js") }
                 : {}),
@@ -268,6 +289,45 @@ const server = createServer(async (req, res) => {
       if (url.pathname === "/api/rebuild") {
         schedule();
         json({ ok: true });
+        return;
+      }
+      if (url.pathname === "/api/parameters") {
+        if (!currentDirectory) {
+          json({ error: "Model is building" }, 503);
+          return;
+        }
+        let body = "";
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 100_000) {
+            json({ error: "Parameter request exceeds 100 KB" }, 413);
+            return;
+          }
+        }
+        try {
+          const input = JSON.parse(body);
+          const model = JSON.parse(
+            await readFile(join(currentDirectory, "model.json"), "utf8"),
+          );
+          if (!model.parameters) throw new Error("Project has no parameters");
+          const values = resolveParameters(
+            model.parameters.definitions as ParameterSchema,
+            input.values,
+          );
+          await mkdir(dirname(parameterFile), { recursive: true });
+          const staged =
+            parameterFile + ".tmp-" + randomBytes(6).toString("hex");
+          await writeFile(staged, JSON.stringify(values));
+          await rename(staged, parameterFile);
+          parameterValues = values;
+          schedule();
+          json({ values });
+        } catch (error) {
+          json(
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          );
+        }
         return;
       }
       if (url.pathname === "/api/editor-completions") {

@@ -1,5 +1,11 @@
 import { Matrix4, Euler, Vector3 as V3 } from "three";
 import type { Material } from "./stock.js";
+import {
+  resolveParameters,
+  type ParameterSchema,
+  type ParameterState,
+  type ParameterValues,
+} from "./parameters.js";
 
 export type Length = number;
 export type Angle = number;
@@ -774,6 +780,18 @@ export abstract class Assembly extends Component {
 export abstract class Project extends Assembly {
   readonly registry = new ComponentRegistry(this);
   readonly parts = this.registry.parts;
+  parameterState?: ParameterState;
+  /** Resolve the active Studio values before constructing dependent geometry. */
+  protected configureParameters<const S extends ParameterSchema>(
+    schema: S,
+  ): ParameterValues<S> {
+    if (this.parameterState)
+      throw new Error("Project parameters are already configured");
+    const overrides = JSON.parse(process.env.CODECAD_PARAMETER_VALUES ?? "{}");
+    const values = resolveParameters(schema, overrides);
+    this.parameterState = { definitions: schema, values };
+    return values;
+  }
 }
 export type ComponentConstructor<T extends Component> = abstract new (
   ...args: any[]
