@@ -7,6 +7,10 @@ import { saveDesktopPreview, setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
+import {
+  faceRegionGeometry,
+  visibleSurfacePoint,
+} from "./surface-visibility.js";
 import type { View2DPrimitive } from "../src/view2d.js";
 import {
   chooseMeasurePick,
@@ -196,7 +200,7 @@ let measurementMode = false,
   measured: MeasureResult | undefined;
 const objects = new Map<string, THREE.Mesh>(),
   edgeObjects = new Map<string, THREE.LineSegments>();
-let hoveredPath = "";
+let hoveredFace: { mesh: THREE.Mesh; faceIndex: number } | undefined;
 let bounds = new THREE.Box3(),
   center = new THREE.Vector3();
 function resize() {
@@ -301,7 +305,7 @@ function clearScene() {
   measurePicks = [];
   measured = undefined;
   measureLabel.hidden = true;
-  hoveredPath = "";
+  hoveredFace = undefined;
 }
 function updateHoleMarkers() {
   if (!model) return;
@@ -503,11 +507,7 @@ function renderParameters(state: ParameterState | null) {
 function updateMeshHighlights() {
   for (const [id, mesh] of objects)
     (mesh.material as THREE.MeshStandardMaterial).emissive.setHex(
-      hoveredPath === id
-        ? 0x248f70
-        : selected && within(id, selected)
-          ? 0x244c43
-          : 0,
+      !measurementMode && selected && within(id, selected) ? 0x244c43 : 0,
     );
 }
 function select(path: string) {
@@ -1087,15 +1087,42 @@ function clearHover() {
     (drawable.material as THREE.Material).dispose();
     hoverGroup.remove(child);
   }
-  hoveredPath = "";
-  updateMeshHighlights();
+  hoveredFace = undefined;
 }
-function showHover(pick: MeasurePick | undefined, path: string) {
+function showHover(pick: MeasurePick | undefined, hit?: THREE.Intersection) {
+  if (
+    pick?.kind === "face" &&
+    hit?.faceIndex != null &&
+    hoveredFace?.mesh === hit.object &&
+    hoveredFace.faceIndex === hit.faceIndex
+  )
+    return;
   clearHover();
   if (!pick) return;
-  hoveredPath = path;
-  updateMeshHighlights();
-  if (pick.kind === "face") return;
+  if (pick.kind === "face") {
+    if (hit?.faceIndex == null) return;
+    const mesh = hit.object as THREE.Mesh;
+    const surface = new THREE.Mesh(
+      faceRegionGeometry(mesh.geometry, hit.faceIndex),
+      new THREE.MeshBasicMaterial({
+        color: 0x20dc88,
+        transparent: true,
+        opacity: 0.88,
+        depthTest: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+        side: THREE.DoubleSide,
+      }),
+    );
+    surface.matrixAutoUpdate = false;
+    surface.matrix.copy(mesh.matrixWorld);
+    surface.renderOrder = 1003;
+    hoverGroup.add(surface);
+    hoveredFace = { mesh, faceIndex: hit.faceIndex };
+    return;
+  }
   const radius = Math.max(
     3,
     Math.min(8, bounds.getSize(new THREE.Vector3()).length() * 0.001),
@@ -1110,11 +1137,19 @@ function showHover(pick: MeasurePick | undefined, path: string) {
             8,
             false,
           ),
-          new THREE.MeshBasicMaterial({ color: 0x70e3b0, depthTest: false }),
+          new THREE.MeshBasicMaterial({
+            color: 0x70e3b0,
+            depthTest: true,
+            depthWrite: false,
+          }),
         )
       : new THREE.Mesh(
           new THREE.SphereGeometry(radius, 12, 8),
-          new THREE.MeshBasicMaterial({ color: 0x70e3b0, depthTest: false }),
+          new THREE.MeshBasicMaterial({
+            color: 0x70e3b0,
+            depthTest: true,
+            depthWrite: false,
+          }),
         );
   if (pick.kind !== "edge") marker.position.copy(pick.point);
   marker.renderOrder = 1003;
@@ -1188,6 +1223,7 @@ function geometryPick(
   hit: THREE.Intersection,
   pointer: THREE.Vector2,
   shift: boolean,
+  visibleMeshes: THREE.Mesh[],
 ): MeasurePick | undefined {
   const mesh = hit.object as THREE.Mesh,
     face = hit.face,
@@ -1229,18 +1265,29 @@ function geometryPick(
         pointer.clone().sub(x).dot(delta) / Math.max(delta.lengthSq(), 1e-8),
       ),
     );
-    edges.push({
-      pick: { kind: "edge", a, b },
-      screenDistance: pointer.distanceTo(x.addScaledVector(delta, t)),
-    });
-    points.push({
-      pick: { kind: "point", point: a },
-      screenDistance: pointer.distanceTo(screen(a)),
-    });
-    points.push({
-      pick: { kind: "point", point: b },
-      screenDistance: pointer.distanceTo(screen(b)),
-    });
+    const edgeDistance = pointer.distanceTo(x.addScaledVector(delta, t));
+    const visible = (point: THREE.Vector3) =>
+      visibleSurfacePoint(
+        point,
+        camera,
+        renderer.domElement.clientWidth,
+        renderer.domElement.clientHeight,
+        visibleMeshes,
+        hit.point,
+      );
+    if (edgeDistance <= 8 && visible(a.clone().lerp(b, t)))
+      edges.push({
+        pick: { kind: "edge", a, b },
+        screenDistance: edgeDistance,
+      });
+    for (const point of [a, b]) {
+      const screenDistance = pointer.distanceTo(screen(point));
+      if (screenDistance <= 10 && visible(point))
+        points.push({
+          pick: { kind: "point", point },
+          screenDistance,
+        });
+    }
   };
   if (data?.edges.length) {
     for (let i = 0; i < data.edges.length; i += 6)
@@ -1269,6 +1316,8 @@ function geometryPick(
         .fromArray(hole.axis)
         .transformDirection(mesh.matrix);
       const difference = hit.point.clone().sub(center);
+      if (Math.abs(difference.dot(axis)) > Math.max(2, hole.diameter * 0.05))
+        continue;
       const radial = difference
         .addScaledVector(axis, -difference.dot(axis))
         .length();
@@ -1310,6 +1359,7 @@ $<HTMLButtonElement>("measure-toggle").onclick = () => {
   $("measure-toggle").setAttribute("aria-pressed", String(measurementMode));
   clearMeasurement();
   clearHover();
+  updateMeshHighlights();
 };
 $("measure-clear").onclick = clearMeasurement;
 let downX = 0,
@@ -1320,6 +1370,7 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) clearHover();
 });
 function raycastAt(event: PointerEvent) {
+  group.updateWorldMatrix(true, true);
   const rect = renderer.domElement.getBoundingClientRect();
   const pointer = new THREE.Vector2(
     event.clientX - rect.left,
@@ -1332,12 +1383,13 @@ function raycastAt(event: PointerEvent) {
     ),
     camera,
   );
-  const hit = raycaster.intersectObjects(
-    [...objects.values()].filter((mesh) => mesh.visible),
-  )[0];
+  const visibleMeshes = [...objects.values()].filter((mesh) => mesh.visible);
+  const hit = raycaster.intersectObjects(visibleMeshes, false)[0];
   return {
     hit,
-    pick: hit ? geometryPick(hit, pointer, event.shiftKey) : undefined,
+    pick: hit
+      ? geometryPick(hit, pointer, event.shiftKey, visibleMeshes)
+      : undefined,
   };
 }
 function pickLabel(pick: MeasurePick | undefined) {
@@ -1353,16 +1405,17 @@ renderer.domElement.addEventListener("pointermove", (event) => {
   }
   const { hit, pick } = raycastAt(event);
   $("measure-hover").textContent = pickLabel(pick);
-  showHover(pick, hit?.object.userData.path ?? "");
+  showHover(pick, hit);
 });
 renderer.domElement.addEventListener("pointerleave", clearHover);
+renderer.domElement.addEventListener("wheel", clearHover);
 renderer.domElement.addEventListener("pointerup", (event) => {
   if (event.button !== 0) return;
   if (Math.hypot(event.clientX - downX, event.clientY - downY) > 4) return;
   const { hit, pick } = raycastAt(event);
   if (measurementMode) {
     $("measure-hover").textContent = pickLabel(pick);
-    showHover(pick, hit?.object.userData.path ?? "");
+    showHover(pick, hit);
     if (!pick) {
       $("measure-result").textContent =
         "Click geometry to choose a point, edge or face.";
