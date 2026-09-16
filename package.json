@@ -4,10 +4,21 @@
   "description": "Code-driven 3D CAD and fabrication library for TypeScript.",
   "license": "Apache-2.0",
   "author": "Tobias Keller",
-  "repository": { "type": "git", "url": "git+https://github.com/kellertobias/codecad.git" },
-  "bugs": { "url": "https://github.com/kellertobias/codecad/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kellertobias/codecad.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kellertobias/codecad/issues"
+  },
   "homepage": "https://github.com/kellertobias/codecad#readme",
-  "keywords": ["cad", "cnc", "fabrication", "sheet-metal", "typescript"],
+  "keywords": [
+    "cad",
+    "cnc",
+    "fabrication",
+    "sheet-metal",
+    "typescript"
+  ],
   "sideEffects": false,
   "overrides": {
     "dompurify": "3.4.15"
@@ -16,12 +27,25 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "bin", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
-  "bin": { "codecad": "./bin/codecad.mjs" },
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "bin": {
+    "codecad": "./bin/codecad.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "check:compat": "tsc6 --noEmit",
@@ -45,17 +69,18 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/git": "11.0.1",
     "@semantic-release/npm": "13.1.5",
     "@semantic-release/release-notes-generator": "14.1.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "26.5.1",
     "@types/pdfkit": "0.17.6",
     "@types/svg-to-pdfkit": "0.1.4",
     "@types/three": "0.186.0",
     "@typescript/native": "npm:typescript@7.0.2",
+    "conventional-changelog-conventionalcommits": "^10.4.0",
     "prettier": "3.9.6",
     "semantic-release": "25.0.9",
     "tsx": "4.23.13",
