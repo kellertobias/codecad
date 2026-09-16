@@ -4,6 +4,34 @@ A local TypeScript CAD application with classes, standard decorators, automatic
 part registration, an OpenCascade geometry engine, live preview, and manufacturing
 outputs.
 
+## Use as a library
+
+The published package is `@tobisk/codecad`: the generic TypeScript CAD SDK, not
+the desktop application or its examples. Install it in an independent project:
+
+```sh
+npm install @tobisk/codecad
+```
+
+Then author reusable parts or an entire model in that project's source tree:
+
+```ts
+import { cad, Project, SheetMaterial } from "@tobisk/codecad";
+
+@cad.project({ id: "shelf", units: "mm" })
+export class Shelf extends Project {
+  constructor() {
+    super();
+    const plywood = new SheetMaterial({ thickness: 18 });
+    plywood.makePart({ id: "side", width: 300, height: 700 });
+  }
+}
+```
+
+`npm run package:check` emits the public library and imports it through the same
+package export map a consumer receives. `npm pack --dry-run` shows the exact
+publish payload; it contains only `dist/`, the README, and license notices.
+
 ## Run
 
 ### Desktop app (Tauri)

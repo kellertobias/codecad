@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "declarationMap": true,
+    "stripInternal": true,
+    "sourceMap": true,
+    "noCheck": true,
+    "lib": ["ESNext"],
+    "types": ["node"]
+  },
+  "include": ["./src/index.ts"],
+  "files": ["./src/index.ts"]
+}

@@ -1,12 +1,26 @@
 {
-  "name": "@codecad/studio",
+  "name": "@tobisk/codecad",
   "version": "0.1.0",
+  "description": "Code-driven 3D CAD and fabrication library for TypeScript.",
   "license": "Apache-2.0",
-  "private": true,
+  "author": "Tobias Keller",
+  "repository": { "type": "git", "url": "git+https://github.com/kellertobias/codecad.git" },
+  "bugs": { "url": "https://github.com/kellertobias/codecad/issues" },
+  "homepage": "https://github.com/kellertobias/codecad#readme",
+  "keywords": ["cad", "cnc", "fabrication", "sheet-metal", "typescript"],
+  "sideEffects": false,
   "overrides": {
     "dompurify": "3.4.15"
   },
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "publishConfig": { "access": "public" },
   "scripts": {
     "check": "tsc --noEmit",
     "check:compat": "tsc6 --noEmit",
@@ -16,6 +30,9 @@
     "dev": "node --import tsx src/server.ts",
     "build": "node --import tsx src/native-rebuild.ts examples/kitchen-cabinet.ts output/kitchen-cabinet",
     "cad:build": "node --import tsx src/native-rebuild.ts",
+    "package:build": "tsc --project tsconfig.package.json",
+    "package:check": "npm run package:build && node --input-type=module --eval \"import('@tobisk/codecad').then(({ Project, Shapes }) => { if (!Project || !Shapes) throw new Error('Missing public CAD API') })\"",
+    "prepack": "npm run package:check",
     "examples": "npm run build",
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "tauri dev",

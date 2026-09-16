@@ -6,3 +6,4 @@ tmp/
 src-tauri/target/
 src-tauri/gen/
 artifacts/
+dist/
