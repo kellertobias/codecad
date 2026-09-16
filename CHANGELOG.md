@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/kellertobias/codecad/compare/v0.2.0...v0.2.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* retain npm cli executable ([64d53c7](https://github.com/kellertobias/codecad/commit/64d53c7ba6b537ab6fbb6e501332ad34d0c46d7c))
+
 # [0.2.0](https://github.com/kellertobias/codecad/compare/v0.1.0...v0.2.0) (2026-09-16)
 
 
