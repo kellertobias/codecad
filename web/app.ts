@@ -7,6 +7,7 @@ import { saveDesktopPreview, setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
+import { initiallyExpandedPaths } from "./component-tree.js";
 import {
   faceRegionGeometry,
   visibleSurfacePoint,
@@ -335,9 +336,9 @@ function showModel(data: Model) {
   const first = !model;
   model = data;
   if (first)
-    data.components
-      .filter((c) => !c.parent)
-      .forEach((c) => expanded.add(c.path));
+    initiallyExpandedPaths(data.components).forEach((path) =>
+      expanded.add(path),
+    );
   document.title = data.title + " · CodeCAD";
   $("project-name").textContent = data.title;
   clearScene();

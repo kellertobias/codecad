@@ -26,12 +26,31 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
     ),
   );
   for (let number = 1; number <= 4; number++)
-    for (const side of ["left", "right"])
+    for (const side of ["left", "right"]) {
+      const drawerPath = `kitchen-cabinet/drawer-${number}`;
+      const railPath = `${drawerPath}/rail-${side}-${number}`;
       assert.equal(
-        result.components.find((c) => c.id === `rail-${side}-${number}`)
-          ?.parent,
-        `kitchen-cabinet/drawer-${number}`,
+        result.components.filter((c) => c.path === railPath).length,
+        1,
       );
+      assert.equal(
+        result.components.find((c) => c.path === railPath)?.parent,
+        drawerPath,
+      );
+      for (const stage of ["fixed", "middle", "inner"])
+        assert.equal(
+          result.components.find((c) => c.path === `${railPath}/${stage}`)
+            ?.parent,
+          railPath,
+        );
+      assert.equal(
+        result.components.filter(
+          (c) =>
+            c.parent === "kitchen-cabinet" && c.id === `rail-${side}-${number}`,
+        ).length,
+        0,
+      );
+    }
   const cabinetLeft = result.components.find(
     (c) => c.path === "kitchen-cabinet/left",
   )!;
