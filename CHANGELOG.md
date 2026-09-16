@@ -1,3 +1,10 @@
+## [0.2.2](https://github.com/kellertobias/codecad/compare/v0.2.1...v0.2.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* normalize npm cli entry point ([512dc2d](https://github.com/kellertobias/codecad/commit/512dc2d71577e864f4f27c49324c902fe513b8b9))
+
 ## [0.2.1](https://github.com/kellertobias/codecad/compare/v0.2.0...v0.2.1) (2026-09-16)
 
 
