@@ -63,8 +63,9 @@ preview a release without publishing.
 
 Before enabling the workflow, make the initial `v0.1.0` tag and publish it
 manually. Then configure npm's trusted publisher for `@tobisk/codecad` to use
-this GitHub repository and `.github/workflows/release.yml`; no `NPM_TOKEN` is
-stored in GitHub.
+this GitHub repository and `.github/workflows/release.yml`, and set the GitHub
+repository variable `NPM_PUBLISH_ENABLED` to `true`. Until that variable is set,
+the release job is intentionally skipped; no `NPM_TOKEN` is stored in GitHub.
 
 ## Run
 

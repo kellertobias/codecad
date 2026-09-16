@@ -16,7 +16,7 @@ concurrency:
 jobs:
   release:
     # Only trusted code from this repository's default branch can mint npm OIDC credentials.
-    if: github.repository == 'kellertobias/codecad' && github.ref == 'refs/heads/main'
+    if: github.repository == 'kellertobias/codecad' && github.ref == 'refs/heads/main' && vars.NPM_PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
