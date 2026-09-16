@@ -6,6 +6,7 @@ import {
   type ParameterState,
   type ParameterValues,
 } from "./parameters.js";
+import { View2D } from "./view2d.js";
 
 export type Length = number;
 export type Angle = number;
@@ -780,6 +781,7 @@ export abstract class Assembly extends Component {
 export abstract class Project extends Assembly {
   readonly registry = new ComponentRegistry(this);
   readonly parts = this.registry.parts;
+  readonly view2D = new View2D();
   parameterState?: ParameterState;
   /** Resolve the active Studio values before constructing dependent geometry. */
   protected configureParameters<const S extends ParameterSchema>(

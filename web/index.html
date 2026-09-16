@@ -37,6 +37,7 @@
           ><button id="toggle-parts">Parts</button>
         </div>
         <button data-tab="model" class="active">3D model</button>
+        <button data-tab="plane2d" hidden>2D plane</button>
         <button data-tab="drawing">Drawings</button>
         <details id="more-views">
           <summary>More</summary>
@@ -153,6 +154,16 @@
               max="1000"
               value="0"
             /><span id="motion-label">Closed</span>
+          </div>
+        </div>
+        <div id="plane2d" class="tab">
+          <canvas
+            id="plane2d-canvas"
+            aria-label="Interactive 2D project plane"
+          ></canvas>
+          <div class="plane2d-tools">
+            <button id="plane2d-fit">Fit</button
+            ><span>Drag to pan · scroll to zoom · millimetres</span>
           </div>
         </div>
         <div id="drawing" class="tab gallery"></div>

@@ -160,6 +160,28 @@ export class KitchenCabinet extends Project {
 
   constructor() {
     super({ id: "kitchen-cabinet", label: "Four-drawer kitchen cabinet" });
+    // Interactive front-elevation sketch, separate from printable drawings.
+    this.view2D.path(
+      [
+        { x: 0, y: 0 },
+        { x: WIDTH, y: 0 },
+        { x: WIDTH, y: HEIGHT },
+        { x: 0, y: HEIGHT },
+      ],
+      { closed: true, label: "Cabinet outline" },
+    );
+    for (let drawer = 1; drawer <= DRAWERS; drawer++) {
+      if (drawer < DRAWERS)
+        this.view2D.line(
+          { x: 0, y: (HEIGHT * drawer) / DRAWERS },
+          { x: WIDTH, y: (HEIGHT * drawer) / DRAWERS },
+        );
+      this.view2D.circle(
+        { x: WIDTH / 2, y: (HEIGHT * (drawer - 0.5)) / DRAWERS },
+        12,
+        { label: `Drawer ${drawer} pull` },
+      );
+    }
     const left = plywood
       .makePart({ id: "left", width: DEPTH, height: HEIGHT })
       .place({ rotate: { y: 90, z: 90 } });

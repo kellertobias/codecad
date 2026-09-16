@@ -8,6 +8,26 @@ A local TypeScript CAD application with classes, standard decorators, automatic
 part registration, an OpenCascade geometry engine, live preview, and manufacturing
 outputs.
 
+Projects can also define a dedicated interactive 2D plane, independent of
+printable Drawings. Add paths, lines, or circles in millimetres from a project
+constructor; Studio shows a **2D plane** tab only when content exists:
+
+```ts
+this.view2D.path(
+  [
+    { x: 0, y: 0 },
+    { x: 600, y: 0 },
+    { x: 600, y: 900 },
+    { x: 0, y: 900 },
+  ],
+  { closed: true, label: "Front outline" },
+);
+this.view2D.circle({ x: 300, y: 450 }, 12, { label: "Pull" });
+```
+
+Drag to pan the unbounded grid, scroll to zoom around the cursor, and use Fit to
+reframe project geometry. This view does not create an export file.
+
 ![CodeCAD Studio displaying the four-drawer kitchen cabinet](assets/codecad-studio-kitchen-cabinet.png)
 
 ## Use as a library

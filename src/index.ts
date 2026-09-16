@@ -12,3 +12,4 @@ export type {
 } from "./drawing-style.js";
 export * from "./techniques.js";
 export * from "./tools.js";
+export * from "./view2d.js";

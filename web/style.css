@@ -472,6 +472,37 @@ nav button.active {
   overflow: hidden;
   background: radial-gradient(ellipse at 45% 35%, #30434c 0, #1b2830 65%);
 }
+#plane2d {
+  position: relative;
+  overflow: hidden;
+}
+#plane2d-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+#plane2d-canvas:active {
+  cursor: grabbing;
+}
+.plane2d-tools {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  border: 1px solid #42605b;
+  border-radius: 7px;
+  background: #1b292dd9;
+  color: #9fb4bb;
+  font-size: 11px;
+}
+.plane2d-tools button {
+  padding: 4px 8px;
+}
 .model-overlay-tools {
   position: absolute;
   top: 10px;

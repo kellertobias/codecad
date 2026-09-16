@@ -6,6 +6,8 @@ import { IsolationSession } from "./isolation.js";
 import { saveDesktopPreview, setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
+import { Plane2DCanvas } from "./plane2d.js";
+import type { View2DPrimitive } from "../src/view2d.js";
 import {
   chooseMeasurePick,
   measure,
@@ -45,6 +47,7 @@ type StudioAnimation = {
   meshFrames?: MeshData[];
 };
 type Model = {
+  view2D?: View2DPrimitive[];
   parameters: ParameterState | null;
   components: {
     path: string;
@@ -151,6 +154,7 @@ function renderAnimationChoices() {
 const canvas = $("canvas"),
   scene = new THREE.Scene(),
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+const plane2D = new Plane2DCanvas($<HTMLCanvasElement>("plane2d-canvas"));
 let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera =
   new THREE.PerspectiveCamera(40, 1, 0.1, 100000);
 camera.up.set(0, 0, 1);
@@ -390,6 +394,7 @@ function showModel(data: Model) {
     $("messages").className = "success";
   } else $("messages").className = "";
   renderParts();
+  plane2D.setItems(data.view2D ?? []);
   renderOutputs();
   renderCuts();
   updateAvailableTabs();
@@ -871,6 +876,12 @@ function renderCuts() {
   if (!reports.length) renderCutTable(model?.cutList ?? []);
 }
 function updateAvailableTabs() {
+  const planeButton = document.querySelector<HTMLButtonElement>(
+    '[data-tab="plane2d"]',
+  )!;
+  planeButton.hidden = !model?.view2D?.length;
+  if (planeButton.hidden && $("plane2d").classList.contains("active"))
+    activateTab("model");
   const available: Record<string, boolean> = availableViews({
     files: model?.files ?? [],
     reports: model?.reports ?? [],
@@ -990,6 +1001,7 @@ $("fit").onclick = () => {
   fit();
   $("view-presets").removeAttribute("open");
 };
+$("plane2d-fit").onclick = () => plane2D.fit();
 $("projection-toggle").onclick = () =>
   setProjection(!(camera instanceof THREE.OrthographicCamera));
 $("show-all").onclick = () => showOnly("");
@@ -1047,6 +1059,7 @@ function activateTab(id: string) {
     .filter((viewer) => viewer.element.parentElement?.id === id)
     .forEach((viewer) => viewer.start());
   resize();
+  if (id === "plane2d") plane2D.render();
 }
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
   button.onclick = () => {

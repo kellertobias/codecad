@@ -338,6 +338,7 @@ export async function buildProject(
       animations,
       unfolds,
       cutList: cutRows(project),
+      view2D: project.view2D.primitives,
       components: [project, ...project.registry.all].map((c) => ({
         path: c.path,
         id: c.id,

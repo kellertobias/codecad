@@ -14,6 +14,8 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
     directory,
   );
   assert.equal(result.meshes.length, 53);
+  assert.equal(result.view2D.length, 8);
+  assert.equal(result.view2D[0]?.kind, "path");
   const drawer = result.components.find(
     (c) => c.path === "kitchen-cabinet/drawer-1",
   );
