@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Vector3 } from "three";
-import { measure, type MeasurePick } from "../web/measurement.js";
+import {
+  chooseMeasurePick,
+  measure,
+  type MeasurePick,
+} from "../web/measurement.js";
 
 const v = (x: number, y: number, z: number) => new Vector3(x, y, z);
 const point = (x: number, y: number, z: number): MeasurePick => ({
@@ -69,5 +73,33 @@ test("degenerate measurement geometry is rejected", () => {
   assert.throws(
     () => measure(point(0, 0, 0), face(v(0, 0, 0), v(0, 0, 0))),
     /normal/,
+  );
+});
+test("cursor target priority is point, Shift hole centre, edge, then face", () => {
+  const p = point(0, 0, 0),
+    h = hole(1, 0, 0),
+    e = edge(v(0, 0, 0), v(2, 0, 0));
+  const f = face(v(0, 0, 0), v(0, 0, 1));
+  const pick = (pointDistance: number, shift: boolean) =>
+    chooseMeasurePick(
+      [{ pick: p, screenDistance: pointDistance }],
+      [{ pick: e, screenDistance: 3 }],
+      [{ pick: h, screenDistance: 4 }],
+      f,
+      shift,
+    );
+  assert.equal(pick(5, true), p);
+  assert.equal(pick(20, true), h);
+  assert.equal(pick(20, false), e);
+  assert.equal(chooseMeasurePick([], [], [], f, false), f);
+  assert.equal(chooseMeasurePick([], [], [], undefined, false), undefined);
+  const result = measure(p, point(3, 4, 0));
+  assert.equal(result.guides.length, 1);
+  assert.deepEqual(
+    result.guides[0]?.map((end) => end.toArray()),
+    [
+      [0, 0, 0],
+      [3, 4, 0],
+    ],
   );
 });

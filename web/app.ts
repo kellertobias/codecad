@@ -5,7 +5,9 @@ import type { ParameterState } from "../src/parameters.js";
 import { IsolationSession } from "./isolation.js";
 import { saveDesktopPreview, setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
+import { availableViews } from "./available-views.js";
 import {
+  chooseMeasurePick,
   measure,
   type MeasurePick,
   type MeasureResult,
@@ -147,13 +149,16 @@ function renderAnimationChoices() {
 }
 const canvas = $("canvas"),
   scene = new THREE.Scene(),
-  camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100000);
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera =
+  new THREE.PerspectiveCamera(40, 1, 0.1, 100000);
 camera.up.set(0, 0, 1);
 camera.position.set(1500, -1700, 1350);
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 canvas.append(renderer.domElement);
-const controls = new OrbitControls(camera, renderer.domElement);
+let controls: OrbitControls<
+  THREE.PerspectiveCamera | THREE.OrthographicCamera
+> = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 scene.add(new THREE.HemisphereLight(0xe7f4ff, 0x766a55, 2.4));
 const sun = new THREE.DirectionalLight(0xffffff, 3);
@@ -175,6 +180,28 @@ const measureLabel = document.createElement("div");
 measureLabel.className = "measure-label";
 measureLabel.hidden = true;
 canvas.append(measureLabel);
+const measureGuide = document.createElementNS(
+  "http://www.w3.org/2000/svg",
+  "svg",
+);
+measureGuide.classList.add("measure-guide");
+measureGuide.setAttribute("aria-hidden", "true");
+measureGuide.setAttribute("hidden", "");
+const guideLine = document.createElementNS(
+  "http://www.w3.org/2000/svg",
+  "line",
+);
+const guideStart = document.createElementNS(
+  "http://www.w3.org/2000/svg",
+  "circle",
+);
+const guideEnd = document.createElementNS(
+  "http://www.w3.org/2000/svg",
+  "circle",
+);
+for (const marker of [guideStart, guideEnd]) marker.setAttribute("r", "5");
+measureGuide.append(guideLine, guideStart, guideEnd);
+canvas.append(measureGuide);
 let measurementMode = false,
   measurePicks: MeasurePick[] = [],
   measured: MeasureResult | undefined;
@@ -187,7 +214,12 @@ function resize() {
     h = canvas.clientHeight;
   if (w && h) {
     renderer.setSize(w, h);
-    camera.aspect = w / h;
+    if (camera instanceof THREE.PerspectiveCamera) camera.aspect = w / h;
+    else {
+      const halfHeight = (camera.top - camera.bottom) / 2;
+      camera.left = -halfHeight * (w / h);
+      camera.right = halfHeight * (w / h);
+    }
     camera.updateProjectionMatrix();
   }
 }
@@ -200,9 +232,12 @@ function fit(direction?: string) {
     if (mesh.visible) bounds.union(new THREE.Box3().setFromObject(mesh));
   if (bounds.isEmpty()) return;
   center = bounds.getCenter(new THREE.Vector3());
-  const distance =
-    (Math.max(bounds.getSize(new THREE.Vector3()).length(), 100) * 1.85) /
-    Math.min(camera.aspect, 1);
+  const extent = Math.max(bounds.getSize(new THREE.Vector3()).length(), 100);
+  const aspect = Math.max(
+    canvas.clientWidth / Math.max(canvas.clientHeight, 1),
+    0.1,
+  );
+  const distance = (extent * 1.85) / Math.min(aspect, 1);
   const dir =
     direction === "front"
       ? new THREE.Vector3(0, -1, 0.02)
@@ -213,8 +248,32 @@ function fit(direction?: string) {
   controls.target.copy(center);
   camera.near = distance / 10000;
   camera.far = distance * 30;
+  if (camera instanceof THREE.OrthographicCamera) {
+    const half = (extent * 0.8) / Math.min(aspect, 1);
+    camera.left = -half * aspect;
+    camera.right = half * aspect;
+    camera.top = half;
+    camera.bottom = -half;
+  }
   camera.updateProjectionMatrix();
   controls.update();
+}
+function setProjection(parallel: boolean) {
+  if (parallel === camera instanceof THREE.OrthographicCamera) return;
+  const position = camera.position.clone();
+  const target = controls.target.clone();
+  controls.dispose();
+  camera = parallel
+    ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100000)
+    : new THREE.PerspectiveCamera(40, 1, 0.1, 100000);
+  camera.up.set(0, 0, 1);
+  camera.position.copy(position);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.copy(target);
+  fit();
+  $("projection-parallel").setAttribute("aria-pressed", String(parallel));
+  $("projection-perspective").setAttribute("aria-pressed", String(!parallel));
 }
 function clearScene() {
   for (const child of [...group.children]) {
@@ -241,6 +300,7 @@ function clearScene() {
   measurePicks = [];
   measured = undefined;
   measureLabel.hidden = true;
+  measureGuide.setAttribute("hidden", "");
 }
 function updateHoleMarkers() {
   if (!model) return;
@@ -264,8 +324,7 @@ function updateHoleMarkers() {
       marker.userData.label = `${mesh.componentPath} · hole ${index + 1} (Ø${hole.diameter} mm)`;
       holeGroup.add(marker);
     }
-  holeGroup.visible =
-    measurementMode && $<HTMLSelectElement>("measure-kind").value === "hole";
+  holeGroup.visible = false;
 }
 function showModel(data: Model) {
   const first = !model;
@@ -275,6 +334,7 @@ function showModel(data: Model) {
       .filter((c) => !c.parent)
       .forEach((c) => expanded.add(c.path));
   document.title = data.title + " · CodeCAD";
+  $("project-name").textContent = data.title;
   clearScene();
   for (const d of data.meshes) {
     const geometry = new THREE.BufferGeometry()
@@ -336,6 +396,7 @@ function showModel(data: Model) {
   renderParts();
   renderOutputs();
   renderCuts();
+  updateAvailableTabs();
   renderParameters(data.parameters);
   renderAnimationChoices();
   if (first) fit();
@@ -805,6 +866,23 @@ function renderCuts() {
   }
   if (!reports.length) renderCutTable(model?.cutList ?? []);
 }
+function updateAvailableTabs() {
+  const available: Record<string, boolean> = availableViews({
+    files: model?.files ?? [],
+    reports: model?.reports ?? [],
+    cutList: model?.cutList ?? [],
+  });
+  for (const [id, enabled] of Object.entries(available)) {
+    const button = document.querySelector<HTMLButtonElement>(
+      `[data-tab="${id}"]`,
+    )!;
+    button.hidden = !enabled;
+    button.disabled = !enabled;
+    if (!enabled && $(id).classList.contains("active")) activateTab("model");
+  }
+  $("more-views").hidden =
+    !available.nesting && !available.cuts && !available.exports;
+}
 function renderCutTable(rows: Model["cutList"]) {
   const table = document.createElement("table");
   const header = document.createElement("tr");
@@ -841,7 +919,9 @@ async function loadSource() {
   version = data.version;
   token = data.token;
   dirty = false;
-  $("file").textContent = data.file;
+  if (!model)
+    $("project-name").textContent =
+      data.file.split(/[\\/]/).at(-1) ?? data.file;
   select(selected);
   $("source-status").textContent = "Changes save on Ctrl / ⌘ + S";
 }
@@ -884,7 +964,10 @@ window.addEventListener("beforeunload", (event) => {
 $("save").onclick = () => void save();
 $("toggle-source").onclick = () => {
   const open = document.body.classList.toggle("source-open");
-  $("toggle-source").textContent = open ? "3D view" : "Source";
+  $("toggle-source").setAttribute(
+    "aria-label",
+    open ? "Hide code" : "Show code",
+  );
 };
 $("toggle-parts").onclick = () => document.body.classList.toggle("parts-open");
 $("reload-source").onclick = () => {
@@ -895,11 +978,20 @@ $("rebuild").onclick = () =>
     method: "POST",
     headers: { "X-CodeCAD-Token": token },
   });
-$("fit").onclick = () => fit();
+$("fit").onclick = () => {
+  fit();
+  $("view-presets").removeAttribute("open");
+};
+$("projection-parallel").onclick = () => setProjection(true);
+$("projection-perspective").onclick = () => setProjection(false);
 $("show-all").onclick = () => showOnly("");
-document
-  .querySelectorAll<HTMLButtonElement>("[data-camera]")
-  .forEach((button) => (button.onclick = () => fit(button.dataset.camera)));
+document.querySelectorAll<HTMLButtonElement>("[data-camera]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      fit(button.dataset.camera);
+      $("view-presets").removeAttribute("open");
+    }),
+);
 $("filter").oninput = renderParts;
 $("edges").onchange = applyPose;
 $("explode").oninput = () => {
@@ -925,22 +1017,29 @@ $("play").onclick = () => {
   if (playing) clearMeasurement();
   $("play").textContent = playing ? "Ⅱ Pause" : "▶ Motion";
 };
-document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach(
-  (button) =>
-    (button.onclick = () => {
-      document
-        .querySelectorAll("#tabs button,.tab")
-        .forEach((el) => el.classList.remove("active"));
-      button.classList.add("active");
-      $(button.dataset.tab!).classList.add("active");
-      pdfViewers
-        .filter(
-          (viewer) => viewer.element.parentElement?.id === button.dataset.tab,
-        )
-        .forEach((viewer) => viewer.start());
-      resize();
-    }),
-);
+function activateTab(id: string) {
+  document
+    .querySelectorAll("[data-tab],.tab")
+    .forEach((el) => el.classList.remove("active"));
+  document.querySelector(`[data-tab="${id}"]`)?.classList.add("active");
+  $(id).classList.add("active");
+  $("tabs").classList.toggle("model-active", id === "model");
+  $("more-views").classList.toggle(
+    "active",
+    ["nesting", "cuts", "exports"].includes(id),
+  );
+  if (id !== "model") $("view-presets").removeAttribute("open");
+  pdfViewers
+    .filter((viewer) => viewer.element.parentElement?.id === id)
+    .forEach((viewer) => viewer.start());
+  resize();
+}
+document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
+  button.onclick = () => {
+    activateTab(button.dataset.tab!);
+    $("more-views").removeAttribute("open");
+  };
+});
 const raycaster = new THREE.Raycaster();
 function clearMeasurement() {
   for (const child of [...measurementGroup.children]) {
@@ -952,6 +1051,7 @@ function clearMeasurement() {
   measurePicks = [];
   measured = undefined;
   measureLabel.hidden = true;
+  measureGuide.setAttribute("hidden", "");
   $("measure-result").textContent = "Pick the first target.";
 }
 function measurementMarker(point: THREE.Vector3, color = 0xffd277) {
@@ -967,7 +1067,20 @@ function measurementMarker(point: THREE.Vector3, color = 0xffd277) {
   marker.renderOrder = 1001;
   measurementGroup.add(marker);
 }
-function measurementLine(a: THREE.Vector3, b: THREE.Vector3) {
+function measurementLine(a: THREE.Vector3, b: THREE.Vector3, guide = false) {
+  if (guide && a.distanceTo(b) > 1e-7) {
+    const radius = Math.max(
+      1.8,
+      Math.min(4, bounds.getSize(new THREE.Vector3()).length() * 0.0015),
+    );
+    const solid = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.LineCurve3(a, b), 1, radius, 8, false),
+      new THREE.MeshBasicMaterial({ color: 0x70e3d0, depthTest: false }),
+    );
+    solid.renderOrder = 1002;
+    measurementGroup.add(solid);
+    return;
+  }
   const line = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([a, b]),
     new THREE.LineBasicMaterial({ color: 0xffd277, depthTest: false }),
@@ -996,53 +1109,76 @@ function showMeasurement() {
   }
   if (!measured) return;
   for (const [a, b] of measured.guides)
-    if (a.distanceTo(b) > 1e-7) measurementLine(a, b);
+    if (a.distanceTo(b) > 1e-7) {
+      measurementLine(a, b, true);
+      measurementMarker(a, 0x70e3d0);
+      measurementMarker(b, 0x70e3d0);
+    }
   if (measured.intersection) measurementMarker(measured.intersection, 0x70e3d0);
   measureLabel.textContent = measured.description;
   measureLabel.hidden = false;
+  measureGuide.toggleAttribute(
+    "hidden",
+    !measured.guides.some(([a, b]) => a.distanceTo(b) > 1e-7),
+  );
 }
 function geometryPick(
   hit: THREE.Intersection,
-  kind: string,
+  pointer: THREE.Vector2,
+  shift: boolean,
 ): MeasurePick | undefined {
   const mesh = hit.object as THREE.Mesh,
     face = hit.face,
     positions = mesh.geometry.getAttribute("position");
   if (!face || !positions) return undefined;
+  const screen = (point: THREE.Vector3) => {
+    const projected = point.clone().project(camera);
+    return new THREE.Vector2(
+      ((projected.x + 1) / 2) * renderer.domElement.clientWidth,
+      ((1 - projected.y) / 2) * renderer.domElement.clientHeight,
+    );
+  };
   const world = (index: number) =>
     new THREE.Vector3()
       .fromBufferAttribute(positions, index)
       .applyMatrix4(mesh.matrix);
-  if (kind === "face")
-    return {
-      kind: "face",
-      point: hit.point.clone(),
-      normal: face.normal.clone().transformDirection(mesh.matrix),
-    };
   const corners = [world(face.a), world(face.b), world(face.c)];
-  if (kind === "point")
-    return {
-      kind: "point",
-      point: corners.reduce((closest, candidate) =>
-        candidate.distanceToSquared(hit.point) <
-        closest.distanceToSquared(hit.point)
-          ? candidate
-          : closest,
-      ),
-    };
   const data = model?.meshes.find(
     (item) => item.componentPath === mesh.userData.path,
   );
-  let nearest:
-    { a: THREE.Vector3; b: THREE.Vector3; distance: number } | undefined;
+  const points: { pick: MeasurePick; screenDistance: number }[] = [];
+  const edges: { pick: MeasurePick; screenDistance: number }[] = [];
   const consider = (a: THREE.Vector3, b: THREE.Vector3) => {
-    const foot = new THREE.Line3(a, b).closestPointToPoint(
-      hit.point,
-      true,
-      new THREE.Vector3(),
+    const surfaceDistance = new THREE.Line3(a, b)
+      .closestPointToPoint(hit.point, true, new THREE.Vector3())
+      .distanceTo(hit.point);
+    if (
+      surfaceDistance >
+      Math.max(20, bounds.getSize(new THREE.Vector3()).length() * 0.02)
+    )
+      return;
+    const x = screen(a),
+      y = screen(b);
+    const delta = y.clone().sub(x);
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        pointer.clone().sub(x).dot(delta) / Math.max(delta.lengthSq(), 1e-8),
+      ),
     );
-    const distance = foot.distanceTo(hit.point);
-    if (!nearest || distance < nearest.distance) nearest = { a, b, distance };
+    edges.push({
+      pick: { kind: "edge", a, b },
+      screenDistance: pointer.distanceTo(x.addScaledVector(delta, t)),
+    });
+    points.push({
+      pick: { kind: "point", point: a },
+      screenDistance: pointer.distanceTo(screen(a)),
+    });
+    points.push({
+      pick: { kind: "point", point: b },
+      screenDistance: pointer.distanceTo(screen(b)),
+    });
   };
   if (data?.edges.length) {
     for (let i = 0; i < data.edges.length; i += 6)
@@ -1061,16 +1197,46 @@ function geometryPick(
   } else {
     for (let i = 0; i < 3; i++) consider(corners[i]!, corners[(i + 1) % 3]!);
   }
-  if (
-    !nearest ||
-    nearest.distance >
-      Math.max(
-        3,
-        Math.min(20, bounds.getSize(new THREE.Vector3()).length() * 0.004),
-      )
-  )
-    return undefined;
-  return { kind: "edge", a: nearest.a, b: nearest.b };
+  const holes: { pick: MeasurePick; screenDistance: number }[] = [];
+  if (shift)
+    for (const hole of data?.holes ?? []) {
+      const center = new THREE.Vector3()
+        .fromArray(hole.center)
+        .applyMatrix4(mesh.matrix);
+      const axis = new THREE.Vector3()
+        .fromArray(hole.axis)
+        .transformDirection(mesh.matrix);
+      const difference = hit.point.clone().sub(center);
+      const radial = difference
+        .addScaledVector(axis, -difference.dot(axis))
+        .length();
+      const tangent =
+        Math.abs(axis.x) < 0.9
+          ? new THREE.Vector3(1, 0, 0)
+          : new THREE.Vector3(0, 1, 0);
+      tangent.addScaledVector(axis, -tangent.dot(axis)).normalize();
+      const pixelRadius = screen(center).distanceTo(
+        screen(center.clone().addScaledVector(tangent, hole.diameter / 2)),
+      );
+      const screenDistance =
+        (Math.abs(radial - hole.diameter / 2) * pixelRadius) /
+        Math.max(hole.diameter / 2, 1e-6);
+      holes.push({
+        pick: { kind: "hole", point: center, diameter: hole.diameter },
+        screenDistance,
+      });
+    }
+  return chooseMeasurePick(
+    points,
+    edges,
+    holes,
+    {
+      kind: "face",
+      point: hit.point.clone(),
+      normal: face.normal.clone().transformDirection(mesh.matrix),
+    },
+    shift,
+  );
 }
 $<HTMLButtonElement>("measure-toggle").onclick = () => {
   measurementMode = !measurementMode;
@@ -1080,15 +1246,7 @@ $<HTMLButtonElement>("measure-toggle").onclick = () => {
   }
   $("measure-panel").hidden = !measurementMode;
   $("measure-toggle").setAttribute("aria-pressed", String(measurementMode));
-  holeGroup.visible =
-    measurementMode && $<HTMLSelectElement>("measure-kind").value === "hole";
   clearMeasurement();
-};
-$<HTMLSelectElement>("measure-kind").onchange = () => {
-  holeGroup.visible =
-    measurementMode && $<HTMLSelectElement>("measure-kind").value === "hole";
-  if (measurePicks.length === 1)
-    $("measure-result").textContent = "Pick the second target.";
 };
 $("measure-clear").onclick = clearMeasurement;
 let downX = 0,
@@ -1097,41 +1255,45 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   downX = event.clientX;
   downY = event.clientY;
 });
-renderer.domElement.addEventListener("pointerup", (event) => {
-  if (Math.hypot(event.clientX - downX, event.clientY - downY) > 4) return;
-  const r = renderer.domElement.getBoundingClientRect();
+function raycastAt(event: PointerEvent) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const pointer = new THREE.Vector2(
+    event.clientX - rect.left,
+    event.clientY - rect.top,
+  );
   raycaster.setFromCamera(
     new THREE.Vector2(
-      ((event.clientX - r.left) / r.width) * 2 - 1,
-      (-(event.clientY - r.top) / r.height) * 2 + 1,
+      (pointer.x / rect.width) * 2 - 1,
+      -(pointer.y / rect.height) * 2 + 1,
     ),
     camera,
   );
+  const hit = raycaster.intersectObjects(
+    [...objects.values()].filter((mesh) => mesh.visible),
+  )[0];
+  return {
+    hit,
+    pick: hit ? geometryPick(hit, pointer, event.shiftKey) : undefined,
+  };
+}
+function pickLabel(pick: MeasurePick | undefined) {
+  return pick
+    ? `${pick.kind === "hole" ? "Hole centre" : pick.kind === "point" ? "Point" : pick.kind === "edge" ? "Edge" : "Face"} under cursor${pick.kind === "hole" ? ` · Ø${pick.diameter} mm` : ""}`
+    : "No geometry under cursor";
+}
+renderer.domElement.addEventListener("pointermove", (event) => {
+  if (!measurementMode) return;
+  const { pick } = raycastAt(event);
+  $("measure-hover").textContent = pickLabel(pick);
+});
+renderer.domElement.addEventListener("pointerup", (event) => {
+  if (Math.hypot(event.clientX - downX, event.clientY - downY) > 4) return;
+  const { hit, pick } = raycastAt(event);
   if (measurementMode) {
-    const kind = $<HTMLSelectElement>("measure-kind").value;
-    const hit =
-      kind === "hole"
-        ? raycaster.intersectObjects(holeGroup.children)[0]
-        : raycaster.intersectObjects(
-            [...objects.values()].filter((mesh) => mesh.visible),
-          )[0];
-    const pick =
-      kind === "hole"
-        ? hit
-          ? ({
-              kind: "hole",
-              point: hit.object.position.clone(),
-              diameter: hit.object.userData.diameter,
-            } as MeasurePick)
-          : undefined
-        : hit
-          ? geometryPick(hit, kind)
-          : undefined;
+    $("measure-hover").textContent = pickLabel(pick);
     if (!pick) {
       $("measure-result").textContent =
-        kind === "hole"
-          ? "Click a cyan hole center."
-          : `Click closer to a ${kind}.`;
+        "Click geometry to choose a point, edge or face.";
       return;
     }
     if (measurePicks.length === 2) clearMeasurement();
@@ -1143,15 +1305,10 @@ renderer.domElement.addEventListener("pointerup", (event) => {
       } catch (error) {
         $("measure-result").textContent = String(error);
       }
-    } else
-      $("measure-result").textContent =
-        "Pick the second target (change target type if needed).";
+    } else $("measure-result").textContent = "Pick the second target.";
     showMeasurement();
     return;
   }
-  const hit = raycaster.intersectObjects(
-    [...objects.values()].filter((m) => m.visible),
-  )[0];
   select(hit?.object.userData.path ?? "");
 });
 setupDesktop(() => !dirty || confirm("Discard unsaved editor changes?"));
@@ -1227,6 +1384,23 @@ function animate(now: number) {
     const projected = measured.labelAt.clone().project(camera);
     measureLabel.style.left = `${((projected.x + 1) / 2) * canvas.clientWidth}px`;
     measureLabel.style.top = `${((1 - projected.y) / 2) * canvas.clientHeight}px`;
+    if (!measureGuide.hasAttribute("hidden")) {
+      const [a, b] = measured.guides[0]!;
+      const start = a.clone().project(camera),
+        end = b.clone().project(camera);
+      const sx = ((start.x + 1) / 2) * canvas.clientWidth;
+      const sy = ((1 - start.y) / 2) * canvas.clientHeight;
+      const ex = ((end.x + 1) / 2) * canvas.clientWidth;
+      const ey = ((1 - end.y) / 2) * canvas.clientHeight;
+      guideLine.setAttribute("x1", String(sx));
+      guideLine.setAttribute("y1", String(sy));
+      guideLine.setAttribute("x2", String(ex));
+      guideLine.setAttribute("y2", String(ey));
+      guideStart.setAttribute("cx", String(sx));
+      guideStart.setAttribute("cy", String(sy));
+      guideEnd.setAttribute("cx", String(ex));
+      guideEnd.setAttribute("cy", String(ey));
+    }
   }
   renderer.render(scene, camera);
 }

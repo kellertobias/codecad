@@ -440,6 +440,7 @@ const server = createServer(async (req, res) => {
         "text/javascript",
       ],
       "/style.css": [join(root, "web/style.css"), "text/css"],
+      "/codecad-icon.png": [join(root, "desktop/icon.png"), "image/png"],
       "/previews/cabinet.png": [
         join(root, "desktop/previews/cabinet.png"),
         "image/png",

@@ -64,6 +64,7 @@ for (const name of ["src", "web", "examples", "package.json", "tsconfig.json"])
 await cp(join(root, "desktop/previews"), join(out, "desktop/previews"), {
   recursive: true,
 });
+await cp(join(root, "desktop/icon.png"), join(out, "desktop/icon.png"));
 await mkdir(join(out, "node_modules"), { recursive: true });
 for (const name of await readdir(join(root, "node_modules"))) {
   if (name.startsWith(".") || name === "@tauri-apps") continue;

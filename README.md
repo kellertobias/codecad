@@ -113,12 +113,14 @@ unless `CODECAD_SIGN_IDENTITY` is set; no notarization is performed.
 The macOS app has a custom draggable window frame with minimize, maximize/restore
 and close controls. **Open from disk…** on the welcome screen opens a native file
 picker directly: select a project's `.ts` or `.mts` entry file, not its folder.
-**Browse projects** shows recent projects and examples with model previews; the
-picker also offers direct opening from disk. Cmd/Ctrl+O opens that picker from
-the editor. Opening a new project executes local TypeScript and asks for trust
-the first time only. The editor's home button closes the current project and
-stops its CAD engine; the icon beside **Project source** hides or shows the code
-sidebar. **Build & checks** can copy its visible output for bug reports.
+Recent projects and examples are shown directly on the welcome screen with model
+previews. Cmd/Ctrl+O opens the project picker from the editor. Opening a new
+project executes local TypeScript and asks for trust the first time only. The
+Studio toolbar's home button closes the current project and stops its CAD
+engine; the adjacent sidebar button hides or shows the code completely. View
+presets, parallel/perspective projection, and contextual measurement are in the
+same toolbar. Hold Shift near a circular edge to measure from its hole centre.
+**Build & checks** shows build status and can copy its output for bug reports.
 
 The welcome screen also offers editable copies of the cabinet, keyboard and
 apartment examples with previews rendered from their actual models. Copies live

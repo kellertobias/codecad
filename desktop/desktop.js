@@ -1,5 +1,11 @@
 const invoke = window.__TAURI__.core.invoke;
 const bar = document.getElementById("titlebar");
+if (navigator.platform.includes("Mac")) {
+  document.body.classList.add("platform-macos");
+  const controls = bar.querySelector(".controls");
+  controls.prepend(controls.querySelector('[data-window="close"]'));
+  bar.prepend(controls);
+}
 bar.onmousedown = (e) => {
   if (e.button === 0 && !e.target.closest("button"))
     void invoke("window_action", {
@@ -13,10 +19,7 @@ document
       (button.onclick = () =>
         invoke("window_action", { action: button.dataset.window })),
   );
-const picker = document.getElementById("project-picker");
-const pickerContent = document.getElementById("picker-content");
 let catalog = { recent: [], examples: [] };
-let activeTab = "recent";
 const exampleDetails = {
   cabinet: "Joinery · hardware · motion",
   keyboard: "Sheet metal · MDF interfaces",
@@ -76,46 +79,13 @@ async function openProject(example = null, path = null) {
     buttons.forEach((b) => (b.disabled = false));
   }
 }
-function renderPicker(tab) {
-  activeTab = tab;
-  document.querySelectorAll("[data-picker-tab]").forEach((button) => {
-    button.setAttribute(
-      "aria-selected",
-      String(button.dataset.pickerTab === tab),
-    );
-  });
-  pickerContent.replaceChildren();
-  const items = tab === "recent" ? catalog.recent : catalog.examples;
-  if (!items.length)
-    pickerContent.textContent =
-      "No recent projects yet. Open an example or choose a file from disk.";
-  for (const item of items) pickerContent.append(projectButton(item));
-}
-async function showPicker() {
-  try {
-    await refreshCatalog();
-  } catch (e) {
-    document.getElementById("message").textContent = String(e);
-    return;
-  }
-  renderPicker(catalog.recent.length ? "recent" : "examples");
-  picker.showModal();
-}
 document.getElementById("open-disk").onclick = () => openProject();
-document.getElementById("browse-projects").onclick = showPicker;
-document.getElementById("close-picker").onclick = () => picker.close();
-picker.onclick = (event) => {
-  if (event.target === picker) picker.close();
-};
-document
-  .querySelectorAll("[data-picker-tab]")
-  .forEach(
-    (button) =>
-      (button.onclick = () =>
-        button.dataset.pickerTab === "disk"
-          ? openProject()
-          : renderPicker(button.dataset.pickerTab)),
-  );
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "o") {
+    event.preventDefault();
+    void openProject();
+  }
+});
 void refreshCatalog().catch((e) => {
   document.getElementById("message").textContent = String(e);
 });

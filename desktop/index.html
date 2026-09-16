@@ -27,7 +27,6 @@
       <p>Parametric parts, woodworking, sheet metal and room plans.</p>
       <div class="start-actions">
         <button id="open-disk" class="primary">Open from disk…</button>
-        <button id="browse-projects">Browse projects</button>
       </div>
       <p class="muted">
         Choose a TypeScript project entry (.ts). Only open code you trust.
@@ -40,18 +39,6 @@
       <div class="examples" id="example-list"></div>
       <p id="message" role="status"></p>
     </main>
-    <dialog id="project-picker" aria-label="Open project">
-      <div class="picker-head">
-        <h2>Open project</h2>
-        <button id="close-picker" aria-label="Close">×</button>
-      </div>
-      <div class="picker-tabs" role="tablist">
-        <button data-picker-tab="recent" role="tab">Recent</button>
-        <button data-picker-tab="examples" role="tab">Examples</button>
-        <button data-picker-tab="disk" role="tab">From disk</button>
-      </div>
-      <div id="picker-content"></div>
-    </dialog>
     <script src="desktop.js"></script>
   </body>
 </html>

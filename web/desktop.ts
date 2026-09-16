@@ -29,14 +29,17 @@ export function setupDesktop(canLeave: () => boolean) {
   if (!native) return;
   const bridge = native;
   document.body.classList.add("desktop");
-  const bar = document.querySelector("header")!;
+  const bar = document.querySelector<HTMLElement>("#tabs")!;
+  document.body.classList.add(
+    navigator.platform.includes("Mac") ? "platform-macos" : "platform-windows",
+  );
   const home = document.createElement("button");
   home.id = "desktop-home";
   home.setAttribute("aria-label", "Close project and return home");
   home.title = "Close project and return home";
   home.innerHTML =
     '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  bar.insertBefore(home, document.getElementById("rebuild"));
+  bar.querySelector(".toolbar-start")!.append(home);
   home.onclick = async () => {
     if (!canLeave()) return;
     home.disabled = true;
@@ -48,19 +51,17 @@ export function setupDesktop(canLeave: () => boolean) {
       home.disabled = false;
     }
   };
-  const source = document.createElement("button");
-  source.id = "desktop-toggle-source";
-  source.textContent = "◧";
+  const source = document.getElementById("toggle-source")!;
   source.setAttribute("aria-label", "Hide code");
   source.title = "Hide code";
   source.onclick = () => {
     const hidden = document.body.classList.toggle("source-hidden");
+    document.getElementById("rebuild")!.hidden = !hidden;
     source.textContent = hidden ? "◨" : "◧";
     source.setAttribute("aria-label", hidden ? "Show code" : "Hide code");
     source.title = hidden ? "Show code" : "Hide code";
     source.setAttribute("aria-pressed", String(hidden));
   };
-  document.querySelector(".editor-pane .pane-head strong")?.after(source);
   const editors = document.createElement("select");
   editors.id = "external-editor";
   editors.setAttribute("aria-label", "Open in external editor");
@@ -200,12 +201,20 @@ export function setupDesktop(canLeave: () => boolean) {
   }
   const controls = document.createElement("div");
   controls.className = "window-controls";
-  for (const [action, label, icon] of [
-    ["minimize", "Minimize", "−"],
-    ["maximize", "Maximize or restore", "□"],
-    ["close", "Close", "×"],
-  ]) {
+  const actions = document.body.classList.contains("platform-macos")
+    ? [
+        ["close", "Close", "×"],
+        ["minimize", "Minimize", "−"],
+        ["maximize", "Maximize or restore", "□"],
+      ]
+    : [
+        ["minimize", "Minimize", "−"],
+        ["maximize", "Maximize or restore", "□"],
+        ["close", "Close", "×"],
+      ];
+  for (const [action, label, icon] of actions) {
     const button = document.createElement("button");
+    button.dataset.action = action!;
     button.textContent = icon!;
     button.setAttribute("aria-label", label!);
     button.onclick = () => {
@@ -214,11 +223,14 @@ export function setupDesktop(canLeave: () => boolean) {
     };
     controls.append(button);
   }
-  bar.append(controls);
+  if (document.body.classList.contains("platform-macos")) bar.prepend(controls);
+  else bar.append(controls);
   bar.onmousedown = (e) => {
     if (
       e.button === 0 &&
-      !(e.target as HTMLElement).closest("button,input,select")
+      !(e.target as HTMLElement).closest(
+        "button,input,select,summary,details,label",
+      )
     )
       void native.core.invoke("window_action", {
         action: e.detail === 2 ? "maximize" : "drag",

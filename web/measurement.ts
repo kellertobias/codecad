@@ -14,6 +14,29 @@ export type MeasureResult = {
   guides: readonly [Vector3, Vector3][];
   labelAt: Vector3;
 };
+export type PickCandidate = { pick: MeasurePick; screenDistance: number };
+/** Resolve a cursor target in pixel space so dense tessellation cannot steal a face pick. */
+export function chooseMeasurePick(
+  points: PickCandidate[],
+  edges: PickCandidate[],
+  holeCenters: PickCandidate[],
+  face: MeasurePick | undefined,
+  shift: boolean,
+): MeasurePick | undefined {
+  const closest = (items: PickCandidate[]) =>
+    items.reduce<PickCandidate | undefined>(
+      (best, item) =>
+        !best || item.screenDistance < best.screenDistance ? item : best,
+      undefined,
+    );
+  const point = closest(points);
+  if (point && point.screenDistance <= 10) return point.pick;
+  const hole = shift ? closest(holeCenters) : undefined;
+  if (hole && hole.screenDistance <= 10) return hole.pick;
+  const edge = closest(edges);
+  if (edge && edge.screenDistance <= 8) return edge.pick;
+  return face;
+}
 const epsilon = 1e-7;
 const pointLike = (pick: MeasurePick): pick is PointPick =>
   pick.kind === "point" || pick.kind === "hole";

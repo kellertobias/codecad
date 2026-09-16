@@ -8,64 +8,102 @@
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <header>
-      <div class="brand">
-        <span class="mark">C</span> CodeCAD <small>STUDIO</small>
-      </div>
-      <span id="file">Loading project…</span>
-      <div id="status">Starting</div>
-      <button id="toggle-source">Source</button>
-      <button id="toggle-parts">Parts</button>
-      <button id="rebuild">↻ Rebuild</button>
-    </header>
     <main>
       <section class="editor-pane">
-        <div class="pane-head">
-          <strong>Project source</strong><span>TypeScript · mm</span
-          ><button id="save">Save & build</button>
+        <div class="source-identity">
+          <img src="/codecad-icon.png" alt="" width="30" height="30" />
+          <div>
+            <strong>CodeCAD</strong
+            ><small id="project-name">Loading project…</small>
+          </div>
         </div>
         <div id="source-selection" aria-live="polite">
           Select a component to highlight its source references.
         </div>
         <div id="editor"></div>
         <div class="editor-foot">
-          <span id="source-status">Changes save on Ctrl / ⌘ + S</span
-          ><button id="reload-source">Reload from disk</button>
+          <span id="source-status">Changes save on Ctrl / ⌘ + S</span>
+          <div class="source-actions">
+            <button id="reload-source">Reload from disk</button
+            ><button id="save">Save & build</button>
+          </div>
         </div>
       </section>
-      <section class="workspace">
-        <nav id="tabs">
-          <button data-tab="model" class="active">3D model</button
-          ><button data-tab="drawing">Drawings</button
-          ><button data-tab="nesting">Sheet layouts</button
-          ><button data-tab="cuts">Cut list</button
-          ><button data-tab="exports">Exports</button>
-        </nav>
-        <div id="model" class="tab active">
-          <div class="viewer-tools">
-            <button id="fit">Fit</button
-            ><button data-camera="iso">Isometric</button
-            ><button data-camera="front">Front</button
-            ><button data-camera="top">Top</button
-            ><label><input id="edges" type="checkbox" checked /> Edges</label
-            ><label
-              >Explode
-              <input id="explode" type="range" min="0" max="300" value="0"
-            /></label>
-            <button id="measure-toggle" aria-pressed="false">Measure</button>
+      <nav id="tabs" class="model-active" aria-label="Studio toolbar">
+        <div class="toolbar-start">
+          <button id="toggle-source" aria-label="Show code" title="Show code">
+            ◧</button
+          ><button id="toggle-parts">Parts</button>
+        </div>
+        <button data-tab="model" class="active">3D model</button>
+        <button data-tab="drawing">Drawings</button>
+        <details id="more-views">
+          <summary>More</summary>
+          <div class="toolbar-menu">
+            <button data-tab="nesting">Sheet layouts</button
+            ><button data-tab="cuts">Cut list</button
+            ><button data-tab="exports">Exports</button>
           </div>
+        </details>
+        <div class="toolbar-spacer"></div>
+        <div class="model-tools">
+          <details id="view-presets">
+            <summary aria-label="View presets" title="View presets">▣</summary>
+            <div class="toolbar-menu">
+              <button id="fit">Fit</button
+              ><button data-camera="iso">Isometric</button
+              ><button data-camera="front">Front</button
+              ><button data-camera="top">Top</button>
+            </div>
+          </details>
+          <button
+            id="projection-parallel"
+            class="tool-icon"
+            aria-label="Parallel projection"
+            title="Parallel projection"
+            aria-pressed="false"
+          >
+            ▱
+          </button>
+          <button
+            id="projection-perspective"
+            class="tool-icon"
+            aria-label="Perspective projection"
+            title="Perspective projection"
+            aria-pressed="true"
+          >
+            ◈
+          </button>
+          <button
+            id="measure-toggle"
+            class="tool-icon"
+            aria-label="Measure"
+            title="Measure"
+            aria-pressed="false"
+          >
+            ⌁
+          </button>
+          <label class="tool-option"
+            ><input id="edges" type="checkbox" checked /> Edges</label
+          >
+          <label class="tool-option"
+            >Explode
+            <input id="explode" type="range" min="0" max="300" value="0"
+          /></label>
+        </div>
+        <button id="rebuild" hidden aria-label="Rebuild project">
+          ↻ Rebuild
+        </button>
+      </nav>
+      <section class="workspace">
+        <div id="model" class="tab active">
           <div id="canvas"></div>
           <div id="measure-panel" hidden>
             <p>
-              Choose a target type and click geometry. Hole centers glow cyan;
-              change type between picks.
+              Hover to inspect a target. Click two targets to measure; hold
+              Shift near a circular edge for its centre.
             </p>
-            <select id="measure-kind" aria-label="Measurement target">
-              <option value="point">Point</option>
-              <option value="edge">Edge</option>
-              <option value="face">Face</option>
-              <option value="hole">Hole center</option>
-            </select>
+            <div id="measure-hover" role="status" aria-live="polite"></div>
             <button id="measure-clear">Clear</button>
             <div id="measure-result" role="status" aria-live="polite">
               Pick the first target.
@@ -91,7 +129,7 @@
         <div id="exports" class="tab"></div>
         <section class="diagnostics">
           <div class="pane-head">
-            <strong>Build & checks</strong
+            <strong>Build & checks</strong><span id="status">Starting</span
             ><span id="summary">Waiting for first build</span>
             <button id="copy-build-output" aria-label="Copy build output">
               Copy output
@@ -107,8 +145,8 @@
           <form id="parameters"></form>
           <div id="parameter-status" role="status" aria-live="polite"></div>
         </section>
-        <div class="pane-head">
-          <strong>Parts registry</strong><span id="count">0</span>
+        <div class="parts-tools">
+          <span id="count">0</span>
           <button id="show-all" hidden>Show all</button>
         </div>
         <input
