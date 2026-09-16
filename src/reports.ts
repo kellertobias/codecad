@@ -241,6 +241,24 @@ export function sheetLayoutPages(
       "PART_NUMBERS",
     );
   });
+  layout.offcuts.forEach((offcut, i) => {
+    rectangle(
+      page,
+      x + offcut.x * scale,
+      y + offcut.y * scale,
+      offcut.width * scale,
+      offcut.height * scale,
+      "OFFCUTS",
+    );
+    text(
+      page,
+      `O${i + 1}`,
+      x + (offcut.x + offcut.width / 2) * scale - 1,
+      y + (offcut.y + offcut.height / 2) * scale + 1,
+      3,
+      "OFFCUT_NUMBERS",
+    );
+  });
   text(
     page,
     "Numbers refer to the part legend on the following page(s).",
@@ -256,8 +274,34 @@ export function sheetLayoutPages(
     thickness: layout.material.thickness,
     quantity: 1,
   }));
+  const cutRows = layout.cuts.map(
+    (cut) =>
+      `Cut ${cut.sequence} (${cut.source}): ${cut.axis.toUpperCase()}=${formatMm(cut.at, mmPrecision)} mm, ${formatMm(cut.from, mmPrecision)}–${formatMm(cut.to, mmPrecision)} mm`,
+  );
+  const offcutRows = layout.offcuts.map(
+    (offcut, i) =>
+      `O${i + 1}: ${formatMm(offcut.width, mmPrecision)} × ${formatMm(offcut.height, mmPrecision)} mm at (${formatMm(offcut.x, mmPrecision)}, ${formatMm(offcut.y, mmPrecision)})`,
+  );
+  const planRows = [
+    `Saw kerf ${formatMm(layout.material.options.kerf ?? 0, mmPrecision)} mm · minimum spacing ${formatMm(Math.max(layout.material.options.kerf ?? 0, layout.material.options.partSpacing ?? 0), mmPrecision)} mm · edge margin ${formatMm(layout.material.options.sheetMargin ?? 0, mmPrecision)} mm`,
+    `Blanks ${formatMm(layout.usedArea, mmPrecision)} mm² · reusable off-cuts ${formatMm(layout.offcutArea, mmPrecision)} mm² · margins/kerf/spacing ${formatMm(layout.wasteArea, mmPrecision)} mm²`,
+    "Guillotine cut order (each cut spans its named source rectangle):",
+    ...cutRows,
+    "Reusable off-cuts (coordinates from stock top-left):",
+    ...offcutRows,
+  ].flatMap((row) => wrap(row, 100));
+  const planPages: ReportPage[] = [];
+  for (let first = 0; first < planRows.length; first += 37) {
+    const plan: ReportPage = { width: 210, height: 297, entities: [] };
+    text(plan, `Sheet ${layout.number} · cuts and off-cuts`, 12, 16, 4);
+    planRows
+      .slice(first, first + 37)
+      .forEach((row, i) => text(plan, row, 12, 30 + i * 6, 2.8));
+    planPages.push(plan);
+  }
   return [
     page,
     ...cutListPages(rows, `Sheet ${layout.number} · part legend`, mmPrecision),
+    ...planPages,
   ];
 }

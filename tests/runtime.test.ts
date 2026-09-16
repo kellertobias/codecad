@@ -15,11 +15,12 @@ import {
   Bend,
 } from "../src/index.js";
 import { OpenCascadeEngine } from "../src/engine.js";
-import { nest } from "../src/manufacturing.js";
+import { nest, sheetParts } from "../src/manufacturing.js";
 import { ManufacturingDxf } from "../src/outputs.js";
 import { partEntities } from "../src/manufacturing.js";
 import { LinearJoint, MotionStudy } from "../src/motion.js";
 import { RouterBit } from "../src/tools.js";
+import { KitchenCabinet } from "../examples/kitchen-cabinet.js";
 
 @cad.part({ id: "drawer-test", revision: "1" })
 class Drawer extends Assembly {
@@ -102,6 +103,87 @@ test("stock nests across multiple sheets and rejects oversize blanks", () => {
     () => nest([m.makePart({ width: 30, height: 30 })]),
     /does not fit/,
   );
+});
+test("guillotine nesting preserves tall off-cuts and sequences kerf-aware cuts", () => {
+  const stock = new SheetMaterial({
+    width: 100,
+    height: 100,
+    thickness: 18,
+    kerf: 2,
+    rotations: [0],
+  });
+  const large = stock.makePart({ id: "large", width: 60, height: 60 });
+  const tall = stock.makePart({ id: "tall", width: 30, height: 90 });
+  const layouts = nest([large, tall]);
+  assert.equal(
+    layouts.length,
+    1,
+    "a full-height right off-cut avoids a second sheet",
+  );
+  const layout = layouts[0]!;
+  assert.deepEqual(
+    layout.parts.map((part) => [part.x, part.y, part.width, part.height]),
+    [
+      [0, 0, 60, 60],
+      [62, 0, 30, 90],
+    ],
+  );
+  assert.deepEqual(
+    layout.cuts.map((cut) => cut.sequence),
+    [1, 2, 3, 4],
+  );
+  assert.deepEqual(layout.cuts[0], {
+    sequence: 1,
+    source: "stock",
+    axis: "x",
+    at: 60,
+    from: 0,
+    to: 100,
+    kerf: 2,
+  });
+  assert.equal(layout.usedArea, 6300);
+  assert.ok(
+    layout.offcuts.some(
+      (offcut) => offcut.width === 60 && offcut.height === 38,
+    ),
+  );
+  assert.equal(layout.usedArea + layout.offcutArea + layout.wasteArea, 10000);
+});
+test("nesting rotates a blank when it saves a stock sheet", () => {
+  const stock = new SheetMaterial({
+    width: 100,
+    height: 100,
+    thickness: 18,
+    kerf: 2,
+    grain: "height",
+    rotations: [0, 90],
+  });
+  const wide = stock.makePart({ id: "wide", width: 70, height: 40 });
+  const tall = stock.makePart({
+    id: "tall",
+    width: 30,
+    height: 90,
+    grain: "height",
+  });
+  const layout = nest([wide, tall]);
+  assert.equal(layout.length, 1);
+  assert.equal(layout[0]!.parts[0]!.rotation, 90);
+});
+test("representative kitchen cabinet fits one kerf-aware sheet per stock thickness", () => {
+  const layouts = nest(sheetParts(new KitchenCabinet()));
+  assert.deepEqual(
+    layouts.map((layout) => layout.material.thickness).sort((a, b) => a - b),
+    [6, 12, 18],
+  );
+  for (const layout of layouts) {
+    assert.equal(layout.material.options.kerf, 3.2);
+    assert.ok(layout.offcutArea > 0);
+    assert.ok(layout.wasteArea > 0);
+    assert.ok(
+      layout.usedArea + layout.offcutArea + layout.wasteArea <=
+        layout.material.width! * layout.material.height! + 1e-6,
+    );
+  }
 });
 test("real B-rep drilling uses local coordinates and copy snapshots", async () => {
   const p = new TestProject(),

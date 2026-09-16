@@ -36,6 +36,7 @@ const plywood = new SheetMaterial({
   height: 2500,
   color: "#ff00aa",
   grain: "height",
+  kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,
 });
@@ -46,6 +47,7 @@ const drawerStock = new SheetMaterial({
   width: 1250,
   height: 2500,
   color: "#dfca9e",
+  kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,
 });
@@ -56,6 +58,7 @@ const backStock = new SheetMaterial({
   width: 1250,
   height: 2500,
   color: "#b79d75",
+  kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,
 });

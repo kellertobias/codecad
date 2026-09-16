@@ -39,6 +39,27 @@ export interface SheetLayout {
   material: SheetMaterial;
   number: number;
   parts: NestedPart[];
+  cuts: SheetCut[];
+  offcuts: SheetOffcut[];
+  usedArea: number;
+  offcutArea: number;
+  wasteArea: number;
+}
+export interface SheetOffcut {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export interface SheetCut {
+  sequence: number;
+  source: string;
+  axis: "x" | "y";
+  at: number;
+  from: number;
+  to: number;
+  kerf: number;
 }
 export function sheetParts(root: Component): SheetPart[] {
   return [root, ...descendants(root)].filter(
@@ -122,7 +143,7 @@ export function nest(parts: readonly SheetPart[]): SheetLayout[] {
     const W = material.width - 2 * margin,
       H = material.height - 2 * margin;
     if (W <= 0 || H <= 0) throw new Error("Sheet margin consumes the sheet");
-    type Free = { x: number; y: number; w: number; h: number };
+    type Free = { id: string; x: number; y: number; w: number; h: number };
     const sheets: { layout: SheetLayout; free: Free[] }[] = [];
     const entries = parts
       .filter((p) => p.material === material)
@@ -137,45 +158,141 @@ export function nest(parts: readonly SheetPart[]): SheetLayout[] {
           a.part.path.localeCompare(c.part.path)
         );
       });
-    for (const { part, copy } of entries) {
-      const dim = outlineBounds(part);
-      const grain = material.options.grain ?? "none",
-        partGrain = part.grain;
+    const dimensions = (part: SheetPart, r: number) => {
+      const size = outlineBounds(part);
+      return r % 180 === 0
+        ? { w: size.width, h: size.height }
+        : { w: size.height, h: size.width };
+    };
+    const orientations = (part: SheetPart) => {
+      const grain = material.options.grain ?? "none";
       const allowed = material.options.rotations ?? [0, 90];
-      const orientations = [...new Set(allowed)].filter((r) => {
-        if (grain === "none" || partGrain === "none") return true;
-        return (grain === partGrain) === (r % 180 === 0);
-      });
-      const fits = (f: Free, r: number) =>
-        (r % 180 === 0 ? dim.width : dim.height) <= f.w + 1e-8 &&
-        (r % 180 === 0 ? dim.height : dim.width) <= f.h + 1e-8;
-      if (!orientations.some((r) => fits({ x: 0, y: 0, w: W, h: H }, r)))
+      return [...new Set(allowed)].filter(
+        (r) =>
+          grain === "none" ||
+          part.grain === "none" ||
+          (grain === part.grain) === (r % 180 === 0),
+      );
+    };
+    const fits = (f: Free, part: SheetPart, r: number) => {
+      const { w, h } = dimensions(part, r);
+      return w <= f.w + 1e-8 && h <= f.h + 1e-8;
+    };
+    const split = (
+      f: Free,
+      w: number,
+      h: number,
+      order: "vertical" | "horizontal",
+    ) => {
+      const right = f.w - w - gap;
+      const below = f.h - h - gap;
+      if (order === "vertical")
+        return [
+          ...(right > 1e-8
+            ? [{ id: `${f.id}R`, x: f.x + w + gap, y: f.y, w: right, h: f.h }]
+            : []),
+          ...(below > 1e-8
+            ? [{ id: `${f.id}B`, x: f.x, y: f.y + h + gap, w, h: below }]
+            : []),
+        ];
+      return [
+        ...(below > 1e-8
+          ? [{ id: `${f.id}B`, x: f.x, y: f.y + h + gap, w: f.w, h: below }]
+          : []),
+        ...(right > 1e-8
+          ? [{ id: `${f.id}R`, x: f.x + w + gap, y: f.y, w: right, h }]
+          : []),
+      ];
+    };
+    const scorePlacement = (
+      free: Free,
+      children: Free[],
+      remaining: typeof entries,
+    ) => {
+      const futureArea = remaining.reduce((sum, next) => {
+        const canFit = children.some((child) =>
+          orientations(next.part).some((candidateRotation) =>
+            fits(child, next.part, candidateRotation),
+          ),
+        );
+        const size = outlineBounds(next.part);
+        return sum + (canFit ? size.width * size.height : 0);
+      }, 0);
+      const largestOffcut = Math.max(0, ...children.map((c) => c.w * c.h));
+      return futureArea * 2 + largestOffcut - free.w * free.h * 0.001;
+    };
+    for (const [entryIndex, { part, copy }] of entries.entries()) {
+      const dim = outlineBounds(part);
+      const rotations = orientations(part);
+      if (
+        !rotations.some((r) =>
+          fits({ id: "stock", x: 0, y: 0, w: W, h: H }, part, r),
+        )
+      )
         throw new Error(
           `Part ${part.path} does not fit stock ${material.name} with its grain/rotation constraints`,
         );
       let chosen: (typeof sheets)[number] | undefined,
         index = -1,
-        rotation: 0 | 90 | 180 | 270 = 0;
+        rotation: 0 | 90 | 180 | 270 = 0,
+        order: "vertical" | "horizontal" = "vertical",
+        bestScore = -Infinity;
+      const remaining = entries.slice(entryIndex + 1);
       for (const s of sheets) {
         for (let i = 0; i < s.free.length; i++) {
-          const r = orientations.find((r) => fits(s.free[i]!, r));
-          if (r !== undefined) {
-            chosen = s;
-            index = i;
-            rotation = r;
-            break;
+          const free = s.free[i]!;
+          for (const r of rotations) {
+            if (!fits(free, part, r)) continue;
+            const { w, h } = dimensions(part, r);
+            for (const candidateOrder of ["vertical", "horizontal"] as const) {
+              const children = split(free, w, h, candidateOrder);
+              const score = scorePlacement(free, children, remaining);
+              if (score > bestScore) {
+                bestScore = score;
+                chosen = s;
+                index = i;
+                rotation = r;
+                order = candidateOrder;
+              }
+            }
           }
         }
-        if (chosen) break;
+        if (chosen) break; // Always consume an existing sheet before buying another.
       }
       if (!chosen) {
         chosen = {
-          layout: { material, number: sheets.length + 1, parts: [] },
-          free: [{ x: margin, y: margin, w: W, h: H }],
+          layout: {
+            material,
+            number: sheets.length + 1,
+            parts: [],
+            cuts: [],
+            offcuts: [],
+            usedArea: 0,
+            offcutArea: 0,
+            wasteArea: 0,
+          },
+          free: [{ id: "stock", x: margin, y: margin, w: W, h: H }],
         };
         sheets.push(chosen);
         index = 0;
-        rotation = orientations.find((r) => fits(chosen!.free[0]!, r))!;
+        const free = chosen.free[0]!;
+        bestScore = -Infinity;
+        for (const candidateRotation of rotations) {
+          if (!fits(free, part, candidateRotation)) continue;
+          const { w, h } = dimensions(part, candidateRotation);
+          for (const candidateOrder of ["vertical", "horizontal"] as const) {
+            const score = scorePlacement(
+              free,
+              split(free, w, h, candidateOrder),
+              remaining,
+            );
+            if (score > bestScore) {
+              bestScore = score;
+              rotation = candidateRotation;
+              order = candidateOrder;
+            }
+          }
+        }
       }
       const free = chosen.free.splice(index, 1)[0]!,
         w = rotation % 180 === 0 ? dim.width : dim.height,
@@ -189,20 +306,55 @@ export function nest(parts: readonly SheetPart[]): SheetLayout[] {
         height: h,
         rotation,
       });
-      if (free.w - w - gap > 0)
-        chosen.free.push({
-          x: free.x + w + gap,
-          y: free.y,
-          w: free.w - w - gap,
-          h,
+      const cut = (
+        axis: "x" | "y",
+        at: number,
+        from: number,
+        to: number,
+        source: string,
+      ) =>
+        chosen!.layout.cuts.push({
+          sequence: chosen!.layout.cuts.length + 1,
+          source,
+          axis,
+          at,
+          from,
+          to,
+          kerf: material.options.kerf ?? 0,
         });
-      if (free.h - h - gap > 0)
-        chosen.free.push({
-          x: free.x,
-          y: free.y + h + gap,
-          w: free.w,
-          h: free.h - h - gap,
-        });
+      if (order === "vertical") {
+        if (free.w > w + 1e-8)
+          cut("x", free.x + w, free.y, free.y + free.h, free.id);
+        if (free.h > h + 1e-8)
+          cut("y", free.y + h, free.x, free.x + w, `${free.id}:kept`);
+      } else {
+        if (free.h > h + 1e-8)
+          cut("y", free.y + h, free.x, free.x + free.w, free.id);
+        if (free.w > w + 1e-8)
+          cut("x", free.x + w, free.y, free.y + h, `${free.id}:kept`);
+      }
+      chosen.free.push(...split(free, w, h, order));
+    }
+    for (const sheet of sheets) {
+      sheet.layout.offcuts = sheet.free.map((f) => ({
+        id: f.id,
+        x: f.x,
+        y: f.y,
+        width: f.w,
+        height: f.h,
+      }));
+      sheet.layout.usedArea = sheet.layout.parts.reduce(
+        (sum, p) => sum + p.width * p.height,
+        0,
+      );
+      sheet.layout.offcutArea = sheet.free.reduce(
+        (sum, f) => sum + f.w * f.h,
+        0,
+      );
+      sheet.layout.wasteArea =
+        material.width! * material.height! -
+        sheet.layout.usedArea -
+        sheet.layout.offcutArea;
     }
     results.push(...sheets.map((s) => s.layout));
   }

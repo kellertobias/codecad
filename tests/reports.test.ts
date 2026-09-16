@@ -6,7 +6,7 @@ import {
   pagesDxf,
   sheetLayoutPages,
 } from "../src/reports.js";
-import { csv } from "../src/manufacturing.js";
+import { csv, nest } from "../src/manufacturing.js";
 import { SheetMaterial } from "../src/stock.js";
 import { pdfPages } from "../src/exporters.js";
 
@@ -67,19 +67,20 @@ test("configured millimetre precision reaches cut-list legends and CSV", () => {
     height: 2500,
   });
   const part = material.makePart({ id: "panel", width: 125.678, height: 80 });
-  const layout = sheetLayoutPages(
-    {
-      material,
-      number: 1,
-      parts: [
-        { part, copy: 0, x: 0, y: 0, width: 125.678, height: 80, rotation: 0 },
-      ],
-    },
-    1,
-  );
+  const layout = sheetLayoutPages(nest([part])[0]!, 1);
   assert.match(
     new TextDecoder().decode(pageSvg(layout[0]!)),
     /1250\.0 × 2500\.0 × 18\.3 mm/,
   );
   assert.match(new TextDecoder().decode(pageSvg(layout[1]!)), />125\.7</);
+  const planText = layout
+    .slice(2)
+    .flatMap((page) => page.entities)
+    .filter((entity) => entity.kind === "text")
+    .map((entity) => entity.text)
+    .join("\n");
+  assert.match(planText, /Guillotine cut order/);
+  assert.match(planText, /Cut 1/);
+  assert.match(planText, /Reusable off-cuts/);
+  assert.match(planText, /Saw kerf 0\.0 mm/);
 });
