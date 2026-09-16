@@ -41,7 +41,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "bin": {
-    "codecad": "./bin/codecad.mjs"
+    "codecad": "./bin/codecad.js"
   },
   "publishConfig": {
     "access": "public"
