@@ -53,6 +53,13 @@ export interface MeshData {
   readonly color: string;
   readonly opacity: number;
   readonly reflectivity: number;
+  readonly wood?: {
+    readonly direction: "width" | "height" | "none";
+    readonly layers: readonly {
+      readonly thickness: number;
+      readonly direction: "width" | "height";
+    }[];
+  };
   readonly holes: readonly HoleAnchor[];
   readonly volume: number;
 }
@@ -253,6 +260,21 @@ export class OpenCascadeEngine implements CadEngine {
       color: material?.options.color ?? (material ? "#c9aa78" : "#8b9da8"),
       opacity: material?.options.opacity ?? 1,
       reflectivity: material?.options.reflectivity ?? 0.08,
+      ...(part instanceof SheetPart &&
+      (part.material.options.grain || part.material.options.layers)
+        ? {
+            wood: {
+              direction:
+                part.grain === "none"
+                  ? (part.material.options.grain ?? "none")
+                  : part.grain,
+              layers: (part.material.options.layers ?? []).map((layer) => ({
+                thickness: layer.thickness,
+                direction: layer.direction,
+              })),
+            },
+          }
+        : {}),
       holes: part.operations
         .filter(
           (operation) => operation.kind === "cut" || operation.kind === "drill",

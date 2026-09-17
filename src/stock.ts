@@ -49,6 +49,12 @@ export interface SheetMaterialOptions extends MaterialOptions {
   readonly height?: number;
   readonly thickness: number;
   readonly grain?: "width" | "height" | "none";
+  /** Ordered veneers from the local bottom (Z=0) to the top face. */
+  readonly layers?: readonly {
+    readonly thickness: number;
+    readonly direction: "width" | "height";
+    readonly species?: string;
+  }[];
   readonly rotations?: readonly (0 | 90 | 180 | 270)[];
   readonly kerf?: number;
   readonly partSpacing?: number;
@@ -103,6 +109,23 @@ export class SheetMaterial extends Material {
     this.width = options.width;
     this.height = options.height;
     this.thickness = positive(options.thickness, "thickness");
+    if (options.grain && !["width", "height", "none"].includes(options.grain))
+      throw new Error("Sheet grain must be width, height, or none");
+    if (options.layers) {
+      if (options.layers.length < 2)
+        throw new Error("Layered sheet stock needs at least two veneers");
+      for (const layer of options.layers) {
+        positive(layer.thickness, "veneer thickness");
+        if (layer.direction !== "width" && layer.direction !== "height")
+          throw new Error("Veneer direction must be width or height");
+      }
+      const stack = options.layers.reduce(
+        (sum, layer) => sum + layer.thickness,
+        0,
+      );
+      if (Math.abs(stack - this.thickness) > 1e-3)
+        throw new Error("Veneer layer thicknesses must equal sheet thickness");
+    }
     if (this.width !== undefined) positive(this.width, "sheet width");
     if (this.height !== undefined) positive(this.height, "sheet height");
     for (const v of [options.kerf, options.partSpacing, options.sheetMargin])

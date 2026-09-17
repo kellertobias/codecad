@@ -28,14 +28,21 @@ const WIDTH = 600;
 const DEPTH = 500;
 const HEIGHT = 900;
 const DRAWERS = 4;
+const multiplexLayers = (thickness: number, count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    thickness: thickness / count,
+    direction: index % 2 === 0 ? ("height" as const) : ("width" as const),
+    species: "birch",
+  }));
 const plywood = new SheetMaterial({
   id: "birch-18",
   name: "Birch multiplex 18 mm",
   thickness: 18,
   width: 1250,
   height: 2500,
-  color: "#ff00aa",
+  color: "#c6a77d",
   grain: "height",
+  layers: multiplexLayers(18, 9),
   kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,
@@ -47,6 +54,8 @@ const drawerStock = new SheetMaterial({
   width: 1250,
   height: 2500,
   color: "#dfca9e",
+  grain: "height",
+  layers: multiplexLayers(12, 7),
   kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,
@@ -58,6 +67,8 @@ const backStock = new SheetMaterial({
   width: 1250,
   height: 2500,
   color: "#b79d75",
+  grain: "height",
+  layers: multiplexLayers(6, 3),
   kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,

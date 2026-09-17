@@ -14,6 +14,19 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
     directory,
   );
   assert.equal(result.meshes.length, 53);
+  const corpusMesh = result.meshes.find(
+    (mesh) => mesh.componentPath === "kitchen-cabinet/left",
+  );
+  const drawerFrontMesh = result.meshes.find(
+    (mesh) => mesh.componentPath === "kitchen-cabinet/drawer-1/front",
+  );
+  assert.equal(corpusMesh?.wood?.direction, "height");
+  assert.equal(corpusMesh?.wood?.layers.length, 9);
+  assert.equal(drawerFrontMesh?.wood?.layers.length, 9);
+  assert.deepEqual(
+    corpusMesh?.wood?.layers.slice(0, 3).map((layer) => layer.direction),
+    ["height", "width", "height"],
+  );
   assert.equal(result.view2D.length, 8);
   assert.equal(result.view2D[0]?.kind, "path");
   const drawer = result.components.find(

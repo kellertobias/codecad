@@ -9,6 +9,7 @@ import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
 import { initiallyExpandedPaths } from "./component-tree.js";
 import { inspectorDetails } from "./inspector.js";
+import { applyWoodAppearance } from "./wood-material.js";
 import {
   faceRegionGeometry,
   visibleSurfacePoint,
@@ -38,6 +39,10 @@ type MeshData = {
   color: string;
   opacity: number;
   reflectivity: number;
+  wood?: {
+    direction: "width" | "height" | "none";
+    layers: { thickness: number; direction: "width" | "height" }[];
+  };
   holes: {
     center: [number, number, number];
     axis: [number, number, number];
@@ -353,18 +358,17 @@ function showModel(data: Model) {
       )
       .setAttribute("normal", new THREE.Float32BufferAttribute(d.normals, 3))
       .setIndex(d.indices);
-    const mesh = new THREE.Mesh(
-      geometry,
-      new THREE.MeshPhysicalMaterial({
-        color: d.color,
-        opacity: d.opacity,
-        transparent: d.opacity < 1,
-        depthWrite: d.opacity >= 1,
-        reflectivity: d.reflectivity,
-        roughness: 0.8 - d.reflectivity * 0.65,
-        clearcoat: d.reflectivity * 0.35,
-      }),
-    );
+    const material = new THREE.MeshPhysicalMaterial({
+      color: d.color,
+      opacity: d.opacity,
+      transparent: d.opacity < 1,
+      depthWrite: d.opacity >= 1,
+      reflectivity: d.reflectivity,
+      roughness: 0.8 - d.reflectivity * 0.65,
+      clearcoat: d.reflectivity * 0.35,
+    });
+    if (d.wood) applyWoodAppearance(material, d.wood);
+    const mesh = new THREE.Mesh(geometry, material);
     mesh.matrixAutoUpdate = false;
     mesh.matrix.fromArray(d.matrix);
     mesh.userData.path = d.componentPath;
