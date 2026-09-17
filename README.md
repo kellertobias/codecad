@@ -8,6 +8,33 @@ A local TypeScript CAD application with classes, standard decorators, automatic
 part registration, an OpenCascade geometry engine, live preview, and manufacturing
 outputs.
 
+Sheet parts can be oriented and connected by named edges instead of repeating
+world-coordinate transforms. Edges are `north`, `south`, `east`, or `west` in the
+panel's own width/height plane; `front` is the positive-thickness face and
+`back` is the zero-thickness face:
+
+```ts
+const left = plywood
+  .makePart({ id: "left", width: 220, height: 300 })
+  .orient("YZ", { x: 0, y: 0, z: 0 });
+const bottom = plywood
+  .makePart({ id: "bottom", width: 220, height: 200 })
+  .attach({
+    own: { edge: "west", face: "front" },
+    to: left.edge({ edge: "south", face: "front", from: 6, length: 200 }),
+    rotate: { x: 90, z: 180 },
+  });
+```
+
+`edge()` can also select `inset` and a bounded `from`/`length` span. It returns
+a normal `PartInterface`, so the same reference works with `FingerJoint` and
+other existing techniques. `attach()` aligns the selected edge origins; its
+optional offset is measured in the target edge frame. Without an explicit
+rotation, the moving panel goes on the opposite side of the edge in the same
+plane. `orient()` places the local panel origin in parent coordinates; for an
+XZ panel its thickness extends toward negative Y. The existing `place()` API
+remains available.
+
 Projects can define geometry for the infinite **Drawings** workspace,
 independent of printable plans. Add paths, lines, or circles in millimetres
 from a project constructor. Drawings remains available even for an empty plane,

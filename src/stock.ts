@@ -10,6 +10,8 @@ import {
   type Point2,
   finite,
   type Length,
+  type Point3,
+  type Axis,
 } from "./model.js";
 import {
   validateDrawingStyle,
@@ -74,6 +76,26 @@ export interface MakeProfiledPartOptions {
   readonly outline: Shape2D;
   readonly quantity?: number;
 }
+export type PanelPlane = "XY" | "XZ" | "YZ";
+export type PanelEdge = "north" | "south" | "east" | "west";
+export type PanelFace = "front" | "back";
+export interface PanelEdgeSelection {
+  readonly edge: PanelEdge;
+  readonly face: PanelFace;
+  /** Distance in millimetres along the named edge, from its local start. */
+  readonly from?: number;
+  readonly length?: number;
+  /** Distance in millimetres from the edge into the panel face. */
+  readonly inset?: number;
+}
+export interface PanelAttachment {
+  readonly own: PanelEdgeSelection;
+  readonly to: PartInterface;
+  /** Rotation in degrees about the fixed edge frame; default flips to the opposite side. */
+  readonly rotate?: Partial<Record<Axis, number>>;
+  /** Translation in the fixed edge frame, in millimetres. */
+  readonly offset?: Partial<Point3>;
+}
 export class SheetPart extends Part {
   readonly manufacturingOutline: Shape2D;
   readonly quantity: number;
@@ -89,6 +111,135 @@ export class SheetPart extends Part {
     if (!Number.isInteger(this.quantity) || this.quantity < 1)
       throw new Error("quantity must be a positive integer");
     this.grain = "grain" in o ? (o.grain ?? "none") : "none";
+  }
+  /** Orient the sheet's local width/height plane at a parent-space point. */
+  orient(plane: PanelPlane, at: Point3): this {
+    const rotate =
+      plane === "XY" ? {} : plane === "XZ" ? { x: 90 } : { y: 90, z: 90 };
+    return this.place({ ...at, rotate });
+  }
+  /** A named edge on the front (positive local Z) or back (zero local Z). */
+  edge(selection: PanelEdgeSelection): PartInterface {
+    if (
+      !["north", "south", "east", "west"].includes(selection.edge) ||
+      !["front", "back"].includes(selection.face)
+    )
+      throw new Error("Panel edge and face must use a named direction");
+    const points = this.manufacturingOutline.points;
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const horizontal = selection.edge === "north" || selection.edge === "south";
+    const span = horizontal ? width : height;
+    const inwardSpan = horizontal ? height : width;
+    const from = selection.from ?? 0;
+    const length = selection.length ?? span - from;
+    const inset = selection.inset ?? 0;
+    if (
+      !Number.isFinite(from) ||
+      from < 0 ||
+      !Number.isFinite(length) ||
+      length <= 0 ||
+      from + length > span + 1e-6 ||
+      !Number.isFinite(inset) ||
+      inset < 0 ||
+      inset >= inwardSpan
+    )
+      throw new Error("Panel edge range or inset is outside the panel");
+    const onEdge = (point: Point2) =>
+      selection.edge === "south"
+        ? Math.abs(point.y - minY) < 1e-6
+        : selection.edge === "east"
+          ? Math.abs(point.x - maxX) < 1e-6
+          : selection.edge === "north"
+            ? Math.abs(point.y - maxY) < 1e-6
+            : Math.abs(point.x - minX) < 1e-6;
+    const along = (point: Point2) =>
+      selection.edge === "south"
+        ? point.x - minX
+        : selection.edge === "east"
+          ? point.y - minY
+          : selection.edge === "north"
+            ? maxX - point.x
+            : maxY - point.y;
+    const intervals = points
+      .map(
+        (point, index) =>
+          [point, points[(index + 1) % points.length]!] as const,
+      )
+      .filter(([first, second]) => onEdge(first) && onEdge(second))
+      .map(
+        ([first, second]) =>
+          [
+            Math.min(along(first), along(second)),
+            Math.max(along(first), along(second)),
+          ] as const,
+      )
+      .sort((first, second) => first[0] - second[0]);
+    let covered = from;
+    for (const [start, end] of intervals) {
+      if (start > covered + 1e-6) break;
+      covered = Math.max(covered, end);
+    }
+    if (covered < from + length - 1e-6)
+      throw new Error(
+        "Selected panel edge span is not straight on the outline",
+      );
+    const front = selection.face === "front";
+    const start =
+      selection.edge === "south"
+        ? { x: minX + from, y: minY + inset }
+        : selection.edge === "east"
+          ? { x: maxX - inset, y: minY + from }
+          : selection.edge === "north"
+            ? { x: maxX - from, y: maxY - inset }
+            : { x: minX + inset, y: maxY - from };
+    const direction =
+      selection.edge === "south"
+        ? { x: 1, y: 0 }
+        : selection.edge === "east"
+          ? { x: 0, y: 1 }
+          : selection.edge === "north"
+            ? { x: -1, y: 0 }
+            : { x: 0, y: -1 };
+    const inward = { x: -direction.y, y: direction.x };
+    return new PartInterface({
+      name: `${selection.face}-${selection.edge}`,
+      frame: {
+        origin: { ...start, z: front ? this.material.thickness : 0 },
+        xAxis: { ...direction, z: 0 },
+        yAxis: {
+          x: inward.x * (front ? 1 : -1),
+          y: inward.y * (front ? 1 : -1),
+          z: 0,
+        },
+      },
+      outline: new Shapes.Rectangle({
+        width: length,
+        height: this.material.thickness,
+      }),
+    }).bind(this);
+  }
+  /** Mate two named edge frames; the default keeps their sheet interiors apart. */
+  attach(options: PanelAttachment): this {
+    if (!options.to.owner || options.to.owner === this)
+      throw new Error("Panel attachment needs an edge on another component");
+    const own = this.edge(options.own);
+    const fixedFace = options.to.name?.match(
+      /^(front|back)-(north|south|east|west)$/,
+    )?.[1];
+    const defaultRotation =
+      fixedFace && fixedFace !== options.own.face ? { z: 0 } : { z: 180 };
+    this.place({
+      relativeTo: options.to,
+      ...options.offset,
+      rotate: options.rotate ?? defaultRotation,
+    });
+    this.extraMatrixForMate(framed(own.frame).invert());
+    return this;
   }
   override interface(name = "default"): PartInterface {
     if (name !== "default" || this.interfaces.has(name))
