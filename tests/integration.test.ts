@@ -25,6 +25,23 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
       (c) => c.parent === drawer?.path && c.id === "handle",
     ),
   );
+  const frontInspection = result.components.find(
+    (c) => c.path === "kitchen-cabinet/drawer-1/front",
+  )?.inspection;
+  assert.equal(frontInspection?.kind, "part");
+  assert.equal(frontInspection?.material, "Birch multiplex 18 mm");
+  assert.deepEqual(
+    frontInspection?.dimensions?.map((value) => Math.round(value)),
+    [596, 190, 18],
+  );
+  assert.ok((frontInspection?.volume ?? 0) > 0);
+  assert.ok(
+    frontInspection?.operations.some((operation) => operation.kind === "drill"),
+  );
+  const drawerInspection = drawer?.inspection;
+  assert.equal(drawerInspection?.kind, "assembly");
+  assert.ok((drawerInspection?.partCount ?? 0) > 5);
+  assert.ok((drawerInspection?.volume ?? 0) > (frontInspection?.volume ?? 0));
   for (let number = 1; number <= 4; number++)
     for (const side of ["left", "right"]) {
       const drawerPath = `kitchen-cabinet/drawer-${number}`;

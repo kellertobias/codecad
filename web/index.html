@@ -217,9 +217,10 @@
           <button id="show-all" hidden>Show all</button>
         </div>
         <div id="parts" role="tree" aria-label="Component hierarchy"></div>
-        <div class="aside-foot">
-          Local coordinates for machining<br />World coordinates for assembly
-        </div>
+        <section id="inspector" aria-label="Inspector" hidden>
+          <div class="pane-head"><strong>Inspector</strong></div>
+          <div id="inspector-content"></div>
+        </section>
       </aside>
     </main>
     <script type="module" src="/app.js"></script>

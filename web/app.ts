@@ -8,11 +8,13 @@ import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
 import { initiallyExpandedPaths } from "./component-tree.js";
+import { inspectorDetails } from "./inspector.js";
 import {
   faceRegionGeometry,
   visibleSurfacePoint,
 } from "./surface-visibility.js";
 import type { View2DPrimitive } from "../src/view2d.js";
+import type { Inspection } from "../src/inspection.js";
 import {
   chooseMeasurePick,
   measure,
@@ -60,6 +62,7 @@ type Model = {
     label: string;
     parent?: string;
     type: string;
+    inspection: Inspection;
     source: { file: string; line: number }[];
   }[];
   duration: number;
@@ -415,6 +418,7 @@ function showModel(data: Model) {
     } else showOnly(isolation.path);
   }
   if (selected) select(selected);
+  else renderInspector("");
   resize();
   requestAnimationFrame(() => {
     renderer.render(scene, camera);
@@ -511,8 +515,48 @@ function updateMeshHighlights() {
       !measurementMode && selected && within(id, selected) ? 0x244c43 : 0,
     );
 }
+function renderInspector(path: string) {
+  const panel = $("inspector");
+  const content = $("inspector-content");
+  content.replaceChildren();
+  const component = model?.components.find((item) => item.path === path);
+  panel.hidden = !component;
+  if (!component) return;
+  const title = document.createElement("strong");
+  title.textContent = component.label;
+  const detail = document.createElement("div");
+  detail.textContent = component.path;
+  const { rows, operations } = inspectorDetails(component.inspection);
+  const list = document.createElement("dl");
+  for (const [name, value] of rows) {
+    const term = document.createElement("dt");
+    term.textContent = name;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    list.append(term, description);
+  }
+  const heading = document.createElement("strong");
+  heading.textContent = "Operations";
+  const steps = document.createElement("ol");
+  for (const operation of operations) {
+    const item = document.createElement("li");
+    item.textContent = operation;
+    steps.append(item);
+  }
+  content.append(title, detail, list, heading);
+  if (operations.length) content.append(steps);
+  else {
+    const empty = document.createElement("p");
+    empty.textContent =
+      component.inspection.kind === "part"
+        ? "No machining operations recorded."
+        : "Select a part to see its operations.";
+    content.append(empty);
+  }
+}
 function select(path: string) {
   selected = path;
+  renderInspector(path);
   renderAnimationChoices();
   updateMeshHighlights();
   const part = model?.meshes.find((m) => m.componentPath === path);

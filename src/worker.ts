@@ -3,6 +3,7 @@ import { resolve, join, basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { zipSync } from "fflate";
 import { sourceLinks } from "./source-links.js";
+import { inspectComponent } from "./inspection.js";
 import { Project, Part, descendants } from "./model.js";
 import { SheetMetalPart } from "./stock.js";
 import { outputRegistry } from "./decorators.js";
@@ -345,6 +346,7 @@ export async function buildProject(
         label: c.label,
         type: c.constructor.name,
         parent: c.parent?.path,
+        inspection: inspectComponent(c, model.meshes),
         source: links(c.sourceTraces),
       })),
       meshes: model.meshes.map(serializeMesh),

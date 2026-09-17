@@ -780,12 +780,35 @@ aside {
   color: #8ce0cd;
   border-color: #8ce0cd;
 }
-.aside-foot {
-  padding: 15px;
-  font-size: 10px;
-  color: #728f9e;
-  line-height: 1.8;
+#inspector {
+  max-height: 48%;
+  overflow: auto;
   border-top: 1px solid #33414a;
+}
+#inspector-content {
+  padding: 10px 14px 14px;
+  font-size: 11px;
+  color: #b1c8d1;
+}
+#inspector-content dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 12px;
+  margin: 12px 0;
+}
+#inspector-content dt {
+  color: #7f9ca8;
+}
+#inspector-content dd {
+  margin: 0;
+  text-align: right;
+}
+#inspector-content ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+#inspector-content li {
+  margin: 4px 0;
 }
 .gallery {
   padding: 0;
