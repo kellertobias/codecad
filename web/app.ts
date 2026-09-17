@@ -424,14 +424,79 @@ function showModel(data: Model) {
     });
   });
 }
+type ViewportToolPanel = "parameters" | "explode" | null;
+let viewportToolPanel: ViewportToolPanel = null;
+let parameterTimer: number | undefined;
+let queuedParameterValues: Record<string, string | number | boolean> | null =
+  null;
+let savingParameters = false;
+function showViewportToolPanel(panel: ViewportToolPanel) {
+  if (panel && measurementMode) {
+    measurementMode = false;
+    $("measure-panel").hidden = true;
+    $("measure-toggle").setAttribute("aria-pressed", "false");
+    clearMeasurement();
+    clearHover();
+    updateMeshHighlights();
+  }
+  viewportToolPanel = panel;
+  $("parameters-panel").hidden = panel !== "parameters";
+  $("explode-panel").hidden = panel !== "explode";
+  for (const [id, active] of [
+    ["parameters-toggle", panel === "parameters"],
+    ["explode-toggle", panel === "explode"],
+  ] as const) {
+    const button = $(id);
+    button.setAttribute("aria-pressed", String(active));
+    button.title = `${active ? "Hide" : "Show"} ${id === "explode-toggle" ? "explode tools" : "parameters"}`;
+    button.setAttribute("aria-label", button.title);
+  }
+}
+async function saveQueuedParameters() {
+  if (savingParameters) return;
+  savingParameters = true;
+  const status = $("parameter-status");
+  try {
+    while (queuedParameterValues) {
+      const values = queuedParameterValues;
+      queuedParameterValues = null;
+      status.textContent = "Updating model…";
+      const response = await fetch("/api/parameters", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CodeCAD-Token": token,
+        },
+        body: JSON.stringify({ values }),
+      });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error ?? "Parameter update failed");
+      status.textContent = "Saved · rebuilding model";
+    }
+  } catch (error) {
+    status.textContent = String(error);
+  } finally {
+    savingParameters = false;
+    if (queuedParameterValues)
+      parameterTimer = window.setTimeout(
+        () => void saveQueuedParameters(),
+        350,
+      );
+  }
+}
 function renderParameters(state: ParameterState | null) {
   const panel = $("parameters-panel"),
     form = $<HTMLFormElement>("parameters"),
     status = $("parameter-status");
-  panel.hidden = !state || !Object.keys(state.definitions).length;
+  const available = Boolean(state && Object.keys(state.definitions).length);
+  $("parameters-toggle").hidden = !available;
+  if (!available && viewportToolPanel === "parameters")
+    showViewportToolPanel(null);
+  panel.hidden = viewportToolPanel !== "parameters";
   form.replaceChildren();
-  status.textContent = "";
-  if (!state) return;
+  if (!savingParameters && !queuedParameterValues) status.textContent = "";
+  if (!available || !state) return;
   const controls = new Map<string, HTMLInputElement | HTMLSelectElement>();
   for (const [key, definition] of Object.entries(state.definitions)) {
     const row = document.createElement("label"),
@@ -457,6 +522,7 @@ function renderParameters(state: ParameterState | null) {
       control.type = definition.type === "boolean" ? "checkbox" : "number";
       if (definition.type === "number") {
         control.value = String(state.values[key]);
+        control.required = true;
         control.step =
           definition.step === undefined ? "any" : String(definition.step);
         if (definition.min !== undefined) control.min = String(definition.min);
@@ -467,13 +533,17 @@ function renderParameters(state: ParameterState | null) {
     }
     form.append(row);
   }
-  const apply = document.createElement("button");
-  apply.type = "submit";
-  apply.textContent = "Apply & rebuild";
-  form.append(apply);
-  form.onsubmit = async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity()) return;
+  const hint = document.createElement("p");
+  hint.className = "parameter-hint";
+  hint.textContent = "Changes rebuild the model automatically.";
+  form.append(hint);
+  const queue = () => {
+    if (!form.checkValidity()) {
+      window.clearTimeout(parameterTimer);
+      queuedParameterValues = null;
+      status.textContent = "Enter a valid value within the shown range.";
+      return;
+    }
     const values: Record<string, string | number | boolean> = {};
     for (const [key, definition] of Object.entries(state.definitions)) {
       const control = controls.get(key)!;
@@ -484,26 +554,21 @@ function renderParameters(state: ParameterState | null) {
             ? Number(control.value)
             : control.value;
     }
-    apply.disabled = true;
-    status.textContent = "Saving parameters…";
-    try {
-      const response = await fetch("/api/parameters", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CodeCAD-Token": token,
-        },
-        body: JSON.stringify({ values }),
-      });
-      const result = await response.json();
-      if (!response.ok)
-        throw new Error(result.error ?? "Parameter update failed");
-      status.textContent = "Saved · rebuilding all outputs";
-    } catch (error) {
-      status.textContent = String(error);
-    } finally {
-      apply.disabled = false;
-    }
+    queuedParameterValues = values;
+    status.textContent = "Waiting for changes…";
+    window.clearTimeout(parameterTimer);
+    parameterTimer = window.setTimeout(() => void saveQueuedParameters(), 450);
+  };
+  for (const [key, definition] of Object.entries(state.definitions)) {
+    const control = controls.get(key)!;
+    control.addEventListener(
+      definition.type === "number" ? "input" : "change",
+      queue,
+    );
+  }
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    queue();
   };
 }
 function updateMeshHighlights() {
@@ -1069,6 +1134,12 @@ document.querySelectorAll<HTMLButtonElement>("[data-camera]").forEach(
     }),
 );
 $("filter").oninput = renderParts;
+$("parameters-toggle").onclick = () =>
+  showViewportToolPanel(
+    viewportToolPanel === "parameters" ? null : "parameters",
+  );
+$("explode-toggle").onclick = () =>
+  showViewportToolPanel(viewportToolPanel === "explode" ? null : "explode");
 $("edges").onclick = () => {
   const button = $("edges");
   const enabled = !edgesEnabled();
@@ -1408,6 +1479,7 @@ function geometryPick(
 $<HTMLButtonElement>("measure-toggle").onclick = () => {
   measurementMode = !measurementMode;
   if (measurementMode) {
+    showViewportToolPanel(null);
     playing = false;
     $("play").textContent = "▶ Motion";
   }

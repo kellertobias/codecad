@@ -473,6 +473,12 @@ See the [welded table base](examples/welded-table-base.ts) for a complete
 square-tube frame with butt-fitted legs and rails, a cut list, and STEP output.
 The example marks intended welded contacts; it does not model weld beads or
 calculate weld strength.
+Its dimensions are declared as typed inputs with defaults through
+`inputParameters(...)`; `params.with({ width: 1400 })` returns a validated schema
+with a different default without mutating the original. Open the text-field icon
+beside View/Projection/Measure in Studio to edit these inputs. Valid changes
+rebuild the model automatically; the adjacent explode icon toggles the
+edges/explode controls.
 
 Nesting uses a deterministic rectangular guillotine algorithm, respects margins,
 part spacing/kerf, allowed rotations and grain, and allocates more sheets as needed.

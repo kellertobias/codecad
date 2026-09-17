@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Box3, Matrix4, Vector3 } from "three";
-import { WeldedTableBase, tableBase } from "../examples/welded-table-base.js";
+import {
+  WeldedTableBase,
+  params,
+  tableBase,
+} from "../examples/welded-table-base.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { cutRows } from "../src/manufacturing.js";
 
@@ -72,5 +76,49 @@ test("welded table base keeps butt-fit tube cut lengths and outside bounds", asy
     );
   } finally {
     engine.dispose();
+  }
+});
+
+test("table-base input defaults and Studio overrides change stock and cut lengths", () => {
+  const variant = new WeldedTableBase({
+    width: 1400,
+    depth: 700,
+    tube: 50,
+    wall: 4,
+  });
+  assert.equal(variant.settings.width, 1400);
+  assert.equal(variant.settings.depth, 700);
+  assert.equal(variant.settings.height, tableBase.height);
+  assert.equal(variant.parameterState?.definitions.width?.default, 1400);
+  assert.equal(
+    variant.members.find((part) => part.id === "front-top-rail")?.length,
+    1300,
+  );
+  assert.equal(
+    variant.members.find((part) => part.id === "left-top-rail")?.length,
+    600,
+  );
+  assert.ok(
+    variant.members.every(
+      (part) => part.material.width === 50 && part.material.wallThickness === 4,
+    ),
+  );
+  assert.equal(params.definitions.width.default, tableBase.width);
+  const previous = process.env.CODECAD_PARAMETER_VALUES;
+  try {
+    process.env.CODECAD_PARAMETER_VALUES = JSON.stringify({
+      width: 1600,
+      height: 800,
+    });
+    const edited = new WeldedTableBase();
+    assert.equal(edited.settings.width, 1600);
+    assert.equal(edited.settings.height, 800);
+    assert.equal(
+      edited.members.find((part) => part.id === "front-top-rail")?.length,
+      1520,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CODECAD_PARAMETER_VALUES;
+    else process.env.CODECAD_PARAMETER_VALUES = previous;
   }
 });

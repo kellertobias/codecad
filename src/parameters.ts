@@ -74,6 +74,32 @@ export function defineParameters<const S extends ParameterSchema>(
   return schema;
 }
 
+/** Reusable input definitions whose defaults can be overridden per project. */
+export class InputParameters<S extends ParameterSchema> {
+  constructor(readonly definitions: S) {
+    defineParameters(definitions);
+  }
+
+  /** Return a validated schema with new defaults; Studio overrides still win. */
+  with(defaults: Partial<ParameterValues<S>> = {}): S {
+    const values = resolveParameters(this.definitions, defaults);
+    return defineParameters(
+      Object.fromEntries(
+        Object.entries(this.definitions).map(([key, definition]) => [
+          key,
+          { ...definition, default: values[key as keyof S] },
+        ]),
+      ) as unknown as S,
+    );
+  }
+}
+
+export function inputParameters<S extends ParameterSchema>(
+  definitions: S,
+): InputParameters<S> {
+  return new InputParameters(definitions);
+}
+
 export function validateParameterValue(
   key: string,
   definition: ParameterDefinition,

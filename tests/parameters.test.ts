@@ -6,6 +6,7 @@ import {
   Part,
   cad,
   defineParameters,
+  inputParameters,
   resolveParameters,
 } from "../src/index.js";
 
@@ -92,5 +93,30 @@ test("parameter values reject unknown, malformed, and out-of-range edits", () =>
         gap: { type: "number", label: "Gap", default: 10, min: 20 },
       }),
     /bounds/,
+  );
+});
+
+test("input parameters support validated, nonmutating default overrides", () => {
+  const inputs = inputParameters({
+    width: {
+      type: "number",
+      label: "Width",
+      default: 1200,
+      min: 500,
+      max: 2000,
+    },
+    square: { type: "boolean", label: "Square", default: true },
+  });
+  const variant = inputs.with({ width: 1500, square: false });
+  assert.deepEqual(resolveParameters(variant), { width: 1500, square: false });
+  assert.deepEqual(resolveParameters(inputs.with()), {
+    width: 1200,
+    square: true,
+  });
+  assert.equal(inputs.definitions.width.default, 1200);
+  assert.throws(() => inputs.with({ width: 2500 }), /bounds/);
+  assert.throws(
+    () => inputs.with({ missing: 1 } as never),
+    /Unknown parameter/,
   );
 });

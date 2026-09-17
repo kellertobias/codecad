@@ -4,7 +4,9 @@ import {
   Project,
   StepModel,
   cad,
+  inputParameters,
   type MetalStockPart,
+  type ParameterValues,
 } from "../src/index.js";
 
 /** Outside dimensions and cut lengths are in millimetres. */
@@ -16,6 +18,64 @@ export const tableBase = {
   wall: 3,
   lowerRailTop: 180,
 } as const;
+
+/** Change these in Studio, or use `params.with(...)` for another default size. */
+export const params = inputParameters({
+  width: {
+    type: "number",
+    label: "Outside width",
+    unit: "mm",
+    default: tableBase.width,
+    min: 500,
+    max: 3000,
+    step: 10,
+  },
+  depth: {
+    type: "number",
+    label: "Outside depth",
+    unit: "mm",
+    default: tableBase.depth,
+    min: 300,
+    max: 1500,
+    step: 10,
+  },
+  height: {
+    type: "number",
+    label: "Outside height",
+    unit: "mm",
+    default: tableBase.height,
+    min: 400,
+    max: 1200,
+    step: 10,
+  },
+  tube: {
+    type: "number",
+    label: "Square tube outside size",
+    unit: "mm",
+    default: tableBase.tube,
+    min: 30,
+    max: 80,
+    step: 5,
+  },
+  wall: {
+    type: "number",
+    label: "Tube wall thickness",
+    unit: "mm",
+    default: tableBase.wall,
+    min: 1,
+    max: 8,
+    step: 0.5,
+  },
+  lowerRailTop: {
+    type: "number",
+    label: "Lower rail top height",
+    unit: "mm",
+    default: tableBase.lowerRailTop,
+    min: 120,
+    max: 300,
+    step: 10,
+  },
+});
 
 /**
  * Square-tube table base with butt-fitted members intended for welding.
@@ -29,13 +89,17 @@ export const tableBase = {
 })
 export class WeldedTableBase extends Project {
   readonly members: MetalStockPart[] = [];
+  readonly settings: ParameterValues<typeof params.definitions>;
 
-  constructor() {
+  constructor(
+    defaults: Partial<ParameterValues<typeof params.definitions>> = {},
+  ) {
     super({ id: "welded-table-base", label: "Welded steel table base" });
-    const { width, depth, height, tube, wall, lowerRailTop } = tableBase;
+    this.settings = this.configureParameters(params.with(defaults));
+    const { width, depth, height, tube, wall, lowerRailTop } = this.settings;
     const steelTube = new MetalStockMaterial({
-      id: "square-steel-tube-40x40x3",
-      name: "Steel square tube 40 × 40 × 3",
+      id: `square-steel-tube-${tube}x${tube}x${wall}`,
+      name: `Steel square tube ${tube} × ${tube} × ${wall}`,
       color: "#727d86",
       width: tube,
       height: tube,
@@ -59,7 +123,7 @@ export class WeldedTableBase extends Project {
       member(id, height).place({ x, y });
     }
 
-    // Rotation around Y points stock Z along +X. Its 40 mm X section then
+    // Rotation around Y points stock Z along +X. Its tube-sized X section then
     // occupies world Z=height-tube..height, flush with the leg tops.
     for (const [id, y] of [
       ["front-top-rail", 0],
