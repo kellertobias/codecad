@@ -332,6 +332,7 @@ fn project_catalog(
         ("keyboard", "Keyboard case", "keyboard-case.ts"),
         ("apartment", "Small apartment", "small-apartment.ts"),
         ("drawing", "Infinite drawing", "infinite-drawing.ts"),
+        ("table-base", "Welded table base", "welded-table-base.ts"),
     ]
     .into_iter()
     .map(|(id, title, file)| {
@@ -559,7 +560,14 @@ async fn open_project(
     let result = async {
         let entry = if let Some(example) = example {
             if path.is_some() { return Err("Choose either an example or a recent project".into()); }
-            let file = match example.as_str() { "cabinet" => "kitchen-cabinet.ts", "keyboard" => "keyboard-case.ts", "apartment" => "small-apartment.ts", "drawing" => "infinite-drawing.ts", _ => return Err("Unknown example".into()) };
+            let file = match example.as_str() {
+                "cabinet" => "kitchen-cabinet.ts",
+                "keyboard" => "keyboard-case.ts",
+                "apartment" => "small-apartment.ts",
+                "drawing" => "infinite-drawing.ts",
+                "table-base" => "welded-table-base.ts",
+                _ => return Err("Unknown example".into()),
+            };
             // Copy the entire example workspace once so relative imports stay valid
             // and editing examples never changes signed application resources.
             let workspace = app.path().app_data_dir().map_err(|e|e.to_string())?.join("examples-workspace");

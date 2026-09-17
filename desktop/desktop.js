@@ -24,6 +24,7 @@ const exampleDetails = {
   cabinet: "Joinery · hardware · motion",
   keyboard: "Sheet metal · MDF interfaces",
   apartment: "Rooms · windows · floor plans",
+  "table-base": "Steel tube · welded frame",
 };
 function projectButton(item) {
   const button = document.createElement("button");

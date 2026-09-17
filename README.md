@@ -469,6 +469,10 @@ tube.makePart({ id: "crossbar", length: 600 });
 
 Metal profile cut-list rows carry outside width/height, cut length, wall
 thickness, and corner radius. Sheet nesting does not apply to profiles.
+See the [welded table base](examples/welded-table-base.ts) for a complete
+square-tube frame with butt-fitted legs and rails, a cut list, and STEP output.
+The example marks intended welded contacts; it does not model weld beads or
+calculate weld strength.
 
 Nesting uses a deterministic rectangular guillotine algorithm, respects margins,
 part spacing/kerf, allowed rotations and grain, and allocates more sheets as needed.
@@ -553,6 +557,8 @@ the [keyboard case](examples/keyboard-case.ts), and
 
 ## Examples
 
+- [Welded table base](examples/welded-table-base.ts): 40 × 40 × 3 mm steel tube
+  legs and butt-fitted rails, with cut list and STEP output.
 - [MKSP toolbox](examples/mksp-toolbox.ts): port of the existing Python toolbox,
   with finger-jointed plywood, telescoping rails and animated drawers. See the
   [port notes](docs/mksp-toolbox-port.md) for dimensions and hardware assumptions.
