@@ -5,6 +5,7 @@ import {
   interfaceMethods,
 } from "./model.js";
 import type { MotionStudy } from "./motion.js";
+import { parameter } from "./parameters.js";
 import type {
   CutList,
   ManufacturingDxf,
@@ -80,6 +81,7 @@ function output<R>(
   };
 }
 export const cad = {
+  parameter,
   project: registered as (
     o: ProjectDecoratorOptions,
   ) => RegisteredClassDecorator,

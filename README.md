@@ -473,8 +473,18 @@ See the [welded table base](examples/welded-table-base.ts) for a complete
 square-tube frame with butt-fitted legs and rails, a cut list, and STEP output.
 The example marks intended welded contacts; it does not model weld beads or
 calculate weld strength.
-Its dimensions are declared as typed inputs with defaults through
-`inputParameters(...)`; `params.with({ width: 1400 })` returns a validated schema
+Its dimensions are declared with inferred types in a compact form:
+
+```ts
+const params = new CodeCadParameters({
+  width: cad.parameter(1200, { label: "Width", range: [500, 3000], step: 10 }),
+});
+```
+
+The default value supplies the type; ranges can leave either end open with
+`[null, 100]` or `[100, null]`. TypeScript does not allow `@cad.parameter` on an
+object-literal property, so `cad.parameter(defaultValue, options)` is the valid
+equivalent. `params.with({ width: 1400 })` returns a validated schema
 with a different default without mutating the original. Open the text-field icon
 beside View/Projection/Measure in Studio to edit these inputs. Valid changes
 rebuild the model automatically; the adjacent explode icon toggles the

@@ -5,6 +5,7 @@ import {
   Shapes,
   Part,
   cad,
+  CodeCadParameters,
   defineParameters,
   inputParameters,
   resolveParameters,
@@ -30,6 +31,57 @@ const schema = defineParameters({
       { value: "oak", label: "Oak" },
     ],
   },
+});
+
+test("inferred parameter declarations allow either range end to be open", () => {
+  const params = new CodeCadParameters({
+    maximum: cad.parameter(50, {
+      label: "Maximum",
+      range: [null, 100],
+      step: 10,
+    }),
+    minimum: cad.parameter(150, { label: "Minimum", range: [100, null] }),
+    bounded: cad.parameter(50, { label: "Bounded", range: [10, 100] }),
+    enabled: cad.parameter(true, { label: "Enabled" }),
+  });
+  assert.deepEqual(resolveParameters(params.with()), {
+    maximum: 50,
+    minimum: 150,
+    bounded: 50,
+    enabled: true,
+  });
+  assert.equal(params.definitions.maximum.min, undefined);
+  assert.equal(params.definitions.maximum.max, 100);
+  assert.equal(params.definitions.minimum.max, undefined);
+  assert.deepEqual(
+    resolveParameters(
+      params.with({ maximum: -100, minimum: 200, enabled: false }),
+    ),
+    {
+      maximum: -100,
+      minimum: 200,
+      bounded: 50,
+      enabled: false,
+    },
+  );
+  assert.equal(params.definitions.maximum.default, 50);
+  assert.throws(() => params.with({ maximum: 101 }), /bounds/);
+  assert.throws(() => params.with({ minimum: 99 }), /bounds/);
+  assert.throws(() => params.with({ bounded: 9 }), /bounds/);
+  assert.throws(
+    () =>
+      new CodeCadParameters({
+        bad: cad.parameter(5, { label: "Bad", range: [10, null] }),
+      }),
+    /bounds/,
+  );
+  assert.throws(
+    () =>
+      new CodeCadParameters({
+        bad: cad.parameter(5, { label: "Bad", range: [100, 10] }),
+      }),
+    /reversed bounds/,
+  );
 });
 
 @cad.project({ id: "parameter-test", units: "mm" })

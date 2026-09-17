@@ -36,6 +36,45 @@ export type ParameterState = {
   values: Record<string, number | boolean | string>;
 };
 
+export type NumberParameterOptions = {
+  readonly label: string;
+  readonly unit?: string;
+  readonly step?: number;
+  /** Null leaves that end unbounded. */
+  readonly range?: readonly [number | null, number | null];
+};
+
+export type BooleanParameterOptions = { readonly label: string };
+
+/** Infer the parameter kind from its default, without repeating type/default. */
+export function parameter(
+  value: number,
+  options: NumberParameterOptions,
+): NumberParameter;
+export function parameter(
+  value: boolean,
+  options: BooleanParameterOptions,
+): BooleanParameter;
+export function parameter(
+  value: number | boolean,
+  options: NumberParameterOptions | BooleanParameterOptions,
+): NumberParameter | BooleanParameter {
+  if (typeof value === "boolean")
+    return { type: "boolean", default: value, label: options.label };
+  const numeric = options as NumberParameterOptions;
+  const [min, max] = numeric.range ?? [null, null];
+  const result: NumberParameter = {
+    type: "number",
+    default: value,
+    label: numeric.label,
+    ...(numeric.unit === undefined ? {} : { unit: numeric.unit }),
+    ...(numeric.step === undefined ? {} : { step: numeric.step }),
+    ...(min === null ? {} : { min }),
+    ...(max === null ? {} : { max }),
+  };
+  return result;
+}
+
 export function defineParameters<const S extends ParameterSchema>(
   schema: S,
 ): S {
@@ -93,6 +132,11 @@ export class InputParameters<S extends ParameterSchema> {
     );
   }
 }
+
+/** Compact authoring form; retains the InputParameters.with contract. */
+export class CodeCadParameters<
+  S extends ParameterSchema,
+> extends InputParameters<S> {}
 
 export function inputParameters<S extends ParameterSchema>(
   definitions: S,

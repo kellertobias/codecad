@@ -1,10 +1,10 @@
 import {
   CutList,
+  CodeCadParameters,
   MetalStockMaterial,
   Project,
   StepModel,
   cad,
-  inputParameters,
   type MetalStockPart,
   type ParameterValues,
 } from "../src/index.js";
@@ -20,61 +20,43 @@ export const tableBase = {
 } as const;
 
 /** Change these in Studio, or use `params.with(...)` for another default size. */
-export const params = inputParameters({
-  width: {
-    type: "number",
+export const params = new CodeCadParameters({
+  width: cad.parameter(tableBase.width, {
     label: "Outside width",
     unit: "mm",
-    default: tableBase.width,
-    min: 500,
-    max: 3000,
+    range: [500, 3000],
     step: 10,
-  },
-  depth: {
-    type: "number",
+  }),
+  depth: cad.parameter(tableBase.depth, {
     label: "Outside depth",
     unit: "mm",
-    default: tableBase.depth,
-    min: 300,
-    max: 1500,
+    range: [300, 1500],
     step: 10,
-  },
-  height: {
-    type: "number",
+  }),
+  height: cad.parameter(tableBase.height, {
     label: "Outside height",
     unit: "mm",
-    default: tableBase.height,
-    min: 400,
-    max: 1200,
+    range: [400, 1200],
     step: 10,
-  },
-  tube: {
-    type: "number",
+  }),
+  tube: cad.parameter(tableBase.tube, {
     label: "Square tube outside size",
     unit: "mm",
-    default: tableBase.tube,
-    min: 30,
-    max: 80,
+    range: [30, 80],
     step: 5,
-  },
-  wall: {
-    type: "number",
+  }),
+  wall: cad.parameter(tableBase.wall, {
     label: "Tube wall thickness",
     unit: "mm",
-    default: tableBase.wall,
-    min: 1,
-    max: 8,
+    range: [1, 8],
     step: 0.5,
-  },
-  lowerRailTop: {
-    type: "number",
+  }),
+  lowerRailTop: cad.parameter(tableBase.lowerRailTop, {
     label: "Lower rail top height",
     unit: "mm",
-    default: tableBase.lowerRailTop,
-    min: 120,
-    max: 300,
+    range: [120, 300],
     step: 10,
-  },
+  }),
 });
 
 /**
