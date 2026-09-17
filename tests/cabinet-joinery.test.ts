@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as b from "brepjs/quick";
-import { KitchenCabinet } from "../examples/kitchen-cabinet.js";
+import {
+  CabinetMotionOutputs,
+  KitchenCabinet,
+} from "../examples/kitchen-cabinet.js";
 import { SheetPart, Shapes } from "../src/index.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { outlineBounds } from "../src/manufacturing.js";
@@ -49,7 +52,7 @@ test("paired cabinet and drawer domino cutters enter the stock to their full int
 });
 
 test("motion delays reject negative and non-finite values", () => {
-  const study = new KitchenCabinet().motion(),
+  const study = new CabinetMotionOutputs(new KitchenCabinet()).motion(),
     animation = study.animations[0]!;
   for (const delaySeconds of [-1, Infinity, NaN])
     assert.throws(() => study.animate({ ...animation, delaySeconds }), /delay/);

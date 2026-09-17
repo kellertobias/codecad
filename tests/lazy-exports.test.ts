@@ -31,3 +31,28 @@ test("lazy build advertises exports without generating them until requested", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("standalone cabinet output classes keep lazy PDF generation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codecad-provider-"));
+  const entry = resolve("examples/kitchen-cabinet.ts");
+  try {
+    const manifest = await buildProject(entry, directory, {
+      lazyExports: true,
+    });
+    assert.equal(
+      manifest.files.find((file) => file.name === "cabinet-plan.pdf")?.ready,
+      false,
+    );
+    assert.ok(
+      manifest.animations.some(
+        (animation) => animation.title === "Drawers · staggered",
+      ),
+    );
+    await assert.rejects(stat(join(directory, "cabinet-plan.pdf")));
+    await buildProject(entry, directory, { exportOnly: "cabinet-plan.pdf" });
+    const pdf = await readFile(join(directory, "cabinet-plan.pdf"));
+    assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

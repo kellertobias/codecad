@@ -163,7 +163,7 @@ export class CabinetDrawer extends Assembly {
   units: "mm",
 })
 export class KitchenCabinet extends Project {
-  private readonly drawerMotion: {
+  readonly drawerMotion: {
     joint: LinearJoint;
     to: number;
     delaySeconds: number;
@@ -314,6 +314,11 @@ export class KitchenCabinet extends Project {
       }
     }
   }
+}
+
+@cad.outputsFor(KitchenCabinet)
+export class CabinetDrawingOutput {
+  constructor(readonly cabinet: KitchenCabinet) {}
 
   @cad.output.technicalDrawing({ fileName: "cabinet-plan.pdf" })
   technicalDrawing() {
@@ -323,7 +328,7 @@ export class KitchenCabinet extends Project {
     })
       .view({
         id: "front",
-        of: this,
+        of: this.cabinet,
         kind: "front",
         at: { x: 30, y: 30 },
         scale: 0.18,
@@ -331,7 +336,7 @@ export class KitchenCabinet extends Project {
       })
       .view({
         id: "iso",
-        of: this,
+        of: this.cabinet,
         kind: "isometric",
         at: { x: 185, y: 30 },
         scale: 0.14,
@@ -347,6 +352,11 @@ export class KitchenCabinet extends Project {
         text: "Hardware geometry is provisional. All dimensions are in millimetres.",
       });
   }
+}
+
+@cad.outputsFor(KitchenCabinet)
+export class CabinetManufacturingOutputs {
+  constructor(readonly cabinet: KitchenCabinet) {}
 
   @cad.output.cutList({ fileName: "cut-list.csv" })
   cutList() {
@@ -360,8 +370,13 @@ export class KitchenCabinet extends Project {
 
   @cad.output.step({ fileName: "cabinet.step" })
   stepModel() {
-    return new StepModel({ of: this });
+    return new StepModel({ of: this.cabinet });
   }
+}
+
+@cad.outputsFor(KitchenCabinet)
+export class CabinetMotionOutputs {
+  constructor(readonly cabinet: KitchenCabinet) {}
 
   @cad.output.motion({
     fileName: "drawer-motion.glb",
@@ -380,9 +395,9 @@ export class KitchenCabinet extends Project {
   }
 
   private drawerStudy(staggered: boolean) {
-    const study = new MotionStudy({ of: this });
+    const study = new MotionStudy({ of: this.cabinet });
     // Each drawer starts 25% of the 3-second opening time after its predecessor.
-    for (const { joint, to, delaySeconds } of this.drawerMotion)
+    for (const { joint, to, delaySeconds } of this.cabinet.drawerMotion)
       study.animate({
         joint,
         from: 0,
@@ -393,8 +408,11 @@ export class KitchenCabinet extends Project {
     if (staggered)
       study.checkClearance({
         between: [
-          this.registry.require("kitchen-cabinet/drawer-1/floor", SheetPart),
-          this.parts.require("kitchen-cabinet/left", SheetPart),
+          this.cabinet.registry.require(
+            "kitchen-cabinet/drawer-1/floor",
+            SheetPart,
+          ),
+          this.cabinet.parts.require("kitchen-cabinet/left", SheetPart),
         ],
         minimum: 1,
         samples: 12,

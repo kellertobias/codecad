@@ -48,6 +48,10 @@ export interface OutputRegistration {
   options: OutputDecoratorOptions;
 }
 export const outputRegistry = new WeakMap<object, OutputRegistration[]>();
+export const outputProviders: {
+  projectType: AnyConstructor;
+  providerType: new (project: any) => object;
+}[] = [];
 export const catalog = new Map<string, AnyConstructor>();
 function registered(options: { id: string }): RegisteredClassDecorator {
   return (value) => {
@@ -79,6 +83,15 @@ export const cad = {
   project: registered as (
     o: ProjectDecoratorOptions,
   ) => RegisteredClassDecorator,
+  /** Bind a separately constructed output class to the active project instance. */
+  outputsFor:
+    (projectType: AnyConstructor): RegisteredClassDecorator =>
+    (value) => {
+      outputProviders.push({
+        projectType,
+        providerType: value as unknown as new (project: any) => object,
+      });
+    },
   part: registered as (o: PartDecoratorOptions) => RegisteredClassDecorator,
   technique: registered as (
     o: TechniqueDecoratorOptions,

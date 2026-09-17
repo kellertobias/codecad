@@ -6,7 +6,7 @@ import { sourceLinks } from "./source-links.js";
 import { inspectComponent } from "./inspection.js";
 import { Project, Part, descendants } from "./model.js";
 import { SheetMetalPart } from "./stock.js";
-import { outputRegistry } from "./decorators.js";
+import { outputProviders, outputRegistry } from "./decorators.js";
 import {
   OpenCascadeEngine,
   type EngineDiagnostic,
@@ -105,10 +105,18 @@ export async function buildProject(
         frames: MotionFrame[];
       }[] = [],
       clearances: ReturnType<typeof clearanceResults> = [];
-    const outputs = outputRegistry.get(project) ?? [];
+    const outputOwners = [
+      project,
+      ...outputProviders
+        .filter(({ projectType }) => project instanceof projectType)
+        .map(({ providerType }) => new providerType(project)),
+    ];
+    const outputs = outputOwners.flatMap((owner) =>
+      (outputRegistry.get(owner) ?? []).map((output) => ({ ...output, owner })),
+    );
     for (const output of outputs) {
       try {
-        const value = (project as any)[output.name](),
+        const value = (output.owner as any)[output.name](),
           requested = output.options.fileName;
         if (value instanceof TechnicalDrawing) {
           const stem = (requested ?? output.name).replace(

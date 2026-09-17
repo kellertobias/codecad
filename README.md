@@ -329,6 +329,18 @@ export class Cabinet extends Project {
       x: 600,
     });
   }
+}
+```
+
+Outputs may stay on the project or live in separate classes. A class decorated
+with `@cad.outputsFor(Cabinet)` receives the active `Cabinet` instance in its
+constructor, so drawings, lists, exports, and motion refer to the same built
+assembly and parameter values rather than constructing a second copy:
+
+```ts
+@cad.outputsFor(Cabinet)
+export class CabinetCutList {
+  constructor(readonly cabinet: Cabinet) {}
 
   @cad.output.cutList({ fileName: "cut-list.csv" })
   cutList() {
@@ -336,6 +348,10 @@ export class Cabinet extends Project {
   }
 }
 ```
+
+See [the kitchen cabinet](examples/kitchen-cabinet.ts) for separate drawing,
+manufacturing, and motion provider classes. The project entry still exports
+exactly one decorated `Project` subclass.
 
 ### Registry and construction
 
