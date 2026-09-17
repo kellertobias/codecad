@@ -69,13 +69,39 @@ export class DominoJoint extends Technique {
     positive(options.thickness, "thickness");
     positive(options.depthPerSide, "depth");
   }
+  /** The loose connector spans both matching mortises about their contact plane. */
+  connectorShape(): SolidShape {
+    const radius = this.options.thickness / 2;
+    const straight = this.options.width - this.options.thickness;
+    const depth = this.options.depthPerSide * 2;
+    const middle = new Shapes.Box({
+      width: straight,
+      depth: this.options.thickness,
+      height: depth,
+    }).move({ x: -straight / 2, y: -radius, z: -depth / 2 });
+    const left = new Shapes.Cylinder({
+      diameter: this.options.thickness,
+      length: depth,
+      x: -straight / 2,
+    });
+    const right = new Shapes.Cylinder({
+      diameter: this.options.thickness,
+      length: depth,
+      x: straight / 2,
+    });
+    return new SolidShape({
+      kind: "union",
+      left: { kind: "union", left: middle.recipe, right: left.recipe },
+      right: right.recipe,
+    });
+  }
   connect(o: {
     first: PartInterface;
     second: PartInterface;
     count: number;
     edgeOffset?: number;
     distribution?: "equal" | { spacing: number };
-  }): void {
+  }): readonly number[] {
     if (!Number.isInteger(o.count) || o.count < 1)
       throw new Error("Domino count must be positive");
     const w = Math.min(width(o.first), width(o.second)),
@@ -141,6 +167,7 @@ export class DominoJoint extends Technique {
         });
       }
     }
+    return positions;
   }
 }
 export class FingerJoint extends Technique {

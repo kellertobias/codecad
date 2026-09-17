@@ -13,7 +13,41 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
     resolve("examples/kitchen-cabinet.ts"),
     directory,
   );
-  assert.equal(result.meshes.length, 53);
+  assert.equal(result.meshes.length, 81);
+  const connectors = result.components.filter((component) =>
+    component.id.startsWith("domino-"),
+  );
+  assert.equal(connectors.length, 28);
+  assert.equal(
+    connectors.filter((component) => component.parent === "kitchen-cabinet")
+      .length,
+    12,
+  );
+  for (let drawer = 1; drawer <= 4; drawer++)
+    assert.equal(
+      connectors.filter(
+        (component) => component.parent === `kitchen-cabinet/drawer-${drawer}`,
+      ).length,
+      4,
+    );
+  assert.ok(
+    result.meshes
+      .filter((mesh) => mesh.componentPath.includes("/domino-"))
+      .every((mesh) => mesh.volume > 0 && mesh.color === "#d6b17a"),
+  );
+  const corpusDomino = result.meshes.find(
+    (mesh) => mesh.componentPath === "kitchen-cabinet/domino-left-bottom-1",
+  )!;
+  const expectedCorpusVolume = ((20 - 6) * 6 + Math.PI * 3 ** 2) * 20;
+  assert.ok(Math.abs(corpusDomino.volume - expectedCorpusVolume) < 0.1);
+  assert.deepEqual(
+    [
+      corpusDomino.matrix[12],
+      corpusDomino.matrix[13],
+      corpusDomino.matrix[14],
+    ].map((value) => Math.round(value!)),
+    [18, 30, 9],
+  );
   const corpusMesh = result.meshes.find(
     (mesh) => mesh.componentPath === "kitchen-cabinet/left",
   );
@@ -138,6 +172,15 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
     for (let drawer = 1; drawer <= 4; drawer++) {
       const expected: number =
         -380 * Math.max(0, Math.min(1, (seconds - (drawer - 1) * 0.75) / 3));
+      const connectorPath = `kitchen-cabinet/drawer-${drawer}/domino-left-back-1`;
+      assert.ok(
+        Math.abs(
+          frame.matrices[connectorPath]![13]! -
+            result.meshes.find((mesh) => mesh.componentPath === connectorPath)!
+              .matrix[13]! -
+            expected,
+        ) < 1e-6,
+      );
       assert.ok(
         Math.abs(
           frame.matrices[`kitchen-cabinet/drawer-${drawer}/floor`]![13]! -
@@ -174,7 +217,7 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
   const json = JSON.parse(
     glb.subarray(20, 20 + glb.readUInt32LE(12)).toString(),
   );
-  assert.equal(json.meshes.length, 53);
+  assert.equal(json.meshes.length, 81);
   assert.ok(json.animations[0].channels.length > 0);
   const step = await readFile(join(directory, "cabinet.step"));
   const imported = b.unwrap(
