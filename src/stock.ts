@@ -361,6 +361,146 @@ export class BlockMaterial extends Material {
     return new BlockPart(this, options);
   }
 }
+/** The outside XY profile of a bar or tube; cut lengths extend along local Z. */
+export interface MetalStockMaterialOptions extends MaterialOptions {
+  readonly width: number;
+  readonly height: number;
+  /** Millimetres in the XY cross section. `full` makes a circle or capsule. */
+  readonly cornerRadius?: number | boolean | "full" | "none" | null;
+  /** Millimetres measured inward from the outside profile; `solid` means no bore. */
+  readonly wallThickness?: number | "solid" | null;
+}
+export interface MetalStockPartOptions {
+  readonly id?: string;
+  readonly label?: string;
+  readonly length: number;
+  readonly quantity?: number;
+}
+function roundedStockOutline(
+  width: number,
+  height: number,
+  radius: number,
+  inset = 0,
+): Shape2D {
+  const w = width - 2 * inset;
+  const h = height - 2 * inset;
+  const r = Math.max(0, radius - inset);
+  if (r === 0)
+    return new Shapes.Rectangle({ width: w, height: h }).move({
+      x: inset,
+      y: inset,
+    });
+  if (w === h && r === w / 2)
+    return new Shapes.Circle({ diameter: w, x: width / 2, y: height / 2 });
+  const points: Point2[] = [];
+  for (const [cx, cy, start] of [
+    [width - inset - r, inset + r, -Math.PI / 2],
+    [width - inset - r, height - inset - r, 0],
+    [inset + r, height - inset - r, Math.PI / 2],
+    [inset + r, inset + r, Math.PI],
+  ] as const) {
+    for (let step = 0; step <= 16; step++) {
+      const angle = start + (step * Math.PI) / 32;
+      const point = {
+        x: cx + r * Math.cos(angle),
+        y: cy + r * Math.sin(angle),
+      };
+      const previous = points.at(-1);
+      if (
+        !previous ||
+        Math.hypot(previous.x - point.x, previous.y - point.y) > 1e-8
+      )
+        points.push(point);
+    }
+  }
+  if (
+    Math.hypot(
+      points[0]!.x - points.at(-1)!.x,
+      points[0]!.y - points.at(-1)!.y,
+    ) < 1e-8
+  )
+    points.pop();
+  return new Shapes.Polygon({ points }).fitArcs();
+}
+export class MetalStockPart extends Part {
+  readonly quantity: number;
+  readonly length: number;
+  constructor(
+    readonly material: MetalStockMaterial,
+    options: MetalStockPartOptions,
+  ) {
+    const length = positive(options.length, "stock length");
+    super({
+      ...options,
+      shape: roundedStockOutline(
+        material.width,
+        material.height,
+        material.cornerRadius,
+      ).extrude(length),
+    });
+    this.length = length;
+    this.quantity = options.quantity ?? 1;
+    if (!Number.isInteger(this.quantity) || this.quantity < 1)
+      throw new Error("quantity must be a positive integer");
+    if (material.wallThickness !== null) {
+      this.subtract(
+        roundedStockOutline(
+          material.width,
+          material.height,
+          material.cornerRadius,
+          material.wallThickness,
+        ).extrude(length + 2),
+        { z: -1 },
+      );
+    }
+  }
+}
+export class MetalStockMaterial extends Material {
+  readonly width: number;
+  readonly height: number;
+  readonly cornerRadius: number;
+  readonly wallThickness: number | null;
+  declare readonly options: MetalStockMaterialOptions;
+  constructor(options: MetalStockMaterialOptions) {
+    super(options);
+    this.width = positive(options.width, "stock width");
+    this.height = positive(options.height, "stock height");
+    const maximumRadius = Math.min(this.width, this.height) / 2;
+    const radius = options.cornerRadius;
+    this.cornerRadius =
+      radius === true || radius === "full"
+        ? maximumRadius
+        : radius === false ||
+            radius === null ||
+            radius === undefined ||
+            radius === "none"
+          ? 0
+          : radius;
+    if (
+      !Number.isFinite(this.cornerRadius) ||
+      this.cornerRadius < 0 ||
+      this.cornerRadius > maximumRadius
+    )
+      throw new Error(
+        "Stock corner radius must be between 0 and half the smaller outside dimension",
+      );
+    const wall = options.wallThickness;
+    this.wallThickness =
+      wall === null || wall === undefined || wall === "solid" ? null : wall;
+    if (
+      this.wallThickness !== null &&
+      (!Number.isFinite(this.wallThickness) ||
+        this.wallThickness <= 0 ||
+        this.wallThickness >= maximumRadius)
+    )
+      throw new Error(
+        "Stock wall thickness must be positive and less than half the smaller outside dimension",
+      );
+  }
+  makePart(options: MetalStockPartOptions): MetalStockPart {
+    return new MetalStockPart(this, options);
+  }
+}
 export interface BendRules {
   readonly kFactor: number;
   readonly minimumInsideRadius: Length;

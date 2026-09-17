@@ -17,7 +17,12 @@ import {
   framed,
   type Recipe,
 } from "./model.js";
-import { SheetPart, SheetMetalPart, BlockPart } from "./stock.js";
+import {
+  SheetPart,
+  SheetMetalPart,
+  BlockPart,
+  MetalStockPart,
+} from "./stock.js";
 import type { ManufacturingDxf, TechnicalDrawing } from "./outputs.js";
 import { renderDrawing } from "./drawing.js";
 import { exportDxf } from "./manufacturing.js";
@@ -247,7 +252,9 @@ export class OpenCascadeEngine implements CadEngine {
     features.dispose();
     const material =
       part.drawingMaterial ??
-      (part instanceof SheetPart || part instanceof BlockPart
+      (part instanceof SheetPart ||
+      part instanceof BlockPart ||
+      part instanceof MetalStockPart
         ? part.material
         : undefined);
     return {

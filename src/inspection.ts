@@ -1,7 +1,7 @@
 import { Box3, Matrix4, Vector3 } from "three";
 import { Component, Part } from "./model.js";
 import type { MeshData } from "./engine.js";
-import { BlockPart, SheetPart } from "./stock.js";
+import { BlockPart, MetalStockPart, SheetPart } from "./stock.js";
 
 export interface Inspection {
   kind: "part" | "assembly";
@@ -38,7 +38,9 @@ export function inspectComponent(
   const size = bounds.isEmpty() ? undefined : bounds.getSize(new Vector3());
   const material = isPart
     ? (component.drawingMaterial ??
-      (component instanceof SheetPart || component instanceof BlockPart
+      (component instanceof SheetPart ||
+      component instanceof BlockPart ||
+      component instanceof MetalStockPart
         ? component.material
         : undefined))
     : undefined;

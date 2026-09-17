@@ -7,7 +7,12 @@ import {
   type Component,
   type Point3,
 } from "./model.js";
-import { SheetMetalPart, SheetPart, BlockPart } from "./stock.js";
+import {
+  SheetMetalPart,
+  SheetPart,
+  BlockPart,
+  MetalStockPart,
+} from "./stock.js";
 import {
   hatchTriangles,
   type DrawingLineStyle,
@@ -343,7 +348,9 @@ async function drawingPage(
         let shape = engine.subject(part);
         const material =
           part.drawingMaterial ??
-          (part instanceof SheetPart || part instanceof BlockPart
+          (part instanceof SheetPart ||
+          part instanceof BlockPart ||
+          part instanceof MetalStockPart
             ? part.material
             : undefined);
         const style = material?.options.drawingStyle;

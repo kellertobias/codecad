@@ -138,7 +138,7 @@ export function cutListPages(
   mmPrecision?: number,
 ): ReportPage[] {
   const pages: ReportPage[] = [],
-    columns = [12, 111, 194, 215, 237, 261, 285];
+    columns = [12, 103, 173, 193, 213, 238, 260, 278];
   let page: ReportPage = { width: 297, height: 210, entities: [] },
     y = 0;
   const next = () => {
@@ -147,13 +147,13 @@ export function cutListPages(
     text(page, title, 12, 16, 5);
     text(
       page,
-      "Blank dimensions in mm · W × H × T · quantities include copies",
+      "Blank dimensions in mm · W × H × T (or profile L) · quantities include copies",
       12,
       23,
       3,
     );
-    ["Part / label", "Material", "W", "H", "T", "Qty"].forEach((name, i) =>
-      text(page, name, columns[i]! + 2, 33, 3.2, "TABLE_HEADER"),
+    ["Part / label", "Material", "W", "H", "T / L", "Wall", "R", "Qty"].forEach(
+      (name, i) => text(page, name, columns[i]! + 2, 33, 3.2, "TABLE_HEADER"),
     );
     line(page, 12, 37, 285, 37, "TABLE");
     y = 37;
@@ -173,7 +173,17 @@ export function cutListPages(
       materials,
       [formatMm(row.width, mmPrecision)],
       [formatMm(row.height, mmPrecision)],
-      [formatMm(row.thickness, mmPrecision)],
+      [formatMm(row.length ?? row.thickness ?? 0, mmPrecision)],
+      [
+        row.wallThickness == null
+          ? ""
+          : formatMm(row.wallThickness, mmPrecision),
+      ],
+      [
+        row.cornerRadius === undefined
+          ? ""
+          : formatMm(row.cornerRadius, mmPrecision),
+      ],
       [String(row.quantity)],
     ];
     cells.forEach((lines, i) =>

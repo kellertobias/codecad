@@ -449,6 +449,27 @@ method using `@cad.interface()`.
 `BlockMaterial` creates three-dimensional blanks. All appear in cut lists.
 Stock sheet width/height can be omitted for modeling, but nesting requires them.
 
+`MetalStockMaterial` creates solid bars or hollow tubes from an outside XY
+cross section, extruded to a cut length along local Z. `cornerRadius` is in mm;
+`true` or `"full"` gives the maximum radius (a circle for equal dimensions,
+otherwise a capsule), while `false`, `null`, or `"none"` leaves square corners.
+`wallThickness` is in mm; `null` or `"solid"` means a solid bar. The radius
+applies only to the cross section, so both cut ends remain sharp. For example:
+
+```ts
+const tube = new MetalStockMaterial({
+  name: "Steel tube",
+  width: 40,
+  height: 40,
+  cornerRadius: "full",
+  wallThickness: 2,
+});
+tube.makePart({ id: "crossbar", length: 600 });
+```
+
+Metal profile cut-list rows carry outside width/height, cut length, wall
+thickness, and corner radius. Sheet nesting does not apply to profiles.
+
 Nesting uses a deterministic rectangular guillotine algorithm, respects margins,
 part spacing/kerf, allowed rotations and grain, and allocates more sheets as needed.
 Oversized parts produce errors. Arbitrary profiles pack by their bounding rectangles;

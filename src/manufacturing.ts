@@ -12,6 +12,7 @@ import {
   SheetPart,
   SheetMetalPart,
   BlockPart,
+  MetalStockPart,
 } from "./stock.js";
 import type { CutList, ManufacturingDxf } from "./outputs.js";
 import type { OpenCascadeEngine } from "./engine.js";
@@ -23,7 +24,11 @@ export interface CutRow {
   material: string;
   width: number;
   height: number;
-  thickness: number;
+  thickness?: number;
+  /** Metal profile cut length along local Z. */
+  length?: number;
+  wallThickness?: number | null;
+  cornerRadius?: number;
   quantity: number;
 }
 export interface NestedPart {
@@ -80,8 +85,10 @@ export function outlineBounds(part: SheetPart) {
 export function cutRows(root: Component, output?: CutList): CutRow[] {
   return [root, ...descendants(root)]
     .filter(
-      (p): p is SheetPart | BlockPart =>
-        p instanceof SheetPart || p instanceof BlockPart,
+      (p): p is SheetPart | BlockPart | MetalStockPart =>
+        p instanceof SheetPart ||
+        p instanceof BlockPart ||
+        p instanceof MetalStockPart,
     )
     .filter(
       (p) =>
@@ -94,11 +101,19 @@ export function cutRows(root: Component, output?: CutList): CutRow[] {
       material: p.material.name,
       ...(p instanceof SheetPart
         ? { ...outlineBounds(p), thickness: p.material.thickness }
-        : {
-            width: p.dimensions.width,
-            height: p.dimensions.depth,
-            thickness: p.dimensions.height,
-          }),
+        : p instanceof MetalStockPart
+          ? {
+              width: p.material.width,
+              height: p.material.height,
+              length: p.length,
+              wallThickness: p.material.wallThickness,
+              cornerRadius: p.material.cornerRadius,
+            }
+          : {
+              width: p.dimensions.width,
+              height: p.dimensions.depth,
+              thickness: p.dimensions.height,
+            }),
       quantity: p.quantity,
     }));
 }
@@ -114,6 +129,9 @@ export function csv(rows: CutRow[], mmPrecision?: number): string {
         "height_mm",
         "thickness_mm",
         "quantity",
+        "length_mm",
+        "wall_thickness_mm",
+        "corner_radius_mm",
       ],
       ...rows.map((r) => [
         r.path,
@@ -121,8 +139,13 @@ export function csv(rows: CutRow[], mmPrecision?: number): string {
         r.material,
         formatMm(r.width, mmPrecision),
         formatMm(r.height, mmPrecision),
-        formatMm(r.thickness, mmPrecision),
+        r.thickness === undefined ? "" : formatMm(r.thickness, mmPrecision),
         r.quantity,
+        r.length === undefined ? "" : formatMm(r.length, mmPrecision),
+        r.wallThickness == null ? "" : formatMm(r.wallThickness, mmPrecision),
+        r.cornerRadius === undefined
+          ? ""
+          : formatMm(r.cornerRadius, mmPrecision),
       ]),
     ]
       .map((r) => r.map(quote).join(","))

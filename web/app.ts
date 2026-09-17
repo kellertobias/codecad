@@ -16,6 +16,7 @@ import {
 } from "./surface-visibility.js";
 import type { View2DPrimitive } from "../src/view2d.js";
 import type { Inspection } from "../src/inspection.js";
+import type { CutRow } from "../src/manufacturing.js";
 import {
   chooseMeasurePick,
   measure,
@@ -79,15 +80,7 @@ type Model = {
   frames: MotionFrame[];
   animations: StudioAnimation[];
   unfolds: { path: string; label: string; frames: MeshData[] }[];
-  cutList: {
-    path: string;
-    label: string;
-    material: string;
-    width: number;
-    height: number;
-    thickness: number;
-    quantity: number;
-  }[];
+  cutList: CutRow[];
 };
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -953,7 +946,16 @@ function updateAvailableTabs() {
 function renderCutTable(rows: Model["cutList"]) {
   const table = document.createElement("table");
   const header = document.createElement("tr");
-  for (const name of ["Part", "Material", "W", "H", "T", "Qty"]) {
+  for (const name of [
+    "Part",
+    "Material",
+    "W",
+    "H",
+    "T / L",
+    "Wall",
+    "R",
+    "Qty",
+  ]) {
     const cell = document.createElement("th");
     cell.textContent = name;
     header.append(cell);
@@ -966,7 +968,9 @@ function renderCutTable(rows: Model["cutList"]) {
       r.material,
       r.width,
       r.height,
-      r.thickness,
+      r.length ?? r.thickness ?? "",
+      r.wallThickness ?? "",
+      r.cornerRadius ?? "",
       r.quantity,
     ]) {
       const cell = document.createElement("td");
