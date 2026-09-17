@@ -8,9 +8,10 @@ A local TypeScript CAD application with classes, standard decorators, automatic
 part registration, an OpenCascade geometry engine, live preview, and manufacturing
 outputs.
 
-Projects can also define a dedicated interactive 2D plane, independent of
-printable Drawings. Add paths, lines, or circles in millimetres from a project
-constructor; Studio shows a **2D plane** tab only when content exists:
+Projects can define geometry for the infinite **Drawings** workspace,
+independent of printable plans. Add paths, lines, or circles in millimetres
+from a project constructor. Drawings remains available even for an empty plane,
+and configured plans can be downloaded there. See `examples/infinite-drawing.ts`:
 
 ```ts
 this.view2D.path(
@@ -26,7 +27,8 @@ this.view2D.circle({ x: 300, y: 450 }, 12, { label: "Pull" });
 ```
 
 Drag to pan the unbounded grid, scroll to zoom around the cursor, and use Fit to
-reframe project geometry. This view does not create an export file.
+reframe project geometry. The infinite view itself does not create an export file;
+add a technical drawing output for a printable plan.
 
 ![CodeCAD Studio displaying the four-drawer kitchen cabinet](assets/codecad-studio-kitchen-cabinet.png)
 

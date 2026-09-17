@@ -851,22 +851,28 @@ let pdfViewers: ReturnType<typeof pdfViewer>[] = [];
 function renderOutputs() {
   pdfViewers.forEach((viewer) => viewer.dispose());
   pdfViewers = [];
-  const pdfReports: { drawing: PdfReport[]; nesting: PdfReport[] } = {
-    drawing: [],
-    nesting: [],
-  };
-  for (const id of ["drawing", "nesting", "exports"]) $(id).replaceChildren();
+  const pdfReports: PdfReport[] = [];
+  for (const id of ["drawing-download-list", "nesting", "exports"])
+    $(id).replaceChildren();
   const grouped = new Set<string>();
   for (const report of model?.reports ?? []) {
     grouped.add(report.preview);
     report.previews?.forEach((name) => grouped.add(name));
     Object.values(report.formats).forEach((name) => grouped.add(name));
-    if (report.kind !== "cutList") {
-      pdfReports[report.kind === "drawing" ? "drawing" : "nesting"].push({
+    if (report.kind === "nesting") {
+      pdfReports.push({
         title: report.title,
         url: artifactUrl(report.formats.pdf),
         download: downloadControl(report),
       });
+    }
+    if (report.kind === "drawing") {
+      const row = document.createElement("div"),
+        label = document.createElement("span");
+      row.className = "export-row";
+      label.textContent = report.title;
+      row.append(label, downloadControl(report));
+      $("drawing-download-list").append(row);
     }
     const row = document.createElement("div"),
       label = document.createElement("span");
@@ -888,7 +894,9 @@ function renderOutputs() {
       link.textContent = "Download";
       title.append(link);
       card.append(title);
-      $(file.kind === "drawing" ? "drawing" : "nesting").append(card);
+      $(file.kind === "drawing" ? "drawing-download-list" : "nesting").append(
+        card,
+      );
     }
     const row = document.createElement("div");
     row.className = "export-row";
@@ -903,12 +911,13 @@ function renderOutputs() {
     row.append(link, size);
     $("exports").append(row);
   }
-  for (const id of ["drawing", "nesting"] as const) {
-    if (!pdfReports[id].length) continue;
-    const viewer = pdfViewer(pdfReports[id]);
+  if (!$("drawing-download-list").childElementCount)
+    $("drawing-download-list").textContent = "No printable plans configured.";
+  if (pdfReports.length) {
+    const viewer = pdfViewer(pdfReports);
     pdfViewers.push(viewer);
-    $(id).append(viewer.element);
-    if ($(id).classList.contains("active")) viewer.start();
+    $("nesting").append(viewer.element);
+    if ($("nesting").classList.contains("active")) viewer.start();
   }
 }
 function renderCuts() {
@@ -925,12 +934,6 @@ function renderCuts() {
   if (!reports.length) renderCutTable(model?.cutList ?? []);
 }
 function updateAvailableTabs() {
-  const planeButton = document.querySelector<HTMLButtonElement>(
-    '[data-tab="plane2d"]',
-  )!;
-  planeButton.hidden = !model?.view2D?.length;
-  if (planeButton.hidden && $("plane2d").classList.contains("active"))
-    activateTab("model");
   const available: Record<string, boolean> = availableViews({
     files: model?.files ?? [],
     reports: model?.reports ?? [],
@@ -1108,7 +1111,7 @@ function activateTab(id: string) {
     .filter((viewer) => viewer.element.parentElement?.id === id)
     .forEach((viewer) => viewer.start());
   resize();
-  if (id === "plane2d") plane2D.render();
+  if (id === "drawing") plane2D.render();
 }
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
   button.onclick = () => {

@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { availableViews } from "../web/available-views.js";
 
-test("only configured model outputs appear in the Studio view menu", () => {
+test("Drawings is always available while other views follow configured outputs", () => {
   assert.deepEqual(availableViews({ files: [], reports: [], cutList: [] }), {
-    drawing: false,
+    drawing: true,
     nesting: false,
     cuts: false,
     exports: false,
@@ -25,7 +25,7 @@ test("only configured model outputs appear in the Studio view menu", () => {
       cutList: [{}],
     }),
     {
-      drawing: false,
+      drawing: true,
       nesting: true,
       cuts: true,
       exports: true,

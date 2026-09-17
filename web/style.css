@@ -472,7 +472,7 @@ nav button.active {
   overflow: hidden;
   background: radial-gradient(ellipse at 45% 35%, #30434c 0, #1b2830 65%);
 }
-#plane2d {
+#drawing {
   position: relative;
   overflow: hidden;
 }
@@ -502,6 +502,30 @@ nav button.active {
 }
 .plane2d-tools button {
   padding: 4px 8px;
+}
+.drawing-downloads {
+  position: absolute;
+  top: 54px;
+  right: 12px;
+  z-index: 2;
+  width: min(420px, calc(100% - 24px));
+  border: 1px solid #42605b;
+  border-radius: 7px;
+  background: #1b292df0;
+  color: #c9ddd9;
+  font-size: 12px;
+}
+.drawing-downloads summary {
+  cursor: pointer;
+  padding: 9px 12px;
+}
+#drawing-download-list {
+  max-height: min(50vh, 360px);
+  overflow: auto;
+  padding: 4px 12px 12px;
+}
+#drawing-download-list .export-row {
+  gap: 12px;
 }
 .model-overlay-tools {
   position: absolute;

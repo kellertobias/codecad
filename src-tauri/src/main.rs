@@ -331,6 +331,7 @@ fn project_catalog(
         ("cabinet", "Kitchen cabinet", "kitchen-cabinet.ts"),
         ("keyboard", "Keyboard case", "keyboard-case.ts"),
         ("apartment", "Small apartment", "small-apartment.ts"),
+        ("drawing", "Infinite drawing", "infinite-drawing.ts"),
     ]
     .into_iter()
     .map(|(id, title, file)| {
@@ -342,7 +343,7 @@ fn project_catalog(
             preview: previews
                 .get(&key)
                 .cloned()
-                .or_else(|| Some(format!("/previews/{id}.png"))),
+                .or_else(|| (id != "drawing").then(|| format!("/previews/{id}.png"))),
         }
     })
     .collect();
@@ -558,7 +559,7 @@ async fn open_project(
     let result = async {
         let entry = if let Some(example) = example {
             if path.is_some() { return Err("Choose either an example or a recent project".into()); }
-            let file = match example.as_str() { "cabinet" => "kitchen-cabinet.ts", "keyboard" => "keyboard-case.ts", "apartment" => "small-apartment.ts", _ => return Err("Unknown example".into()) };
+            let file = match example.as_str() { "cabinet" => "kitchen-cabinet.ts", "keyboard" => "keyboard-case.ts", "apartment" => "small-apartment.ts", "drawing" => "infinite-drawing.ts", _ => return Err("Unknown example".into()) };
             // Copy the entire example workspace once so relative imports stay valid
             // and editing examples never changes signed application resources.
             let workspace = app.path().app_data_dir().map_err(|e|e.to_string())?.join("examples-workspace");
@@ -568,6 +569,9 @@ async fn open_project(
             }
             for file in ["package.json", "tsconfig.json"] {
                 if !workspace.join(file).exists() { std::fs::copy(root.join(file), workspace.join(file)).map_err(|e|e.to_string())?; }
+            }
+            if !workspace.join("examples").join(file).exists() {
+                std::fs::copy(root.join("examples").join(file), workspace.join("examples").join(file)).map_err(|e|e.to_string())?;
             }
             workspace.join("examples").join(file)
         } else {

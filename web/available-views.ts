@@ -6,9 +6,7 @@ export type OutputAvailability = {
 
 export function availableViews(output: OutputAvailability) {
   return {
-    drawing:
-      output.reports.some((report) => report.kind === "drawing") ||
-      output.files.some((file) => file.kind === "drawing"),
+    drawing: true,
     nesting:
       output.reports.some((report) => report.kind === "nesting") ||
       output.files.some((file) => file.kind === "nesting"),
