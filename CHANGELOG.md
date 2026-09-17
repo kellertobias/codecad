@@ -1,3 +1,39 @@
+# [0.3.0](https://github.com/kellertobias/codecad/compare/v0.2.2...v0.3.0) (2026-09-17)
+
+
+### Bug Fixes
+
+* constrain measurement hover to visible surfaces ([76a9868](https://github.com/kellertobias/codecad/commit/76a98686f1a157a539cf87ec29eafb084b098779))
+* polish studio measurement and controls ([3d4208f](https://github.com/kellertobias/codecad/commit/3d4208f8b46891526d37930973cb76cf17f92867))
+* reveal nested drawer rails in component tree ([514ecbf](https://github.com/kellertobias/codecad/commit/514ecbfc2b3bd5375e47d39ec852cc794722d343))
+* share SDK identity with legacy desktop examples ([53c6557](https://github.com/kellertobias/codecad/commit/53c65577ead1d613e78d13a2be7fe1cea1d4852c))
+
+
+### Features
+
+* add animated apartment openings and joined walls ([dead012](https://github.com/kellertobias/codecad/commit/dead0122b7524ba3d737a31b9408e7e3d02bca12))
+* add code-defined interactive 2d plane ([e031b3f](https://github.com/kellertobias/codecad/commit/e031b3f83882fc865738d7f2ad5c67f26f266eb3))
+* add desktop project picker and editor workflow ([9bdd190](https://github.com/kellertobias/codecad/commit/9bdd190903ef6814c28444f2f0118254ec8402da))
+* add live table base parameters and viewport tools ([be64d60](https://github.com/kellertobias/codecad/commit/be64d60b2819f942544238392b48ae4f91ebfbe9))
+* add named CAD animations and sheet metal unfolding ([3aa694c](https://github.com/kellertobias/codecad/commit/3aa694c8906cd35cc5f5061383a634da86c331f0))
+* add named sheet panel edge references ([46b00d1](https://github.com/kellertobias/codecad/commit/46b00d1235ef052fd95c6798a307fbe4f714715f))
+* add precise drawings and on-demand exports ([1505c17](https://github.com/kellertobias/codecad/commit/1505c17ef255724a6553c7f3dcb57bee57de1f00))
+* add project previews and desktop home flow ([181be32](https://github.com/kellertobias/codecad/commit/181be32f698442adb9fb9c670f1b98b29c3d37be))
+* add solid and hollow metal profile stock ([49606f2](https://github.com/kellertobias/codecad/commit/49606f22523d816f732c6676c1949c4f8de32c7f))
+* add typed project parameters and Studio controls ([7829631](https://github.com/kellertobias/codecad/commit/7829631c363ed59ed0d55c505ce81ae10c3938fc))
+* add viewport measurements and visual materials ([67a196b](https://github.com/kellertobias/codecad/commit/67a196b276be618bd095d8902bf9afd893496aa3))
+* add welded table base example ([0ebb1c4](https://github.com/kellertobias/codecad/commit/0ebb1c461025b572a115eb056c0d51eaae03a12d))
+* inspect component geometry and operations ([bebd3e8](https://github.com/kellertobias/codecad/commit/bebd3e8d2fae8f250b7179b9d575e072a39f89b7))
+* make infinite drawings the primary workspace ([96c9a24](https://github.com/kellertobias/codecad/commit/96c9a241440f6ae7851ee02a7d2b4d84a4c38c93))
+* optimize kerf-aware sheet nesting and cut plans ([a32ecbd](https://github.com/kellertobias/codecad/commit/a32ecbd26a67a6a53ed4fda78ba310bf210221f7))
+* publish versioned CodeCAD GitHub releases ([c3b7c0c](https://github.com/kellertobias/codecad/commit/c3b7c0c271c2fee50d9345ada5f5bcf0c4d415ca))
+* refine draggable studio sidebar controls ([e3de090](https://github.com/kellertobias/codecad/commit/e3de0908e58523b5e48587908adbab401949e93c))
+* render directional multiplex layers ([1863704](https://github.com/kellertobias/codecad/commit/1863704759b48d8dfee22a59d2aa86732e5d8c02))
+* render physical cabinet domino connectors ([3d1f756](https://github.com/kellertobias/codecad/commit/3d1f75685d17155d52b73ce6abb27763b83a1571))
+* streamline projection and parts controls ([38ab50e](https://github.com/kellertobias/codecad/commit/38ab50e2c71144c10a8b19cbf8fcdc74194faec3))
+* support standalone output provider classes ([d49ccb0](https://github.com/kellertobias/codecad/commit/d49ccb080d999550f379089d3c752c68465ec2cf))
+* unify studio toolbar and contextual measurement ([8f63f72](https://github.com/kellertobias/codecad/commit/8f63f7202dbaabeb245dc768d3ea62f84eabb86b))
+
 ## [0.2.2](https://github.com/kellertobias/codecad/compare/v0.2.1...v0.2.2) (2026-09-16)
 
 
