@@ -1,3 +1,11 @@
+# [0.4.0](https://github.com/kellertobias/codecad/compare/v0.3.0...v0.4.0) (2026-09-20)
+
+
+### Features
+
+* open several projects at once in desktop tabs ([65f053e](https://github.com/kellertobias/codecad/commit/65f053ecc4385987fa05401b18dcff72fb5c0307))
+* simplify parameter declarations with inferred ranges ([0e3b9f2](https://github.com/kellertobias/codecad/commit/0e3b9f2d1cd02651addd2fa0d69ca9c0bb7b4212))
+
 # [0.3.0](https://github.com/kellertobias/codecad/compare/v0.2.2...v0.3.0) (2026-09-17)
 
 
