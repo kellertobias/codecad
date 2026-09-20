@@ -1,0 +1,81 @@
+/* Shared by the desktop home screen and every open project window. */
+.project-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.project-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.project-tab-strip::-webkit-scrollbar {
+  display: none;
+}
+.project-tab {
+  display: flex;
+  align-items: center;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #16222a;
+}
+.project-tab.active {
+  background: #24413c;
+  border-color: #3f6b60;
+}
+.project-tab button {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #9fb8b1;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 3px;
+  cursor: pointer;
+}
+.project-tab.active button {
+  color: #dff3ec;
+}
+.project-tab .project-tab-open {
+  padding-left: 11px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-tab .project-tab-close {
+  padding-right: 10px;
+  font-size: 14px;
+  opacity: 0.55;
+}
+.project-tab .project-tab-close:hover {
+  opacity: 1;
+  color: #ffb1a3;
+}
+.project-tab-add {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: #9fb8b1;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.project-tab-add:hover:not(:disabled) {
+  background: #24413c;
+  color: #dff3ec;
+}
+.project-tab-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

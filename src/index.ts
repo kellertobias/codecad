@@ -1,5 +1,6 @@
 export * from "./arrangements.js";
 export * from "./decorators.js";
+export * from "./edges.js";
 export * from "./engine.js";
 export * from "./model.js";
 export * from "./motion.js";

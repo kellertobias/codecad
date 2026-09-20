@@ -15,6 +15,7 @@ import {
   MetalStockPart,
 } from "./stock.js";
 import type { CutList, ManufacturingDxf } from "./outputs.js";
+import type { View2D } from "./view2d.js";
 import type { OpenCascadeEngine } from "./engine.js";
 import { formatMm } from "./precision.js";
 
@@ -82,6 +83,14 @@ export function outlineBounds(part: SheetPart) {
     height: Math.max(...p.map((v) => v.y)) - y,
   };
 }
+/** A blank radius only reaches the cut list when every rounded corner shares
+ * it; mixed radii live in the contour the DXF carries. */
+function sheetCornerRadius(part: SheetPart): { cornerRadius?: number } {
+  const rounded = new Set(
+    Object.values(part.cornerRadii).filter((radius) => radius > 0),
+  );
+  return rounded.size === 1 ? { cornerRadius: [...rounded][0]! } : {};
+}
 export function cutRows(root: Component, output?: CutList): CutRow[] {
   return [root, ...descendants(root)]
     .filter(
@@ -100,7 +109,11 @@ export function cutRows(root: Component, output?: CutList): CutRow[] {
       label: p.label,
       material: p.material.name,
       ...(p instanceof SheetPart
-        ? { ...outlineBounds(p), thickness: p.material.thickness }
+        ? {
+            ...outlineBounds(p),
+            thickness: p.material.thickness,
+            ...sheetCornerRadius(p),
+          }
         : p instanceof MetalStockPart
           ? {
               width: p.material.width,
@@ -383,11 +396,17 @@ export function nest(parts: readonly SheetPart[]): SheetLayout[] {
   }
   return results;
 }
+/** A polyline vertex. `bulge` is `tan(sweep / 4)` for the arc running to the
+ * next vertex, positive counter-clockwise, as LWPOLYLINE group code 42 wants.
+ * Absent or zero means a straight segment. */
+export interface DxfVertex extends Point2 {
+  readonly bulge?: number;
+}
 export type DxfEntity =
   | {
       kind: "polyline";
       layer: string;
-      points: Point2[];
+      points: DxfVertex[];
       closed: boolean;
       style?: import("./drawing-style.js").DrawingLineStyle;
     }
@@ -414,33 +433,64 @@ function primitiveTransform(recipe: Recipe): {
   }
   return { recipe: r, matrix };
 }
+/** A contour piece. A nonzero `bulge` makes it an arc from `a` to `b`;
+ * reversing the piece negates it. */
+export interface DxfSegment {
+  readonly a: Point2;
+  readonly b: Point2;
+  readonly bulge?: number;
+}
 function contourChains(
-  segments: { a: Point2; b: Point2 }[],
-): { points: Point2[]; closed: boolean }[] {
-  const chains: { points: Point2[]; closed: boolean }[] = [],
+  segments: DxfSegment[],
+): { points: DxfVertex[]; closed: boolean }[] {
+  const chains: { points: DxfVertex[]; closed: boolean }[] = [],
     near = (a: Point2, b: Point2) => Math.hypot(a.x - b.x, a.y - b.y) < 0.0001;
   while (segments.length) {
-    const first = segments.pop()!,
-      points = [first.a, first.b];
+    const first = segments.pop()!;
+    // A vertex carries the bulge of the segment leaving it.
+    const points: DxfVertex[] = [
+      {
+        x: first.a.x,
+        y: first.a.y,
+        ...(first.bulge ? { bulge: first.bulge } : {}),
+      },
+      { x: first.b.x, y: first.b.y },
+    ];
     let found = true;
     while (found) {
       found = false;
       const end = points.at(-1)!;
       for (let i = 0; i < segments.length; i++) {
         const s = segments[i]!;
-        if (near(end, s.a) || near(end, s.b)) {
-          points.push(near(end, s.a) ? s.b : s.a);
-          segments.splice(i, 1);
-          found = true;
-          break;
-        }
+        const forward = near(end, s.a);
+        if (!forward && !near(end, s.b)) continue;
+        const bulge = forward ? (s.bulge ?? 0) : -(s.bulge ?? 0);
+        if (bulge) points[points.length - 1] = { ...end, bulge };
+        const next = forward ? s.b : s.a;
+        points.push({ x: next.x, y: next.y });
+        segments.splice(i, 1);
+        found = true;
+        break;
       }
     }
+    // On a closed loop the last vertex duplicates the first; the vertex before
+    // it already carries the closing segment's bulge.
     const closed = near(points[0]!, points.at(-1)!);
     if (closed) points.pop();
     chains.push({ points, closed });
   }
   return chains;
+}
+/** `tan(sweep / 4)`, which is what LWPOLYLINE group code 42 wants, derived
+ * from the chord and a point on the arc. Positive counter-clockwise, and
+ * exact for reflex arcs too. */
+export function bulgeThrough(a: Point2, on: Point2, b: Point2): number {
+  const dx = b.x - a.x,
+    dy = b.y - a.y,
+    chord = Math.hypot(dx, dy);
+  if (chord < 1e-9) return 0;
+  const cross = dx * (on.y - a.y) - dy * (on.x - a.x);
+  return (-2 * cross) / (chord * chord);
 }
 export function encodeDxf(entities: DxfEntity[]): Uint8Array {
   const out: (string | number)[] = [
@@ -626,26 +676,47 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
           ),
         );
       }
-      for (const p of e.points) out.push(10, p.x, 20, p.y);
+      for (const p of e.points) {
+        out.push(10, p.x, 20, p.y);
+        if (p.bulge) out.push(42, p.bulge);
+      }
     }
   }
   out.push(0, "ENDSEC", 0, "EOF");
   return new TextEncoder().encode(out.join("\n") + "\n");
+}
+/** The blank as the saw or router sees it. A profile that opted into arc
+ * fitting is read back through the kernel so its curves stay exact; a plain
+ * polygon outline is emitted as written. */
+async function blankContours(
+  engine: OpenCascadeEngine,
+  part: SheetPart,
+): Promise<{ points: DxfVertex[]; closed: boolean }[]> {
+  const outline = part.manufacturingOutline;
+  if (outline.fittedArcTolerance === undefined)
+    return [{ points: outline.points.map((p) => ({ ...p })), closed: true }];
+  const prism = await engine.recipe(
+    outline.extrude(part.material.thickness).recipe,
+  );
+  const contours = contourChains(
+    sectionSegments(engine, prism, part.material.thickness / 2),
+  );
+  if (!contours.length || contours.some((contour) => !contour.closed))
+    throw new Error(`Blank outline of ${part.path} is not closed`);
+  return contours;
 }
 export async function partEntities(
   engine: OpenCascadeEngine,
   part: SheetPart,
 ): Promise<DxfEntity[]> {
   if (part instanceof SheetMetalPart) return sheetMetalEntities(engine, part);
-  const entities: DxfEntity[] = [
-    {
-      kind: "polyline",
-      layer: "BLANK_OUTLINE",
-      points: part.manufacturingOutline.points,
-      closed: true,
-    },
-  ];
-  for (const [i, op] of part.operations.entries()) {
+  const entities: DxfEntity[] = (await blankContours(engine, part)).map(
+    (contour) => ({ kind: "polyline", layer: "BLANK_OUTLINE", ...contour }),
+  );
+  // Through cuts that break the blank's edge (finger joints, notches) are not
+  // separate pockets: they change the contour the router has to follow.
+  const edgeCuts: Recipe[] = [];
+  for (const op of part.operations) {
     if (op.kind === "union")
       throw new Error(
         `DXF cannot describe additive solid ${part.path}; make its final blank explicit`,
@@ -711,40 +782,132 @@ export async function partEntities(
       continue;
     }
     // Keep depth/side in layer names; CNC toolpaths are generated by the downstream CAM application.
-    const section = engine.own(
-      b.unwrap(
-        b.section(tool, {
-          origin: [0, 0, (z0 + z1) / 2],
-          xDir: [1, 0, 0],
-          yDir: [0, 1, 0],
-          zDir: [0, 0, 1],
-        }),
-      ),
-    );
-    const edges = b.meshEdges(section, { tolerance: 0.02, cache: false });
-    const lines = edges.lines;
     // Segments remain exact to the explicitly stated 0.02 mm curve tessellation tolerance.
-    const seen = new Set<string>();
-    const segments: { a: Point2; b: Point2 }[] = [];
-    for (let j = 0; j < lines.length; j += 6) {
-      const p = { x: lines[j]!, y: lines[j + 1]! },
-        q = { x: lines[j + 3]!, y: lines[j + 4]! };
-      const key = [
-        `${p.x.toFixed(5)},${p.y.toFixed(5)}`,
-        `${q.x.toFixed(5)},${q.y.toFixed(5)}`,
-      ]
-        .sort()
-        .join("|");
-      if (!seen.has(key)) {
-        seen.add(key);
-        segments.push({ a: p, b: q });
-      }
+    const segments = sectionSegments(engine, tool, (z0 + z1) / 2);
+    const chains = contourChains(segments);
+    if (
+      side === "THROUGH" &&
+      op.kind !== "miter" &&
+      chains.some((chain) =>
+        chain.points.some(
+          (point) => !strictlyInside(point, part.manufacturingOutline.points),
+        ),
+      )
+    ) {
+      edgeCuts.push(op.recipe);
+      continue;
     }
-    void i;
-    for (const chain of contourChains(segments))
+    for (const chain of chains)
       entities.push({ kind: "polyline", layer, ...chain });
   }
+  if (edgeCuts.length) {
+    const finished = await engine.recipe(
+      edgeCuts.reduce<Recipe>(
+        (left, right) => ({ kind: "cut", left, right }),
+        part.manufacturingOutline.extrude(part.material.thickness).recipe,
+      ),
+    );
+    const contours = contourChains(
+      sectionSegments(engine, finished, part.material.thickness / 2),
+    );
+    if (contours.some((contour) => !contour.closed))
+      throw new Error(`Finished contour of ${part.path} is not closed`);
+    // The stock blank stays as BLANK_OUTLINE for sawing and nesting.
+    entities.splice(
+      1,
+      0,
+      ...contours.map((contour): DxfEntity => ({
+        kind: "polyline",
+        layer: "PART_OUTLINE",
+        ...contour,
+      })),
+    );
+  }
   return entities;
+}
+function sectionSegments(
+  engine: OpenCascadeEngine,
+  shape: b.Shape3D,
+  z: number,
+): DxfSegment[] {
+  const section = engine.own(
+    b.unwrap(
+      b.section(shape, {
+        origin: [0, 0, z],
+        xDir: [1, 0, 0],
+        yDir: [0, 1, 0],
+        zDir: [0, 0, 1],
+      }),
+    ),
+  );
+  const segments: DxfSegment[] = [],
+    seen = new Set<string>();
+  const add = (a: Point2, c: Point2, bulge = 0) => {
+    const key =
+      [
+        `${a.x.toFixed(5)},${a.y.toFixed(5)}`,
+        `${c.x.toFixed(5)},${c.y.toFixed(5)}`,
+      ]
+        .sort()
+        .join("|") + `|${Math.abs(bulge).toFixed(5)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    segments.push(bulge ? { a, b: c, bulge } : { a, b: c });
+  };
+  const at = (edge: b.Edge<b.Dimension>, position: number): Point2 => {
+    const p = b.curvePointAt(edge, position);
+    return { x: p[0]!, y: p[1]! };
+  };
+  for (const edge of b.getEdges(section)) {
+    // Circles keep their exact sweep; anything else is tessellated as before.
+    if (b.getCurveType(edge) === "CIRCLE") {
+      const start = at(edge, 0),
+        end = at(edge, 1);
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 1e-9) {
+        // A full circle has no chord, so split it into two exact half arcs.
+        const half = at(edge, 0.5);
+        add(start, half, bulgeThrough(start, at(edge, 0.25), half));
+        add(half, start, bulgeThrough(half, at(edge, 0.75), start));
+      } else add(start, end, bulgeThrough(start, at(edge, 0.5), end));
+      continue;
+    }
+    const lines = b.meshEdges(edge, { tolerance: 0.02, cache: false }).lines;
+    for (let j = 0; j < lines.length; j += 6)
+      add(
+        { x: lines[j]!, y: lines[j + 1]! },
+        { x: lines[j + 3]!, y: lines[j + 4]! },
+      );
+  }
+  return segments;
+}
+/** Inside the polygon and further than the tolerance from every edge. */
+function strictlyInside(
+  point: Point2,
+  polygon: readonly Point2[],
+  tolerance = 1e-4,
+): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]!,
+      c = polygon[j]!;
+    const dx = c.x - a.x,
+      dy = c.y - a.y,
+      length2 = dx * dx + dy * dy;
+    const t = length2
+      ? Math.max(
+          0,
+          Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / length2),
+        )
+      : 0;
+    if (Math.hypot(point.x - a.x - dx * t, point.y - a.y - dy * t) <= tolerance)
+      return false;
+    if (
+      a.y > point.y !== c.y > point.y &&
+      point.x < ((c.x - a.x) * (point.y - a.y)) / (c.y - a.y) + a.x
+    )
+      inside = !inside;
+  }
+  return inside;
 }
 
 /** Section the finished developed solid, not the untrimmed cutter shapes.
@@ -901,9 +1064,228 @@ async function dominoEdgeFiles(
   }
   return result;
 }
+export interface ThinMaterial {
+  /** The narrowest material found, in millimetres. */
+  readonly mm: number;
+  /** The two contours it lies between, by layer. */
+  readonly between: readonly [string, string];
+  /** Where on the blank, in its own coordinates. */
+  readonly at: Point2;
+}
+/** Points along a contour, about one per millimetre. */
+function contourPoints(entity: DxfEntity): Point2[] {
+  if (entity.kind === "circle")
+    return Array.from({ length: 48 }, (_, step) => {
+      const angle = (step / 48) * 2 * Math.PI;
+      return {
+        x: entity.x + entity.radius * Math.cos(angle),
+        y: entity.y + entity.radius * Math.sin(angle),
+      };
+    });
+  if (entity.kind !== "polyline") return [];
+  const points = flattened(entity.points, entity.closed);
+  const out: Point2[] = [];
+  for (const [index, from] of points.entries()) {
+    const to = points[(index + 1) % points.length];
+    if (!to || (!entity.closed && index === points.length - 1)) {
+      out.push(from);
+      continue;
+    }
+    const steps = Math.max(
+      1,
+      Math.ceil(Math.hypot(to.x - from.x, to.y - from.y)),
+    );
+    for (let step = 0; step < steps; step++)
+      out.push({
+        x: from.x + ((to.x - from.x) * step) / steps,
+        y: from.y + ((to.y - from.y) * step) / steps,
+      });
+  }
+  return out;
+}
+function bounds(points: readonly Point2[]) {
+  return {
+    minX: Math.min(...points.map((p) => p.x)),
+    maxX: Math.max(...points.map((p) => p.x)),
+    minY: Math.min(...points.map((p) => p.y)),
+    maxY: Math.max(...points.map((p) => p.y)),
+  };
+}
+/** The narrowest stretch of material a part is left with: between two cuts, or
+ * between a cut and the blank's edge. Sampled about every millimetre, so it is
+ * a check rather than a proof, and it ignores where a cut meets the edge on
+ * purpose — a finger notch opens onto it. */
+export function thinMaterial(
+  entities: readonly DxfEntity[],
+  minimum: number,
+): ThinMaterial | undefined {
+  const edge = entities.filter((e) => e.layer.endsWith("OUTLINE"));
+  const cuts = entities.filter(
+    (e) => e.layer.startsWith("CUT") || e.layer.startsWith("DRILL"),
+  );
+  if (!cuts.length) return undefined;
+  const sampled = new Map<DxfEntity, Point2[]>();
+  for (const entity of [...edge, ...cuts])
+    sampled.set(entity, contourPoints(entity));
+  const edgePoints = edge.flatMap((entity) => sampled.get(entity)!);
+  let worst: ThinMaterial | undefined;
+  const measure = (
+    a: readonly Point2[],
+    b: readonly Point2[],
+    layers: readonly [string, string],
+  ) => {
+    if (!a.length || !b.length) return;
+    const limit = worst?.mm ?? minimum;
+    const boxA = bounds(a),
+      boxB = bounds(b);
+    // Nothing to find where the two are already further apart than the limit.
+    const apart =
+      Math.max(boxA.minX - boxB.maxX, boxB.minX - boxA.maxX, 0) ** 2 +
+      Math.max(boxA.minY - boxB.maxY, boxB.minY - boxA.maxY, 0) ** 2;
+    if (apart > limit * limit) return;
+    for (const p of a)
+      for (const q of b) {
+        const distance = Math.hypot(p.x - q.x, p.y - q.y);
+        if (distance < (worst?.mm ?? minimum) && distance > 1e-6)
+          worst = { mm: distance, between: layers, at: p };
+      }
+  };
+  for (const [index, cut] of cuts.entries()) {
+    const points = sampled.get(cut)!;
+    measure(points, edgePoints, [cut.layer, "blank edge"]);
+    for (const other of cuts.slice(index + 1))
+      measure(points, sampled.get(other)!, [cut.layer, other.layer]);
+  }
+  return worst;
+}
+/** How the CAM layers read on the Drawings plane. */
+const view2DColors: readonly (readonly [string, `#${string}`])[] = [
+  ["BLANK_OUTLINE", "#5c6773"],
+  ["STOCK_BOUNDARY", "#414a55"],
+  ["PART_OUTLINE", "#69d2ba"],
+  ["DRILL", "#7aa2f7"],
+  ["CUT", "#e0902f"],
+  ["REFERENCE", "#b48ead"],
+];
+function view2DColor(layer: string): `#${string}` {
+  return (
+    view2DColors.find(([prefix]) => layer.startsWith(prefix))?.[1] ?? "#69d2ba"
+  );
+}
+/** A DXF polyline's arcs are stored as bulges; the Drawings plane takes plain
+ * points, so each arc is sampled into one. */
+function flattened(
+  points: readonly DxfVertex[],
+  closed: boolean,
+): readonly Point2[] {
+  const out: Point2[] = [];
+  for (const [index, from] of points.entries()) {
+    const to = points[(index + 1) % points.length];
+    out.push({ x: from.x, y: from.y });
+    if (!to || (!closed && index === points.length - 1)) continue;
+    const bulge = from.bulge ?? 0;
+    if (Math.abs(bulge) < 1e-9) continue;
+    const angle = 4 * Math.atan(bulge),
+      chord = Math.hypot(to.x - from.x, to.y - from.y);
+    if (chord < 1e-9) continue;
+    const radius = chord / (2 * Math.sin(Math.abs(angle) / 2));
+    const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const offset = Math.sqrt(Math.max(0, radius * radius - (chord / 2) ** 2));
+    const sign = Math.sign(angle) * (Math.abs(angle) > Math.PI ? -1 : 1);
+    const centre = {
+      x: middle.x - (sign * offset * (to.y - from.y)) / chord,
+      y: middle.y + (sign * offset * (to.x - from.x)) / chord,
+    };
+    const start = Math.atan2(from.y - centre.y, from.x - centre.x);
+    const steps = Math.max(2, Math.ceil((Math.abs(angle) / Math.PI) * 24));
+    for (let step = 1; step < steps; step++) {
+      const at = start + (angle * step) / steps;
+      out.push({
+        x: centre.x + radius * Math.cos(at),
+        y: centre.y + radius * Math.sin(at),
+      });
+    }
+  }
+  return out;
+}
+/** Draw DXF entities onto the Drawings plane, shifted to where they belong. */
+function drawEntities(
+  view: View2D,
+  entities: readonly DxfEntity[],
+  offset: Point2,
+  label: string,
+): void {
+  let named = false;
+  for (const entity of entities) {
+    const color = view2DColor(entity.layer);
+    // One label per piece, on its outline, so the plane stays readable.
+    const style = {
+      color,
+      ...(named || entity.kind === "text" ? {} : { label }),
+    };
+    if (entity.kind === "polyline") {
+      view.path(
+        flattened(entity.points, entity.closed).map((point) => ({
+          x: point.x + offset.x,
+          y: point.y + offset.y,
+        })),
+        { closed: entity.closed, ...style },
+      );
+      named = true;
+    } else if (entity.kind === "circle") {
+      view.circle(
+        { x: entity.x + offset.x, y: entity.y + offset.y },
+        entity.radius,
+        { color },
+      );
+    }
+  }
+}
+/** The geometry the CAM files carry, placed on the Drawings plane: nested
+ * sheets where the output nests, otherwise the parts in a row. */
+export async function drawManufacturing(
+  engine: OpenCascadeEngine,
+  output: ManufacturingDxf,
+  view: View2D,
+): Promise<void> {
+  if (!engine.root) throw new Error("Evaluate a project first");
+  const parts =
+    output.options.parts === "all"
+      ? sheetParts(engine.root)
+      : output.options.parts;
+  const entities = new Map<SheetPart, DxfEntity[]>();
+  for (const part of parts)
+    entities.set(part, await partEntities(engine, part));
+  const gap = 20;
+  let x = 0;
+  if (output.options.layout === "one-file-per-part") {
+    for (const part of parts) {
+      const box = outlineBounds(part);
+      drawEntities(
+        view,
+        entities.get(part)!,
+        { x: x - box.x, y: -box.y },
+        part.path,
+      );
+      x += box.width + gap;
+    }
+    return;
+  }
+  for (const layout of nest(parts)) {
+    drawEntities(
+      view,
+      layoutEntities(layout, entities),
+      { x, y: 0 },
+      `${layout.material.name} · sheet ${layout.number}`,
+    );
+    x += layout.material.width! + gap;
+  }
+}
 export async function exportDxf(
   engine: OpenCascadeEngine,
   output: ManufacturingDxf,
+  /** Called for every part left thinner than `minimumMaterial` anywhere. */
+  onThinMaterial?: (part: SheetPart, finding: ThinMaterial) => void,
 ): Promise<ReadonlyMap<string, Uint8Array>> {
   if (!engine.root) throw new Error("Evaluate a project first");
   const parts =
@@ -913,6 +1295,12 @@ export async function exportDxf(
   const files = new Map<string, Uint8Array>(),
     entities = new Map<SheetPart, DxfEntity[]>();
   for (const p of parts) entities.set(p, await partEntities(engine, p));
+  const minimum = output.options.minimumMaterial;
+  if (minimum !== undefined && onThinMaterial)
+    for (const part of parts) {
+      const finding = thinMaterial(entities.get(part)!, minimum);
+      if (finding) onThinMaterial(part, finding);
+    }
   const name = (s: string) => s.replace(/[^a-zA-Z0-9_.-]+/g, "_");
   for (const part of parts)
     for (const [setup, edges] of await dominoEdgeFiles(engine, part))

@@ -31,42 +31,50 @@ export type ParameterValues<S extends ParameterSchema> = {
         ? T
         : never;
 };
+/** Resolved values of a schema or of a reusable `CodeCadParameters` set. */
+export type ParametersOf<P> =
+  P extends InputParameters<infer S>
+    ? ParameterValues<S>
+    : P extends ParameterSchema
+      ? ParameterValues<P>
+      : never;
 export type ParameterState = {
   definitions: ParameterSchema;
   values: Record<string, number | boolean | string>;
 };
 
 export type NumberParameterOptions = {
-  readonly label: string;
+  /** Defaults to the parameter's key: `lowerRailTop` reads "Lower rail top". */
+  readonly label?: string;
   readonly unit?: string;
   readonly step?: number;
   /** Null leaves that end unbounded. */
   readonly range?: readonly [number | null, number | null];
 };
 
-export type BooleanParameterOptions = { readonly label: string };
+export type BooleanParameterOptions = { readonly label?: string };
 
 /** Infer the parameter kind from its default, without repeating type/default. */
 export function parameter(
   value: number,
-  options: NumberParameterOptions,
+  options?: NumberParameterOptions,
 ): NumberParameter;
 export function parameter(
   value: boolean,
-  options: BooleanParameterOptions,
+  options?: BooleanParameterOptions,
 ): BooleanParameter;
 export function parameter(
   value: number | boolean,
-  options: NumberParameterOptions | BooleanParameterOptions,
+  options: NumberParameterOptions | BooleanParameterOptions = {},
 ): NumberParameter | BooleanParameter {
   if (typeof value === "boolean")
-    return { type: "boolean", default: value, label: options.label };
+    return { type: "boolean", default: value, label: options.label ?? "" };
   const numeric = options as NumberParameterOptions;
   const [min, max] = numeric.range ?? [null, null];
   const result: NumberParameter = {
     type: "number",
     default: value,
-    label: numeric.label,
+    label: numeric.label ?? "",
     ...(numeric.unit === undefined ? {} : { unit: numeric.unit }),
     ...(numeric.step === undefined ? {} : { step: numeric.step }),
     ...(min === null ? {} : { min }),
@@ -75,14 +83,26 @@ export function parameter(
   return result;
 }
 
+/** `lowerRailTop` → "Lower rail top". */
+const labelFromKey = (key: string) => {
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  return words[0]!.toUpperCase() + words.slice(1);
+};
 export function defineParameters<const S extends ParameterSchema>(
   schema: S,
 ): S {
-  for (const [key, definition] of Object.entries(schema)) {
+  for (const key of Object.keys(schema))
     if (!/^[a-z][a-zA-Z0-9]*$/.test(key))
       throw new Error(`Invalid parameter name: ${key}`);
-    if (!definition.label.trim())
-      throw new Error(`Parameter ${key} needs a label`);
+  schema = Object.fromEntries(
+    Object.entries(schema).map(([key, definition]) => [
+      key,
+      definition.label.trim()
+        ? definition
+        : { ...definition, label: labelFromKey(key) },
+    ]),
+  ) as unknown as S;
+  for (const [key, definition] of Object.entries(schema)) {
     if (definition.type === "number") {
       for (const value of [definition.default, definition.min, definition.max])
         if (value !== undefined && !Number.isFinite(value))
@@ -115,8 +135,9 @@ export function defineParameters<const S extends ParameterSchema>(
 
 /** Reusable input definitions whose defaults can be overridden per project. */
 export class InputParameters<S extends ParameterSchema> {
-  constructor(readonly definitions: S) {
-    defineParameters(definitions);
+  readonly definitions: S;
+  constructor(definitions: S) {
+    this.definitions = defineParameters(definitions);
   }
 
   /** Return a validated schema with new defaults; Studio overrides still win. */

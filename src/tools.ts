@@ -1,13 +1,15 @@
+import { Vector3 } from "three";
+import { recipeBounds } from "./edges.js";
 import {
   Part,
   Shapes,
   SolidShape,
   positive,
   screwHole,
+  PartInterface,
   type Placement,
   type Point2,
   type SignedAxis,
-  type PartInterface,
   type Shape2D,
   type Shape,
 } from "./model.js";
@@ -19,6 +21,25 @@ export interface ToolPlacement extends Point2 {
 }
 export abstract class Tool {
   constructor(readonly id: string) {}
+}
+/** The face of `target` that `mount` looks at, as a cut span `depth` deep into
+ * the material. The depth axis is the target's own thickness. */
+function nearFace(
+  target: Part,
+  mount: PartInterface,
+  depth: number | undefined,
+): CutSpan {
+  const bounds = recipeBounds(target.recipe);
+  const at = new Vector3().applyMatrix4(
+    target.worldMatrix().invert().multiply(mount.worldMatrix()),
+  );
+  const near =
+    Math.abs(at.z - bounds.max.z) <= Math.abs(at.z - bounds.min.z)
+      ? bounds.max.z
+      : bounds.min.z;
+  const thickness = bounds.max.z - bounds.min.z;
+  const cut = positive(depth ?? thickness, "drilling depth");
+  return [near, near === bounds.max.z ? -cut : cut];
 }
 function span(
   target: Part,
@@ -71,6 +92,28 @@ export class Drill extends Tool {
       depth: s.depth,
     });
     return target;
+  }
+  /** Drill a part for a pattern that belongs to something else: a fitting's own
+   * holes, or an assembly that published the holes it has to be mounted by. The
+   * pattern is read where it actually sits and brought into the target's frame,
+   * so neither side has to restate the other's coordinates. Without an explicit
+   * `z` span the holes are drilled `depth` deep from whichever face of the
+   * target the pattern faces, which is the face the fitting is screwed to. */
+  transfer(
+    target: Part,
+    mount: PartInterface,
+    options: { depth?: number; z?: CutSpan } = {},
+  ): Part {
+    const local = target.worldMatrix().invert().multiply(mount.worldMatrix());
+    const features = Object.fromEntries(
+      Object.entries(mount.features).map(([name, feature]) => {
+        const f = screwHole(feature);
+        const at = new Vector3(f.x, f.y, 0).applyMatrix4(local);
+        return [name, { ...f, x: at.x, y: at.y }];
+      }),
+    );
+    const z = options.z ?? nearFace(target, mount, options.depth);
+    return this.pattern(target, new PartInterface({ features }), { z });
   }
   pattern(
     target: Part,

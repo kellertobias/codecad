@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-activate-session"
+description = "Enables the activate_session command without any pre-configured scope."
+commands.allow = ["activate_session"]
+
+[[permission]]
+identifier = "deny-activate-session"
+description = "Denies the activate_session command without any pre-configured scope."
+commands.deny = ["activate_session"]

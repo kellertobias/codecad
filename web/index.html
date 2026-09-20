@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>CodeCAD Studio</title>
     <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/project-tabs.css" />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
@@ -66,10 +67,13 @@
               </svg>
             </summary>
             <div class="toolbar-menu">
-              <button id="fit">Fit</button
-              ><button data-camera="iso">Isometric</button
-              ><button data-camera="front">Front</button
-              ><button data-camera="top">Top</button>
+              <button id="fit">Fit <kbd>F</kbd></button
+              ><button data-camera="iso">Isometric <kbd>0</kbd></button
+              ><button data-camera="front">Front <kbd>1</kbd></button
+              ><button data-camera="right">Right <kbd>2</kbd></button
+              ><button data-camera="top">Top <kbd>3</kbd></button
+              ><button data-camera="back">Back</button
+              ><button data-camera="left">Left</button>
             </div>
           </details>
           <button
@@ -149,6 +153,46 @@
             </svg>
           </button>
         </div>
+        <div class="plan-tools" aria-label="Drawing tools">
+          <button
+            id="plan-view"
+            class="tool-icon"
+            title="Add a view of the model or of one part"
+            aria-label="Add view"
+          >
+            ▣
+          </button>
+          <button
+            id="plan-measure"
+            class="tool-icon"
+            title="Dimension between two points (snaps to corners and edges)"
+            aria-label="Add dimension"
+            aria-pressed="false"
+          >
+            ⌁
+          </button>
+          <button
+            id="plan-text"
+            class="tool-icon"
+            title="Add a note"
+            aria-label="Add note"
+            aria-pressed="false"
+          >
+            T
+          </button>
+          <button
+            id="plan-save"
+            title="Save the sheet beside the project and rebuild its PDF and DXF"
+          >
+            Save plan
+          </button>
+          <button
+            id="plan-export"
+            title="Download the sheet as PDF with hidden lines removed"
+          >
+            Download PDF
+          </button>
+        </div>
         <button id="rebuild" hidden aria-label="Rebuild project">
           ↻ Rebuild
         </button>
@@ -165,6 +209,16 @@
             >
               Edges
             </button>
+            <label class="tool-option" for="edge-strength">Edge lines</label>
+            <input
+              id="edge-strength"
+              aria-label="Edge line strength"
+              title="Edge line strength"
+              type="range"
+              min="5"
+              max="100"
+              value="55"
+            />
             <label class="tool-option" for="explode">Explode</label>
             <input
               id="explode"
@@ -206,13 +260,36 @@
           </div>
         </div>
         <div id="drawing" class="tab">
-          <canvas
-            id="plane2d-canvas"
-            aria-label="Infinite 2D drawing workspace"
-          ></canvas>
-          <div class="plane2d-tools">
-            <button id="plane2d-fit">Fit</button
-            ><span>Drag to pan · scroll to zoom · millimetres</span>
+          <div class="drawing-mode">
+            <button id="show-sheets" aria-pressed="false">Sheets</button
+            ><button id="show-plan" aria-pressed="true">Sheet editor</button
+            ><button id="show-plane" aria-pressed="false">2D geometry</button>
+          </div>
+          <div id="drawing-sheets" class="gallery" hidden></div>
+          <div id="plan-editor">
+            <div id="plan-sheet-wrap">
+              <svg
+                id="plan-sheet"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 420 297"
+                aria-label="A3 drawing sheet"
+              ></svg>
+            </div>
+            <aside id="plan-properties">
+              <strong id="plan-heading">Drawing sheet</strong>
+              <div id="plan-fields"></div>
+              <div id="plan-status" role="status" aria-live="polite"></div>
+            </aside>
+          </div>
+          <div id="plane2d-workspace" hidden>
+            <canvas
+              id="plane2d-canvas"
+              aria-label="Infinite 2D drawing workspace"
+            ></canvas>
+            <div class="plane2d-tools">
+              <button id="plane2d-fit">Fit</button
+              ><span>Drag to pan · scroll to zoom · millimetres</span>
+            </div>
           </div>
           <details id="drawing-downloads" class="drawing-downloads">
             <summary>Plans &amp; downloads</summary>

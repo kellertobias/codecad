@@ -35,6 +35,22 @@ plane. `orient()` places the local panel origin in parent coordinates; for an
 XZ panel its thickness extends toward negative Y. The existing `place()` API
 remains available.
 
+`ManufacturingDxf` checks what the cutter would leave behind when given
+`minimumMaterial`: every part whose narrowest stretch of material — between two
+cuts, or between a cut and the blank's edge — falls below it is reported as a
+`THIN_MATERIAL` warning naming the part, the two contours and where on the blank
+they close in. It is sampled about every millimetre, so it is a check rather
+than a proof, and it catches what the joint rules cannot: a pocket that runs
+into an edge, or a hole placed too near a notch.
+
+`ManufacturingDxf` can also put its CAM geometry on the Drawings plane with
+`showInDrawings: true`: the same contours the DXFs carry — blank outlines, cut
+contours and drilled holes — laid out the way the files are, nested sheets or
+the parts in a row, each labelled with the part it came from and coloured by
+layer. Arcs are sampled into the plane's paths, so a rounded blank or a slot
+keeps its shape. It costs a full section pass even when exports are lazy,
+because the plane is part of the model rather than a file.
+
 Projects can define geometry for the infinite **Drawings** workspace,
 independent of printable plans. Add paths, lines, or circles in millimetres
 from a project constructor. Drawings remains available even for an empty plane,
@@ -52,6 +68,22 @@ this.view2D.path(
 );
 this.view2D.circle({ x: 300, y: 450 }, 12, { label: "Pull" });
 ```
+
+The **Sheet editor** in Drawings composes an A3 sheet without editing project
+code. Add a view of the model or of one part (▣), pick the side it is seen from,
+its scale and whether hidden edges are dashed, then drag it into place or resize
+its frame. **Dimension** (⌁) snaps to corners and edges; its two points are
+stored in the view's model coordinates, so the value is exact, follows the view
+when it moves, and updates when the design changes. Drag a dimension to slide
+its line, press Delete to remove the selection, Esc to cancel a tool, and the
+arrow keys to nudge (Shift for 10 mm). **Save plan** (Cmd/Ctrl+S while the editor
+is open) writes a `<project>.drawings.json` recipe beside the project source and
+rebuilds. The sheet is then a regular build output: true hidden-line views in
+the editor, and a titled PDF and DXF under **Sheets** and in command-line builds.
+Views whose part no longer exists are reported as build warnings.
+
+**Sheets** shows every drawing of the project, coded or composed, as the real
+PDF pages with their download controls.
 
 Drag to pan the unbounded grid, scroll to zoom around the cursor, and use Fit to
 reframe project geometry. The infinite view itself does not create an export file;
@@ -164,9 +196,15 @@ and close controls. **Open from disk…** on the welcome screen opens a native f
 picker directly: select a project's `.ts` or `.mts` entry file, not its folder.
 Recent projects and examples are shown directly on the welcome screen with model
 previews. Cmd/Ctrl+O opens the project picker from the editor. Opening a new
-project executes local TypeScript and asks for trust the first time only. The
-Studio toolbar's home button closes the current project and stops its CAD
-engine; the adjacent sidebar button hides or shows the code completely. View
+project executes local TypeScript and asks for trust the first time only.
+
+Up to eight projects stay open at once, each with its own CAD engine, and the
+tab strip at the top of the window switches between them. Cmd/Ctrl+T opens
+another project, Cmd/Ctrl+1 … 9 jump to a tab, and a tab's × closes that project
+and stops its engine. Opening a project that is already open raises its tab
+instead of starting a second engine. The home button returns to the welcome
+screen while every project keeps running; closing the window stops all of them.
+The sidebar button next to it hides or shows the code completely. View
 presets, parallel/perspective projection, and contextual measurement are in the
 same toolbar. Hold Shift near a circular edge to measure from its hole centre.
 **Build & checks** shows build status and can copy its output for bug reports.
@@ -382,6 +420,51 @@ See [the kitchen cabinet](examples/kitchen-cabinet.ts) for separate drawing,
 manufacturing, and motion provider classes. The project entry still exports
 exactly one decorated `Project` subclass.
 
+Provider classes can live in **their own modules**: one file that assembles the
+model, and a file each for the drawings, the CAM output and every motion study.
+An output module imports the project it belongs to, and the project imports the
+output modules so their decorators run, which makes the two modules import each
+other. Pass the project as a function to defer reading the class until the build
+matches providers, and the cycle is harmless:
+
+```ts
+// tray-drawing.ts
+import { Tray } from "./tray.js";
+
+@cad.outputsFor(() => Tray)
+export class TrayDrawings {
+  constructor(readonly tray: Tray) {}
+
+  @cad.output.technicalDrawing()
+  drawing() {
+    return new TechnicalDrawing({ title: "Tray" }).standardViews(this.tray);
+  }
+}
+```
+
+```ts
+// tray.ts — the entry
+import "./tray-drawing.js";
+import "./tray-motion.js";
+
+@cad.project({ id: "tray", units: "mm" })
+export class Tray extends Project {
+  /* assembles the parts */
+}
+```
+
+`@cad.outputsFor(Tray)` still works where no cycle exists, for instance when a
+thin entry module imports the assembly and the output modules and re-exports the
+project. A reference that is neither a project class nor a function returning one
+is refused, naming the provider.
+
+Each output method writes its own file, so several studies or sheets can coexist:
+a `@cad.output.motion()` method writes `<method name>.glb` unless it names a
+`fileName`, and two outputs claiming the same file name is reported instead of
+one silently overwriting the other. See
+[the modular example](examples/modular-project.ts) with its drawing,
+manufacturing and motion modules.
+
 ### Registry and construction
 
 - Classes decorated with `@cad.project` or `@cad.part` create a construction
@@ -392,9 +475,12 @@ exactly one decorated `Project` subclass.
   registration calls. `this.registry` includes nested assemblies and parts;
   `this.parts` filters to parts. `Assembly.add()` remains available for explicitly
   adopting existing components.
-- IDs are unique within an assembly. Repeated drawers can each have a child
-  named `front`. Ambiguous short lookups throw; use
-  `this.parts.require("cabinet/drawer-2/front", SheetPart)`.
+- IDs only have to be unique within their assembly. Repeated drawers can each
+  have a child named `front`. Ambiguous short lookups throw; use
+  `this.parts.require("cabinet/drawer-2/front", SheetPart)`. Beyond that an ID is
+  free-form: it may contain spaces, but it may not be empty, padded with
+  whitespace, `.`, `..`, or contain `/` or `\`, because IDs are joined into
+  paths. Exported file names derived from IDs are sanitized.
 - `copy()` copies the completed component graph and machining history at the
   moment of the call. Children, interfaces, and internal references are copied;
   stock definitions remain shared. Changes to the source's geometry do not
@@ -423,6 +509,95 @@ exactly one decorated `Project` subclass.
 - Side drilling uses a rotated interface frame; its local Z axis is the drill
   axis. Face-oriented XY DXF is intended for machining from a sheet's top/bottom.
 
+### Edges, corners and placement
+
+Faces are named by world direction: `right` is +X, `back` is +Y, `top` is +Z,
+and their opposites. An edge is where two of those faces meet; a corner is
+where three do.
+
+```ts
+const post = oak.makePart({ id: "post", width: 60, depth: 60, height: 220 });
+
+post.getEdge("top", "front").chamfer(6); // 45 degree break, 6 mm each way
+post.getEdge("front", "top").chamfer(20, 8); // 20 mm down the front, 8 mm back
+post.getEdge("top", "left").fillet(12); // constant R12 round
+post.getEdge("top", "back").taperedFillet(12, 4); // R12 at the start, R4 at the end
+post.getCorner("top", "left", "front").fillet(8); // all three edges at once
+```
+
+- Two distances chamfer asymmetrically: the first is measured on the first
+  named face, the second on the second, so `("front", "top")` and
+  `("top", "front")` describe different bevels.
+- A fillet is circular in section, so it has no asymmetric form.
+  `taperedFillet` instead varies the radius from one end of the edge to the
+  other, and applies to one edge at a time.
+- Selections name faces, not edge counts. `getEdge("top")` takes every edge
+  bounding the top face; a corner takes the three edges meeting there.
+- Directions are read in the part's own **material frame**, so a selection
+  means the same thing wherever the part ends up. A solid is named along its
+  local axes. A sheet panel is named as it would stand in front of you: its
+  width runs right, its height up, and its thickness toward the viewer. So on
+  a panel `top`/`bottom`/`left`/`right` are the four outline edges and
+  `front`/`back` the two faces, whether the blank lies flat or stands up.
+- Sheet panels also answer to the compass they are named by elsewhere:
+  `north`/`south`/`east`/`west` are the same four outline edges as
+  `top`/`bottom`/`right`/`left`, so `cornerRadius: { "north-west": 30 }` and
+  `getEdge("north", "west")` speak about the same corner. Solids have no
+  compass.
+- Pass `{ frame: "world" }` to name world directions instead, resolved through
+  the part's placement at the moment of the call. Pass `{ tolerance: 15 }` to
+  tighten the 45 degree match between a face normal and its named direction.
+- Opposite faces share no edge, so naming a pair of them is refused as it is
+  written. Anything else is resolved when the kernel runs, so a selection that
+  is merely absent from the geometry is reported then, as a diagnostic naming
+  the part and the directions.
+- Points come from the part's analytic bounding box, so they are exact for
+  boxes, panels, extrusions and their transforms. `point()` averages the
+  corners a selection leaves free, which is why one named face gives its
+  centre and two give the middle of their shared edge.
+- A blend has to land inside both faces it joins, so the limit on rounding a
+  6 mm plate's top edge is just under 6 mm, whatever the plate measures in
+  plan. A refused fillet or chamfer names the face that set the limit and how
+  wide it is.
+
+An edge or corner also gives points, which align one part against another:
+
+```ts
+const edge = floor.getEdge("top", "front");
+edge.point(); // the middle of that edge, in world coordinates
+edge.point("left"); // the end of it furthest to the left
+floor.getEdge("front").point(); // the centre of the whole front face
+
+backPanel.orient("XZ", floor.getEdge("top", "front"), {
+  origin: "south",
+  face: "back",
+});
+```
+
+`orient` takes a selection directly and resolves the frames itself, so the
+panel lands on that edge whatever assembly either part sits in. Passing a plain
+point instead keeps the existing meaning: a position in the panel's own parent
+frame.
+
+Corners also give points, which place one part against another:
+
+```ts
+const seat = base.getCorner("top", "right", "front").point(); // world point
+post.rotate({ axis: WorldAxes.Z, angle: 90 });
+post.place(post.getCorner("bottom", "left", "back").point(), seat);
+```
+
+- `place(from, to)` translates so the first world point lands on the second,
+  keeping the current rotation. It accepts corners directly as well as points.
+- `rotate({ axis, angle })` turns about a world axis through the component's
+  own origin; pass `through` for another pivot, or `from`/`to` for an axis
+  defined by two points. The world frame is read at the call, not re-derived
+  later. `WorldAxes.X/Y/Z` name the unit directions.
+- A corner is the corner of the part's bounding box, taken in the part's own
+  coordinates and then placed. It is exact for boxes, extrusions and their
+  transforms, and stays a conservative outer corner once material is removed.
+  Imported STEP bodies have no analytic bounds; place those by interface frame.
+
 ### Interfaces and tools
 
 An interface offers an optional solid, outline, mounting features, and local
@@ -436,18 +611,128 @@ method using `@cad.interface()`.
 - `Drill.pattern(panel, handle.interface(), { z: [18, -18] })` drills named hole
   positions with the chosen drill. Supply `placement` to position the pattern.
   Slot features require routing.
+- `Drill.transfer(panel, fitting.interface("mounts"), { depth: 5 })` drills a
+  part for a pattern that belongs to **something else**. The interface is read
+  where it actually sits and brought into the panel's frame, so neither side
+  restates the other's coordinates, and without an explicit `z` the holes are
+  sunk `depth` deep from whichever face the pattern looks at. `select()` narrows
+  a fitting's features to the ones you use, and `screwHoles()` rounds its slots.
+- Interfaces live on any component, so an assembly can publish the holes it must
+  be mounted by: `drawer.addInterface("mounts", rail.fixed.interface("mounts")
+.select("slot-back").screwHoles().relativeTo(drawer))`. `relativeTo()` carries
+  an interface into another component's coordinates, so a fitting's holes become
+  the assembly's own, and whatever the assembly is screwed into transfers them
+  again without knowing what is inside it.
+- `z` is `[surface, signedDepth]`, so a depth shorter than the stock drills a
+  blind hole: real material is removed, the solid shows the hole, and the DXF
+  layer names the face it is drilled from and how deep, such as
+  `DRILL_TOP_D5.000`. Transferring a pattern from a mating part and stopping
+  short of the far face needs nothing else.
 - Countersinks specify diameter and included angle; their explicit depth must
   match the resulting full cone. Standard drill point geometry is currently
   represented by a flat-ended cylindrical removal.
 - Domino joints cut paired rounded mortises. Finger joints alternate edge cuts;
   miters remove wedges in named interface frames. The joint interfaces must be
   bound to actual parts and provide an edge outline.
+- A finger joint between two placed panels can work its own edges out:
+
+  ```ts
+  new FingerJoint(floor, sidePanel, { fingerWidth: 30, clearance: 0.15 });
+  FingerJoint.joinAll(panels, { fingerWidth: 30, clearance: 0.15 });
+  ```
+
+  It reads where the blanks actually overlap, so nothing has to be restated.
+  Panels that meet at a corner are fingered across the whole overlap; a panel
+  crossing another's face is slotted through it, and `edgeMargin` keeps
+  material at both ends of that slot. `FingerJoint.intersecting(panels)` lists
+  the pairs that meet, and `joinAll` fingers every one of them, skipping
+  parallel panels and panels that miss each other. Both panels must be square
+  to the world axes; anything else needs explicit edge interfaces.
+
+- A finger or slot now cuts as deep as the _mating_ panel is thick, so a joint
+  between different thicknesses comes out flush.
+- In a finger joint one panel's material is the other's finger, so evenly
+  alternating fingers leave webs as wide as the fingers. Where a panel is
+  slotted through another's **face**, `minimumWeb` spaces the slots out instead:
+  the fingers stay `fingerWidth` wide and the panel being slotted keeps at least
+  that much between them, so a sheet cut through its middle is not left as
+  narrow webs. Corner joints have no receiving panel and alternate evenly.
+- A panel slotted through another's face keeps a fifth of the overlap at each
+  end, so the receiving panel is not left hanging on its edges. `edgeMargin`
+  raises that floor; `exactEdgeMargin` replaces it, so the receiving panel keeps
+  exactly the border you name — `exactEdgeMargin: 20` leaves 20 mm of solid
+  material at each of its edges whatever the overlap measures, and
+  `exactEdgeMargin: 0` fingers the whole overlap, letting the entering panel fill
+  the ends and show at the edge. Pair it with `startWith` to choose which panel
+  takes the end. State it on wide joints: a fifth of a 360 mm overlap is 72 mm
+  at each end, which leaves the ends of a long joint with no fingers at all.
+  Corner joints ignore both, since they have to finger the whole overlap.
 
 ### Materials and manufacturing
 
 `SheetMaterial` and `BoardMaterial` create manufactured XY blanks;
 `BlockMaterial` creates three-dimensional blanks. All appear in cut lists.
 Stock sheet width/height can be omitted for modeling, but nesting requires them.
+
+Panels can carry a corner radius in the blank itself, which keeps the cut
+contour, nesting and cut list in agreement. `cornerRadius: 10` rounds all four;
+a record rounds named corners, where north is the blank's +Y end and east its
++X end, matching the panel edge names:
+
+```ts
+hpl6.makePart({
+  id: "side-left",
+  width: 220,
+  height: 300,
+  cornerRadius: { "north-west": 10, "north-east": 10 },
+});
+```
+
+Curved blank contours reach the DXF as true arcs (LWPOLYLINE bulges), not as
+chord fans, so a rounded panel exports six vertices rather than thirty-six and
+the radius stays exact.
+
+`orient(plane, at)` stands a blank up and puts its **south-west** corner at
+`at`. Name another point of the blank with `origin`, using the panel compass
+where a single point centres the other axis:
+
+```ts
+panel.orient("YZ", { x: 0, y: 0, z: 0 }, { origin: "north-west" });
+panel.orient("XY", { x: 0, y: 0, z: 0 }, { origin: "middle", face: "front" });
+```
+
+The nine anchors are `north-west`, `north`, `north-east`, `west`, `middle`,
+`east`, `south-west` and `south`, `south-east`. The anchor is a point on the
+blank, so it turns with the panel; it moves the placement only, leaving the
+blank's own coordinates, cut contour and named edges untouched.
+
+`face` picks the side through the thickness: `back` (the default, and the
+blank's own zero), `front` to seat the panel's face on the point, or `middle`
+for its mid-plane. So a panel skinned onto a carcass face uses
+`face: "back"`, one whose visible face must land on a datum uses
+`face: "front"`, and one centred on a rail uses `face: "middle"`.
+
+Round the blank when the radius is cut on the machine. Use
+`getEdge().fillet()` for an edge broken after assembly: that changes the solid,
+not the sheet outline, so it does not reach the cut files. Panel edges are
+named as the blank stands in front of you, so `getEdge("top", "left")` is its
+top-left corner through the thickness and `getEdge("front", "top")` breaks the
+face edge along its top.
+
+State a stock once and derive its variants. `plies` generates equal veneers of
+alternating direction, and `with()` copies every option except `id` and `name`:
+
+```ts
+const plywood = new SheetMaterial({
+  id: "birch-18",
+  thickness: 18,
+  plies: 9,
+  width: 1250,
+  height: 2500,
+  kerf: 3.2,
+});
+const drawerStock = plywood.with({ id: "birch-12", thickness: 12, plies: 7 });
+```
 
 `MetalStockMaterial` creates solid bars or hollow tubes from an outside XY
 cross section, extruded to a cut length along local Z. `cornerRadius` is in mm;
@@ -481,8 +766,13 @@ const params = new CodeCadParameters({
 });
 ```
 
-The default value supplies the type; ranges can leave either end open with
-`[null, 100]` or `[100, null]`. TypeScript does not allow `@cad.parameter` on an
+The default value supplies the type, and an omitted label is read from the key
+(`lowerRailTop` becomes "Lower rail top"), so `cad.parameter(4)` is a complete
+declaration. Ranges can leave either end open with `[null, 100]` or
+`[100, null]`. In the project, `this.configureParameters(params, defaults)`
+returns the values (Studio's panel wins over `defaults`), typed as
+`ParametersOf<typeof params>`. `super()` needs no arguments in a decorated
+class: the id and label come from `@cad.project({ id, title })`. TypeScript does not allow `@cad.parameter` on an
 object-literal property, so `cad.parameter(defaultValue, options)` is the valid
 equivalent. `params.with({ width: 1400 })` returns a validated schema
 with a different default without mutating the original. Open the text-field icon
@@ -500,6 +790,9 @@ addressable instances in the assembly.
 DXF exports are in millimetres:
 
 - `BLANK_OUTLINE` is the stock blank, not a finished toolpath.
+- `PART_OUTLINE` is added when through cuts break the blank's edge (finger
+  joints, notches, corner reliefs). It is the finished contour sectioned from
+  the machined solid, so those cuts are not repeated as separate pockets.
 - `DRILL_TOP_D6.000`, `POCKET_BOTTOM_D6.000`, `CUT_THROUGH_D18.000`, etc.
   describe machining operations and depth/side in part coordinates.
 - Axial circular holes are DXF circles. Other contours are chained polylines
@@ -544,6 +837,21 @@ the [keyboard case](examples/keyboard-case.ts), and
 
 ### Drawings, motion and exports
 
+- A project with no `@cad.output` methods still builds the standard
+  deliverables: a drawing with automatically arranged front, top, right and
+  isometric views and overall dimensions, a cut list (with sheet layouts when
+  every sheet material has a stock size), per-part CNC DXFs for sheet parts, and
+  a STEP file. Declare any output to take full control.
+- Views need no coordinates: omit `at` and `scale` and the views of a sheet are
+  arranged in third angle (top above front, side views beside it, pictorial and
+  flat views in their own column) at the largest standard scale that fits.
+  `overallDimensions: true` dimensions a view's width and height, and
+  `new TechnicalDrawing({ title }).standardViews(subject)` is the whole drawing
+  for the common case. A view `id` defaults to its kind. Explicit `at`/`scale`
+  still place a view exactly; `box` centres it in a paper rectangle.
+- Views are named after the side the observer stands on: `right` looks from +X,
+  `left` from -X, `front` from -Y, and `isometric` from the +X/-Y/+Z corner,
+  the same as Studio's 3D presets (keys 1, 2, 3 and 0; F fits).
 - Technical drawings use kernel edge projection and optional hidden lines.
   Tangent seams are hidden by default (`tangentEdges: true` opts in).
   Views support true-length dimensions (also isometric), angles, leaders, notes,
@@ -573,6 +881,9 @@ the [keyboard case](examples/keyboard-case.ts), and
 
 ## Examples
 
+- [Modular outputs](examples/modular-project.ts): one assembly module plus a
+  drawing, a manufacturing and a motion module, each bound with
+  `@cad.outputsFor(() => Project)`, and two motion studies in their own files.
 - [Welded table base](examples/welded-table-base.ts): 40 × 40 × 3 mm steel tube
   legs and butt-fitted rails, with cut list and STEP output.
 - [MKSP toolbox](examples/mksp-toolbox.ts): port of the existing Python toolbox,
@@ -585,6 +896,7 @@ the [keyboard case](examples/keyboard-case.ts), and
   intentionally produces a clearance warning.
 - [Reusable hinge](examples/my-custom-hinge.ts): named interfaces and revolute motion.
 - [Joinery project](examples/joinery-techniques.ts): paired Domino, finger and miter samples.
+- [Broken edges](examples/edge-treatments.ts): named chamfers, fillets and corner-to-corner placement.
 - [Sheet-metal project](examples/sheet-metal-project.ts): cut flat blank and two bends.
 - [Keyboard case](examples/keyboard-case.ts): twelve slots, four R5 bends,
   a 20° deck, bottom returns, internal stud envelopes, and routed MDF cheeks
@@ -597,6 +909,7 @@ measured or supplier STEP geometry and mounting dimensions for your hardware.
 ## Source map
 
 - `src/model.ts`: component registry, construction scopes, coordinates, copies, shape recipes.
+- `src/edges.ts`: named face directions, edge and corner selection, analytic recipe bounds.
 - `src/decorators.ts`: class and output discovery.
 - `src/stock.ts`, `tools.ts`, `techniques.ts`: stock and machining operations.
 - `src/engine.ts`: OpenCascade evaluation, meshing, exact solids and folding.

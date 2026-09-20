@@ -17,6 +17,9 @@ body {
   min-height: 100vh;
 }
 header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   height: 48px;
   background: #1b292d;
   display: flex;

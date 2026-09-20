@@ -25,8 +25,9 @@ import {
 } from "./stock.js";
 import type { ManufacturingDxf, TechnicalDrawing } from "./outputs.js";
 import { renderDrawing } from "./drawing.js";
-import { exportDxf } from "./manufacturing.js";
+import { exportDxf, type ThinMaterial } from "./manufacturing.js";
 import { profileFace } from "./profile.js";
+import type { EdgeQuery } from "./edges.js";
 export interface ModelSnapshot {
   readonly root: Component;
   readonly revision: number;
@@ -103,11 +104,176 @@ export interface CadEngine {
   readonly capabilities: EngineCapabilities;
   evaluate(snapshot: ModelSnapshot): Promise<EvaluatedModel>;
   renderDrawing(drawing: TechnicalDrawing): Promise<Uint8Array>;
-  exportDxf(dxf: ManufacturingDxf): Promise<ReadonlyMap<string, Uint8Array>>;
+  exportDxf(
+    dxf: ManufacturingDxf,
+    onThinMaterial?: (part: SheetPart, finding: ThinMaterial) => void,
+  ): Promise<ReadonlyMap<string, Uint8Array>>;
   exportStep(subject: Component): Promise<Uint8Array>;
   validateSheetMetal(
     part: SheetMetalPart,
   ): Promise<readonly EngineDiagnostic[]>;
+}
+/** Edges selected by named face directions, plus the face the kernel will
+ * measure an asymmetric chamfer's first distance against. */
+interface SelectedEdge {
+  readonly edge: b.Edge;
+  /** Face index chosen for each named direction, in the order they were named. */
+  readonly faces: readonly (number | undefined)[];
+  /** Every face meeting at this edge. */
+  readonly adjacent: readonly number[];
+  /** First face containing the edge, which is the face OpenCascade pairs it with. */
+  readonly reference: number;
+}
+function outwardNormals(faces: readonly b.Face[]): (Vector3 | undefined)[] {
+  return faces.map((face) => {
+    try {
+      const n = b.normalAt(face);
+      const v = new Vector3(n[0]!, n[1]!, n[2]!);
+      return v.lengthSq() > 1e-12 ? v.normalize() : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+}
+function selectEdges(
+  solid: b.Shape3D,
+  query: EdgeQuery,
+  path: string,
+): { faces: readonly b.Face[]; selected: SelectedEdge[] } {
+  const faces = b.getFaces(solid),
+    normals = outwardNormals(faces);
+  const wanted = query.directions.map((d) =>
+    new Vector3(d.x, d.y, d.z).normalize(),
+  );
+  const limit = Math.cos((query.tolerance * Math.PI) / 180);
+  // Faces per edge, in the same order OpenCascade explores them.
+  const byEdge = new Map<number, number[]>();
+  faces.forEach((face, index) => {
+    for (const edge of b.edgesOfFace(face)) {
+      const hash = b.getHashCode(edge),
+        list = byEdge.get(hash);
+      if (!list) byEdge.set(hash, [index]);
+      else if (!list.includes(index)) list.push(index);
+    }
+  });
+  const selected: SelectedEdge[] = [];
+  for (const edge of b.getEdges(solid)) {
+    const adjacent = byEdge.get(b.getHashCode(edge));
+    if (!adjacent?.length) continue;
+    const chosen = wanted.map((direction) => {
+      let best: number | undefined,
+        score = limit;
+      for (const index of adjacent) {
+        const dot = normals[index]?.dot(direction) ?? -1;
+        if (dot >= score) {
+          score = dot;
+          best = index;
+        }
+      }
+      return best;
+    });
+    const distinct = new Set(chosen.filter((index) => index !== undefined));
+    if (distinct.size < Math.min(wanted.length, 2)) continue;
+    selected.push({ edge, faces: chosen, adjacent, reference: adjacent[0]! });
+  }
+  if (!selected.length)
+    throw new Error(
+      `No ${query.labels.join("/")} edge on ${path}; the named faces do not meet within ${query.tolerance}\u00b0`,
+    );
+  return { faces, selected };
+}
+/** How far a face reaches away from an edge, inside the face's own surface.
+ * A blend has to land within this, which is what makes plate thickness, not
+ * plan size, the limit on rounding a plate's edge. */
+function faceReach(face: b.Face, edge: b.Edge): number | undefined {
+  try {
+    const at = b.curvePointAt(edge, 0.5),
+      along = b.curveTangentAt(edge, 0.5),
+      up = b.normalAt(face);
+    const origin = new Vector3(at[0]!, at[1]!, at[2]!);
+    const across = new Vector3(up[0]!, up[1]!, up[2]!).cross(
+      new Vector3(along[0]!, along[1]!, along[2]!).normalize(),
+    );
+    if (across.lengthSq() < 1e-9) return undefined;
+    across.normalize();
+    const middle = b.faceCenter(face);
+    const inward =
+      Math.sign(
+        new Vector3(middle[0]!, middle[1]!, middle[2]!).sub(origin).dot(across),
+      ) || 1;
+    let reach = 0;
+    for (const vertex of b.getVertices(face)) {
+      const p = b.vertexPosition(vertex);
+      reach = Math.max(
+        reach,
+        new Vector3(p[0]!, p[1]!, p[2]!).sub(origin).dot(across) * inward,
+      );
+    }
+    return reach > 1e-9 ? reach : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** The tightest face any selected edge runs along, named where it was named. */
+function narrowestFace(
+  faces: readonly b.Face[],
+  selected: readonly SelectedEdge[],
+  query: EdgeQuery,
+): { reach: number; label: string } | undefined {
+  let tightest: { reach: number; label: string } | undefined;
+  for (const edge of selected)
+    for (const index of edge.adjacent) {
+      const reach = faceReach(faces[index]!, edge.edge);
+      if (reach === undefined || (tightest && reach >= tightest.reach))
+        continue;
+      const named = edge.faces.indexOf(index);
+      tightest = {
+        reach,
+        label:
+          named >= 0 ? `${query.labels[named]} face` : "face across the edge",
+      };
+    }
+  return tightest;
+}
+/** Unequal setbacks as the kernel takes them: a distance measured on the face
+ * it pairs the edge with, plus the angle that produces the other setback.
+ * (The `[d1, d2]` pair form of `chamfer` silently applies `d1` to both sides.) */
+function chamferSetback(
+  selected: readonly SelectedEdge[],
+  first: number,
+  second: number,
+  query: EdgeQuery,
+  path: string,
+): { distance: number; angle: number } {
+  const named = query.labels.join("/");
+  const variants = new Map<string, { distance: number; angle: number }>();
+  for (const { faces, reference } of selected) {
+    const onFirstFace = reference === faces[0];
+    if (!onFirstFace && reference !== faces[1])
+      throw new Error(
+        `Chamfer on the ${named} edge of ${path} cannot tell its two faces apart; use a single distance`,
+      );
+    const distance = onFirstFace ? first : second,
+      other = onFirstFace ? second : first;
+    const value = {
+      distance,
+      angle: (Math.atan2(other, distance) * 180) / Math.PI,
+    };
+    variants.set(`${value.distance}/${value.angle}`, value);
+  }
+  if (variants.size > 1)
+    throw new Error(
+      `The ${named} selection on ${path} matched edges the kernel measures from opposite faces; chamfer them in separate getEdge calls, or use one distance`,
+    );
+  return [...variants.values()][0]!;
+}
+/** A tapered round varies along one edge, so its selection must name one. */
+function single(edges: readonly b.Edge[], named: string, path: string): b.Edge {
+  if (edges.length !== 1)
+    throw new Error(
+      `A tapered fillet rounds one edge at a time; ${named} on ${path} matched ${edges.length}`,
+    );
+  return edges[0]!;
 }
 export class OpenCascadeEngine implements CadEngine {
   readonly capabilities: EngineCapabilities = {
@@ -126,6 +292,8 @@ export class OpenCascadeEngine implements CadEngine {
   private owned = new Set<b.AnyShape<b.Dimension>>();
   private cache = new WeakMap<Recipe, b.Shape3D>();
   root: Component | undefined;
+  /** Part being evaluated, so edge-selection failures name their component. */
+  private currentPath: string | undefined;
   own<T extends b.AnyShape<b.Dimension>>(shape: T): T {
     this.owned.add(shape);
     return shape;
@@ -220,6 +388,62 @@ export class OpenCascadeEngine implements CadEngine {
           b.intersect(await this.recipe(r.left), await this.recipe(r.right)),
         );
         break;
+      case "fillet":
+      case "chamfer": {
+        const source = await this.recipe(r.source);
+        // A cut or fused body is still one solid, but no longer typed as one.
+        const bodies = b.isSolid(source) ? [source] : b.getSolids(source);
+        const path = this.currentPath ?? "part";
+        if (bodies.length !== 1)
+          throw new Error(
+            `A ${r.kind} needs one solid body; ${path} evaluates to ${bodies.length}. Fuse the bodies before rounding their edges`,
+          );
+        const solid = b.unwrap(b.validSolid(bodies[0]!));
+        const { faces, selected } = selectEdges(solid, r.edges, path);
+        const edges = selected.map((s) => s.edge);
+        const named = r.edges.labels.join("/");
+        try {
+          if (r.kind === "fillet")
+            shape =
+              r.endRadius === undefined
+                ? b.unwrap(b.fillet(solid, edges, r.radius))
+                : b.unwrap(
+                    b.variableFillet(solid, single(edges, named, path), [
+                      { param: 0, radius: r.radius },
+                      { param: 1, radius: r.endRadius },
+                    ]),
+                  );
+          else
+            shape = b.unwrap(
+              b.chamfer(
+                solid,
+                edges,
+                r.secondDistance === undefined
+                  ? r.distance
+                  : chamferSetback(
+                      selected,
+                      r.distance,
+                      r.secondDistance,
+                      r.edges,
+                      path,
+                    ),
+              ),
+            );
+        } catch (error) {
+          const size = r.kind === "fillet" ? r.radius : r.distance;
+          const tight = narrowestFace(faces, selected, r.edges);
+          throw new Error(
+            `${r.kind === "fillet" ? `Fillet R${size}` : `Chamfer ${size}`} on the ${named} ${
+              edges.length === 1 ? "edge" : `edges (${edges.length} selected)`
+            } of ${path} was refused by the kernel. ${
+              tight && size >= tight.reach
+                ? `A blend has to land inside the faces it joins, and the ${tight.label} is only ${Number(tight.reach.toFixed(3))} mm across here, so stay below that. The part's overall size does not set this limit.`
+                : "A radius or setback larger than an adjacent face, or edges that already run into another blend, are the usual causes."
+            } Kernel: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        break;
+      }
     }
     this.own(shape);
     this.cache.set(r, shape);
@@ -321,6 +545,7 @@ export class OpenCascadeEngine implements CadEngine {
     );
     for (const part of parts) {
       try {
+        this.currentPath = part.path;
         let solid = await this.recipe(part.recipe);
         this.flatShapes.set(part, solid);
         if (part instanceof SheetMetalPart) {
@@ -337,6 +562,8 @@ export class OpenCascadeEngine implements CadEngine {
           componentPath: part.path,
           message: error instanceof Error ? error.message : String(error),
         });
+      } finally {
+        this.currentPath = undefined;
       }
     }
     return {
@@ -377,8 +604,11 @@ export class OpenCascadeEngine implements CadEngine {
   renderDrawing(drawing: TechnicalDrawing): Promise<Uint8Array> {
     return renderDrawing(this, drawing);
   }
-  exportDxf(dxf: ManufacturingDxf): Promise<ReadonlyMap<string, Uint8Array>> {
-    return exportDxf(this, dxf);
+  exportDxf(
+    dxf: ManufacturingDxf,
+    onThinMaterial?: (part: SheetPart, finding: ThinMaterial) => void,
+  ): Promise<ReadonlyMap<string, Uint8Array>> {
+    return exportDxf(this, dxf, onThinMaterial);
   }
   async validateSheetMetal(
     part: SheetMetalPart,

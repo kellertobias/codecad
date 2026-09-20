@@ -81,7 +81,9 @@ export function pageSvg(page: ReportPage): Uint8Array {
       const dashed = /HIDDEN|BEND_|TANGENT/.test(e.layer);
       const weight =
         e.style?.lineWidth ??
-        (/BORDER|VISIBLE|BLANK_OUTLINE/.test(e.layer) ? 0.35 : 0.18);
+        (/BORDER|VISIBLE|BLANK_OUTLINE|PART_OUTLINE/.test(e.layer)
+          ? 0.35
+          : 0.18);
       const fill =
         e.layer === "SCALE_DARK"
           ? "#20252a"

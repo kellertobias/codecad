@@ -1,3 +1,4 @@
+import { mountProjectTabs } from "./project-tabs.js";
 type Native = {
   core: {
     invoke<T>(command: string, args: Record<string, unknown>): Promise<T>;
@@ -33,30 +34,37 @@ export function setupDesktop(canLeave: () => boolean) {
   document.body.classList.add(
     navigator.platform.includes("Mac") ? "platform-macos" : "platform-windows",
   );
-  const home = document.createElement("button");
-  home.id = "desktop-home";
-  home.setAttribute("aria-label", "Close project and return home");
-  home.title = "Close project and return home";
-  home.innerHTML =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const toolbarStart = bar.querySelector<HTMLElement>(".toolbar-start")!;
   const sourceHeader = document.querySelector<HTMLElement>(".source-identity")!;
   const brand = sourceHeader.querySelector<HTMLElement>(".source-brand")!;
   const workspace = document.querySelector<HTMLElement>(".workspace")!;
-  toolbarStart.append(home);
+  const status = (message: string) => {
+    document.getElementById("source-status")!.textContent = message;
+  };
+  // Projects stay open side by side, so the window grows a tab bar of its own.
+  const projectBar = document.createElement("header");
+  projectBar.id = "project-bar";
+  const home = document.createElement("button");
+  home.id = "desktop-home";
+  home.setAttribute("aria-label", "Show the home screen");
+  home.title = "Show the home screen";
+  home.innerHTML =
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const tabStrip = document.createElement("div");
+  projectBar.append(home, tabStrip);
+  document.body.prepend(projectBar);
   home.onclick = async () => {
     if (!canLeave()) return;
     home.disabled = true;
     try {
-      await bridge.core.invoke("close_project", {});
+      await bridge.core.invoke("show_home", {});
     } catch (e) {
-      document.getElementById("source-status")!.textContent =
-        `Could not return home: ${String(e)}`;
+      status(`Could not return home: ${String(e)}`);
       home.disabled = false;
     }
   };
   const source = document.getElementById("toggle-source")!;
-  sourceHeader.append(source, home);
+  sourceHeader.append(source);
   source.setAttribute("aria-label", "Hide code");
   source.title = "Hide code";
   source.onclick = () => {
@@ -67,10 +75,10 @@ export function setupDesktop(canLeave: () => boolean) {
     source.title = hidden ? "Show code" : "Hide code";
     source.setAttribute("aria-pressed", String(hidden));
     if (hidden) {
-      toolbarStart.prepend(brand, home);
+      toolbarStart.prepend(brand);
       workspace.append(source);
     } else {
-      sourceHeader.append(brand, source, home);
+      sourceHeader.append(brand, source);
     }
   };
   const editors = document.createElement("select");
@@ -87,8 +95,7 @@ export function setupDesktop(canLeave: () => boolean) {
     try {
       await bridge.core.invoke("open_in_editor", { editor });
     } catch (e) {
-      document.getElementById("source-status")!.textContent =
-        `Could not open editor: ${String(e)}`;
+      status(`Could not open editor: ${String(e)}`);
     }
   };
   bar.insertBefore(editors, document.getElementById("rebuild"));
@@ -147,8 +154,7 @@ export function setupDesktop(canLeave: () => boolean) {
       });
       if (url) location.replace(url);
     } catch (e) {
-      const status = document.getElementById("source-status");
-      if (status) status.textContent = `Could not open project: ${String(e)}`;
+      status(`Could not open project: ${String(e)}`);
     } finally {
       home.disabled = false;
     }
@@ -204,7 +210,7 @@ export function setupDesktop(canLeave: () => boolean) {
     try {
       catalog = await bridge.core.invoke<ProjectCatalog>("project_catalog", {});
     } catch (e) {
-      document.getElementById("source-status")!.textContent = String(e);
+      status(String(e));
       return;
     }
     renderTab(catalog.recent.length ? "recent" : "examples");
@@ -234,8 +240,16 @@ export function setupDesktop(canLeave: () => boolean) {
     };
     controls.append(button);
   }
-  if (document.body.classList.contains("platform-macos")) bar.prepend(controls);
-  else bar.append(controls);
+  if (document.body.classList.contains("platform-macos"))
+    projectBar.prepend(controls);
+  else projectBar.append(controls);
+  mountProjectTabs({
+    invoke: (command, args) => bridge.core.invoke(command, args),
+    container: tabStrip,
+    canLeave,
+    newTab: () => void showPicker(),
+    onError: (message) => status(message),
+  });
   const dragWindow = (e: MouseEvent) => {
     if (
       e.button === 0 &&
@@ -249,6 +263,7 @@ export function setupDesktop(canLeave: () => boolean) {
   };
   bar.onmousedown = dragWindow;
   sourceHeader.onmousedown = dragWindow;
+  projectBar.onmousedown = dragWindow;
   window.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
       e.preventDefault();

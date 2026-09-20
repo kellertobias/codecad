@@ -1,6 +1,7 @@
 import {
   Component,
   PartInterface,
+  Project,
   construction,
   interfaceMethods,
 } from "./model.js";
@@ -20,6 +21,8 @@ export interface ProjectDecoratorOptions {
 export interface PartDecoratorOptions {
   readonly id: string;
   readonly revision: string;
+  /** Default label for instances that pass none to `super()`. */
+  readonly title?: string;
 }
 export interface TechniqueDecoratorOptions extends PartDecoratorOptions {}
 export interface OutputDecoratorOptions {
@@ -49,16 +52,54 @@ export interface OutputRegistration {
   options: OutputDecoratorOptions;
 }
 export const outputRegistry = new WeakMap<object, OutputRegistration[]>();
+/** A project class, or a function returning one. The lazy form lets an output
+ * module import the project it belongs to even when the project module imports
+ * that output module back: the class is only read when the build matches
+ * providers, by which time both modules have finished evaluating. */
+export type ProjectTypeReference = AnyConstructor | (() => AnyConstructor);
 export const outputProviders: {
-  projectType: AnyConstructor;
+  projectType: ProjectTypeReference;
   providerType: new (project: any) => object;
 }[] = [];
+/** The project class an output provider is bound to: the class itself, or what
+ * its lazy reference returns. */
+export function projectTypeOf(
+  reference: ProjectTypeReference,
+  provider?: AnyConstructor,
+): AnyConstructor {
+  const isProjectClass = (value: unknown): value is AnyConstructor =>
+    typeof value === "function" &&
+    (value === Project || value.prototype instanceof Project);
+  if (isProjectClass(reference)) return reference;
+  let resolved: unknown;
+  let cause: unknown;
+  try {
+    resolved = (reference as () => AnyConstructor)();
+  } catch (error) {
+    cause = error;
+  }
+  if (isProjectClass(resolved)) return resolved;
+  throw new Error(
+    `${provider?.name ?? "An output provider"} is not bound to a Project class; pass the class, or "() => TheProject" when the project module imports this one`,
+    cause === undefined ? undefined : { cause },
+  );
+}
 export const catalog = new Map<string, AnyConstructor>();
-function registered(options: { id: string }): RegisteredClassDecorator {
+function registered(options: {
+  id: string;
+  title?: string;
+}): RegisteredClassDecorator {
   return (value) => {
     const wrapped = new Proxy(value, {
       construct(target, args, newTarget) {
-        return construction(() => Reflect.construct(target, args, newTarget));
+        return construction(
+          () => Reflect.construct(target, args, newTarget),
+          false,
+          {
+            id: options.id,
+            ...(options.title ? { label: options.title } : {}),
+          },
+        );
       },
     });
     catalog.set(options.id, wrapped);
@@ -87,7 +128,7 @@ export const cad = {
   ) => RegisteredClassDecorator,
   /** Bind a separately constructed output class to the active project instance. */
   outputsFor:
-    (projectType: AnyConstructor): RegisteredClassDecorator =>
+    (projectType: ProjectTypeReference): RegisteredClassDecorator =>
     (value) => {
       outputProviders.push({
         projectType,

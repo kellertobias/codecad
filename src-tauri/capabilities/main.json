@@ -3,5 +3,5 @@
   "description": "App-controlled main window; native commands also verify the current session URL.",
   "windows": ["main"],
   "remote": { "urls": ["http://127.0.0.1:*"] },
-  "permissions": ["core:default", "allow-open-project", "allow-close-project", "allow-recent-projects", "allow-project-catalog", "allow-save-project-preview", "allow-available-editors", "allow-open-in-editor", "allow-window-action"]
+  "permissions": ["core:default", "allow-open-project", "allow-show-home", "allow-session-tabs", "allow-activate-session", "allow-close-session", "allow-recent-projects", "allow-project-catalog", "allow-save-project-preview", "allow-available-editors", "allow-open-in-editor", "allow-window-action"]
 }

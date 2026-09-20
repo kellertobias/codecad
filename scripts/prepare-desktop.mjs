@@ -73,6 +73,19 @@ for (const name of await readdir(join(root, "node_modules"))) {
     dereference: true,
   });
 }
+// The home screen shares the project tab strip with the studio UI.
+await build({
+  entryPoints: [join(root, "web/project-tabs.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2022",
+  outfile: join(root, "desktop/project-tabs.js"),
+});
+await cp(
+  join(root, "web/project-tabs.css"),
+  join(root, "desktop/project-tabs.css"),
+);
 const ui = join(out, "ui");
 await build({
   entryPoints: [join(root, "web/app.ts")],

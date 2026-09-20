@@ -1,6 +1,8 @@
+import { Matrix4, Vector3 } from "three";
 import {
   Part,
   PartInterface,
+  matrix,
   Shape2D,
   Shapes,
   SolidShape,
@@ -13,6 +15,7 @@ import {
   type Point3,
   type Axis,
 } from "./model.js";
+import { PartEdge } from "./edges.js";
 import {
   validateDrawingStyle,
   type MaterialDrawingStyle,
@@ -31,6 +34,19 @@ export class Material {
   readonly [sharedDefinition] = true;
   readonly id: string;
   readonly name: string;
+  /** The same stock with some options changed, e.g. another thickness. Give
+   * the variant its own `id` when both appear in one cut list. */
+  with(overrides: Partial<this["options"]>): this {
+    return new (this.constructor as new (options: object) => this)({
+      ...this.inherited(),
+      ...overrides,
+    });
+  }
+  /** Options a variant inherits: everything except its identity. */
+  protected inherited(): object {
+    const { id: _id, name: _name, ...shared } = this.options;
+    return shared;
+  }
   constructor(readonly options: MaterialOptions) {
     if (options.drawingStyle) validateDrawingStyle(options.drawingStyle);
     for (const [name, value] of [
@@ -51,6 +67,9 @@ export interface SheetMaterialOptions extends MaterialOptions {
   readonly height?: number;
   readonly thickness: number;
   readonly grain?: "width" | "height" | "none";
+  /** Plywood shorthand: this many equal veneers with alternating direction,
+   * the outer ones running along `grain` (default height). */
+  readonly plies?: number;
   /** Ordered veneers from the local bottom (Z=0) to the top face. */
   readonly layers?: readonly {
     readonly thickness: number;
@@ -62,6 +81,11 @@ export interface SheetMaterialOptions extends MaterialOptions {
   readonly partSpacing?: number;
   readonly sheetMargin?: number;
 }
+export type PanelCorner =
+  "north-west" | "north-east" | "south-east" | "south-west";
+/** One radius for every corner, or a radius per named corner. North is the
+ * blank's +Y end and east its +X end, matching the panel edge names. */
+export type PanelCornerRadii = number | Partial<Record<PanelCorner, number>>;
 export interface MakeSheetPartOptions {
   readonly id?: string;
   readonly label?: string;
@@ -69,6 +93,121 @@ export interface MakeSheetPartOptions {
   readonly height: number;
   readonly quantity?: number;
   readonly grain?: "width" | "height" | "none";
+  /** Rounds the blank itself, so the cut contour, nesting and cut list all
+   * carry the radius. Breaking an assembled edge is `getEdge().fillet()`. */
+  readonly cornerRadius?: PanelCornerRadii;
+}
+const panelCorners = [
+  "south-west",
+  "south-east",
+  "north-east",
+  "north-west",
+] as const;
+export function panelCornerRadii(
+  value: PanelCornerRadii | undefined,
+  width: number,
+  height: number,
+): Record<PanelCorner, number> {
+  const radii = Object.fromEntries(
+    panelCorners.map((corner) => [corner, 0]),
+  ) as Record<PanelCorner, number>;
+  if (value !== undefined) {
+    if (typeof value === "number")
+      for (const corner of panelCorners) radii[corner] = value;
+    else
+      for (const [corner, radius] of Object.entries(value)) {
+        if (!panelCorners.includes(corner as PanelCorner))
+          throw new Error(
+            `Unknown panel corner ${corner}; name one of ${panelCorners.join(", ")}`,
+          );
+        radii[corner as PanelCorner] = radius;
+      }
+    for (const corner of panelCorners)
+      if (!Number.isFinite(radii[corner]) || radii[corner] < 0)
+        throw new Error("Panel corner radius must be finite and nonnegative");
+    // Two radii on one edge cannot together outrun it.
+    for (const [first, second, span, edge] of [
+      ["south-west", "south-east", width, "south"],
+      ["north-west", "north-east", width, "north"],
+      ["south-west", "north-west", height, "west"],
+      ["south-east", "north-east", height, "east"],
+    ] as const)
+      if (radii[first] + radii[second] > span + 1e-9)
+        throw new Error(
+          `Corner radii on the panel's ${edge} edge exceed its ${span} mm length`,
+        );
+  }
+  return radii;
+}
+/** The blank outline, counter-clockwise, with quarter arcs at rounded corners.
+ * `fitArcs` turns the sampled points back into real arcs for DXF and drawings. */
+function roundedPanelOutline(
+  width: number,
+  height: number,
+  radii: Record<PanelCorner, number>,
+): Shape2D {
+  positive(width, "width");
+  positive(height, "height");
+  if (panelCorners.every((corner) => radii[corner] === 0))
+    return new Shapes.Rectangle({ width, height });
+  const points: Point2[] = [];
+  const push = (point: Point2) => {
+    const previous = points.at(-1);
+    if (
+      !previous ||
+      Math.hypot(previous.x - point.x, previous.y - point.y) > 1e-8
+    )
+      points.push(point);
+  };
+  for (const [corner, cx, cy, start, sharp] of [
+    [
+      "south-east",
+      width - radii["south-east"],
+      radii["south-east"],
+      -Math.PI / 2,
+      { x: width, y: 0 },
+    ],
+    [
+      "north-east",
+      width - radii["north-east"],
+      height - radii["north-east"],
+      0,
+      { x: width, y: height },
+    ],
+    [
+      "north-west",
+      radii["north-west"],
+      height - radii["north-west"],
+      Math.PI / 2,
+      { x: 0, y: height },
+    ],
+    [
+      "south-west",
+      radii["south-west"],
+      radii["south-west"],
+      Math.PI,
+      { x: 0, y: 0 },
+    ],
+  ] as const) {
+    const r = radii[corner];
+    if (r === 0) {
+      push(sharp);
+      continue;
+    }
+    for (let step = 0; step <= 16; step++) {
+      const angle = start + (step * Math.PI) / 32;
+      push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+    }
+  }
+  if (
+    points.length > 1 &&
+    Math.hypot(
+      points[0]!.x - points.at(-1)!.x,
+      points[0]!.y - points.at(-1)!.y,
+    ) < 1e-8
+  )
+    points.pop();
+  return new Shapes.Polygon({ points }).fitArcs();
 }
 export interface MakeProfiledPartOptions {
   readonly id?: string;
@@ -76,9 +215,37 @@ export interface MakeProfiledPartOptions {
   readonly outline: Shape2D;
   readonly quantity?: number;
 }
+/** Where a blank's own origin sits when it is oriented: the compass points of
+ * the blank, with `middle` for either axis centred. */
+export type PanelAnchor =
+  | "north-west"
+  | "north"
+  | "north-east"
+  | "west"
+  | "middle"
+  | "east"
+  | "south-west"
+  | "south"
+  | "south-east";
+const panelAnchors: Record<
+  PanelAnchor,
+  { x: "low" | "middle" | "high"; y: "low" | "middle" | "high" }
+> = {
+  "north-west": { x: "low", y: "high" },
+  north: { x: "middle", y: "high" },
+  "north-east": { x: "high", y: "high" },
+  west: { x: "low", y: "middle" },
+  middle: { x: "middle", y: "middle" },
+  east: { x: "high", y: "middle" },
+  "south-west": { x: "low", y: "low" },
+  south: { x: "middle", y: "low" },
+  "south-east": { x: "high", y: "low" },
+};
 export type PanelPlane = "XY" | "XZ" | "YZ";
 export type PanelEdge = "north" | "south" | "east" | "west";
 export type PanelFace = "front" | "back";
+/** Which side of the blank, through its thickness, an orientation seats. */
+export type PanelFaceAnchor = PanelFace | "middle";
 export interface PanelEdgeSelection {
   readonly edge: PanelEdge;
   readonly face: PanelFace;
@@ -100,23 +267,109 @@ export class SheetPart extends Part {
   readonly manufacturingOutline: Shape2D;
   readonly quantity: number;
   readonly grain: "width" | "height" | "none";
+  /** Blank corner radii, zero where the corner is square. */
+  readonly cornerRadii: Readonly<Record<PanelCorner, number>>;
   constructor(
     readonly material: SheetMaterial,
     o: MakeSheetPartOptions | MakeProfiledPartOptions,
   ) {
-    const outline = "outline" in o ? o.outline.copy() : new Shapes.Rectangle(o);
+    const radii =
+      "outline" in o
+        ? panelCornerRadii(undefined, 1, 1)
+        : panelCornerRadii(o.cornerRadius, o.width, o.height);
+    const outline =
+      "outline" in o
+        ? o.outline.copy()
+        : roundedPanelOutline(o.width, o.height, radii);
     super({ ...o, shape: outline.extrude(material.thickness) });
+    this.cornerRadii = radii;
     this.manufacturingOutline = outline;
     this.quantity = o.quantity ?? 1;
     if (!Number.isInteger(this.quantity) || this.quantity < 1)
       throw new Error("quantity must be a positive integer");
     this.grain = "grain" in o ? (o.grain ?? "none") : "none";
   }
-  /** Orient the sheet's local width/height plane at a parent-space point. */
-  orient(plane: PanelPlane, at: Point3): this {
+  /** A blank is named as it would stand in front of you: its width runs to
+   * the right, its height upward, and its thickness toward the viewer. So
+   * `top`/`bottom`/`left`/`right` are the four outline edges and
+   * `front`/`back` the two faces, whichever way the panel is later placed. */
+  override materialBasis(): Matrix4 {
+    return matrix({ rotate: { x: -90 } });
+  }
+  /** A standing blank's compass: north is its top, east its right. */
+  override directionAliases() {
+    return {
+      north: "top",
+      south: "bottom",
+      east: "right",
+      west: "left",
+    } as const;
+  }
+  /** The named point on the blank, in the blank's own coordinates. */
+  private anchorPoint(origin: PanelAnchor, face: PanelFaceAnchor): Point3 {
+    const anchor = panelAnchors[origin];
+    if (!anchor)
+      throw new Error(
+        `Unknown panel origin ${origin}; name one of ${Object.keys(panelAnchors).join(", ")}`,
+      );
+    const points = this.manufacturingOutline.points;
+    const xs = points.map((point) => point.x),
+      ys = points.map((point) => point.y);
+    const span = (
+      values: number[],
+      side: "low" | "middle" | "high",
+    ): number => {
+      const low = Math.min(...values),
+        high = Math.max(...values);
+      return side === "low" ? low : side === "high" ? high : (low + high) / 2;
+    };
+    const thickness = this.material.thickness;
+    const z =
+      face === "back"
+        ? 0
+        : face === "front"
+          ? thickness
+          : face === "middle"
+            ? thickness / 2
+            : undefined;
+    if (z === undefined)
+      throw new Error(`Unknown panel face ${face}; name front, middle or back`);
+    return { x: span(xs, anchor.x), y: span(ys, anchor.y), z };
+  }
+  /** Orient the sheet's local width/height plane at a parent-space point.
+   * `origin` names which point of the blank lands there, defaulting to its
+   * south-west corner; north is the blank's +Y end and east its +X end.
+   * `face` picks the side through the thickness, defaulting to the back, so
+   * `front` seats the panel's face on the point and `middle` its mid-plane. */
+  orient(
+    plane: PanelPlane,
+    at: Point3 | PartEdge,
+    options: { origin?: PanelAnchor; face?: PanelFaceAnchor } = {},
+  ): this {
     const rotate =
       plane === "XY" ? {} : plane === "XZ" ? { x: 90 } : { y: 90, z: 90 };
-    return this.place({ ...at, rotate });
+    const anchor = this.anchorPoint(
+      options.origin ?? "south-west",
+      options.face ?? "back",
+    );
+    // The anchor is a blank point, so turn it with the panel before offsetting.
+    const turned = new Vector3(anchor.x, anchor.y, anchor.z).applyMatrix4(
+      matrix({ rotate }),
+    );
+    // A selection on another part is a world point; `place` works in this
+    // component's own base frame, so bring it across.
+    const target =
+      at instanceof PartEdge
+        ? new Vector3(at.point().x, at.point().y, at.point().z).applyMatrix4(
+            this.baseMatrix().invert(),
+          )
+        : new Vector3(finite(at.x, "x"), finite(at.y, "y"), finite(at.z, "z"));
+    return this.place({
+      x: target.x - turned.x,
+      y: target.y - turned.y,
+      z: target.z - turned.z,
+      rotate,
+    });
   }
   /** A named edge on the front (positive local Z) or back (zero local Z). */
   edge(selection: PanelEdgeSelection): PartInterface {
@@ -256,6 +509,22 @@ export class SheetMaterial extends Material {
   readonly thickness: number;
   declare readonly options: SheetMaterialOptions;
   constructor(options: SheetMaterialOptions) {
+    if (options.plies !== undefined) {
+      if (options.layers)
+        throw new Error("Give either plies or explicit layers, not both");
+      if (!Number.isInteger(options.plies) || options.plies < 2)
+        throw new Error("plies must be an integer of at least 2");
+      const face = options.grain === "width" ? "width" : "height",
+        cross = face === "width" ? "height" : "width",
+        { plies, ...rest } = options;
+      options = {
+        ...rest,
+        layers: Array.from({ length: plies }, (_, index) => ({
+          thickness: options.thickness / plies,
+          direction: index % 2 === 0 ? face : cross,
+        })),
+      };
+    }
     super(options);
     this.width = options.width;
     this.height = options.height;
@@ -282,6 +551,16 @@ export class SheetMaterial extends Material {
     for (const v of [options.kerf, options.partSpacing, options.sheetMargin])
       if (v !== undefined && (!Number.isFinite(v) || v < 0))
         throw new Error("Stock margins and spacing must be nonnegative");
+  }
+  override with(overrides: Partial<this["options"]>): this {
+    // A new ply count replaces the veneers generated for this thickness.
+    if (overrides.plies === undefined) return super.with(overrides);
+    const { layers: _layers, ...rest } =
+      this.inherited() as SheetMaterialOptions;
+    return new (this.constructor as new (options: object) => this)({
+      ...rest,
+      ...overrides,
+    });
   }
   makePart(o: MakeSheetPartOptions | MakeProfiledPartOptions): SheetPart {
     return new SheetPart(this, o);

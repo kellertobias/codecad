@@ -1,4 +1,4 @@
-import { mkdir, writeFile, realpath } from "node:fs/promises";
+import { mkdir, writeFile, realpath, readFile } from "node:fs/promises";
 import { resolve, join, basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { zipSync } from "fflate";
@@ -6,7 +6,12 @@ import { sourceLinks } from "./source-links.js";
 import { inspectComponent } from "./inspection.js";
 import { Project, Part, descendants } from "./model.js";
 import { SheetMetalPart } from "./stock.js";
-import { outputProviders, outputRegistry } from "./decorators.js";
+import {
+  outputProviders,
+  projectTypeOf,
+  outputRegistry,
+  type OutputDecoratorOptions,
+} from "./decorators.js";
 import {
   OpenCascadeEngine,
   type EngineDiagnostic,
@@ -19,8 +24,21 @@ import {
   TechnicalDrawing,
 } from "./outputs.js";
 import { MotionStudy } from "./motion.js";
-import { cutRows, csv, nest, layoutDxf, sheetParts } from "./manufacturing.js";
-import { renderDrawingFormats, renderDrawingPreviews } from "./drawing.js";
+import {
+  cutRows,
+  csv,
+  drawManufacturing,
+  nest,
+  layoutDxf,
+  sheetParts,
+} from "./manufacturing.js";
+import {
+  renderDrawingFormats,
+  renderDrawingPreviews,
+  type ViewObserver,
+} from "./drawing.js";
+import { validateDrawingPlan } from "./drawing-plan.js";
+import { planDrawing, planViewKey } from "./drawing-plan-render.js";
 import {
   cutListPages,
   sheetLayoutPages,
@@ -44,6 +62,36 @@ const serializeMesh = (mesh: MeshData) => ({
   edges: Array.from(mesh.edges),
 });
 
+/** Drawing, cut list, CNC DXF and STEP for projects without `@cad.output` methods. */
+function standardOutputs(project: Project) {
+  const sheets = sheetParts(project),
+    hasParts = descendants(project).some((c) => c instanceof Part);
+  const owner: Record<string, () => unknown> = {};
+  if (hasParts) {
+    owner.drawing = () =>
+      new TechnicalDrawing({ title: project.label }).standardViews(project);
+    owner[project.id.replace(/[^a-zA-Z0-9_.-]+/g, "_") + ".step"] = () =>
+      new StepModel({ of: project });
+  }
+  if (cutRows(project).length)
+    owner["cut-list"] = () =>
+      new CutList({
+        includeLayouts: sheets.every(
+          (p) =>
+            p.material.width !== undefined && p.material.height !== undefined,
+        ),
+      });
+  if (sheets.length)
+    owner["cnc-parts.zip"] = () =>
+      new ManufacturingDxf({ parts: "all", layout: "one-file-per-part" });
+  return Object.keys(owner).map((name) => ({
+    kind: "standard",
+    name,
+    options: { fileName: name } as OutputDecoratorOptions,
+    owner,
+  }));
+}
+
 export async function buildProject(
   entry: string,
   directory: string,
@@ -66,9 +114,18 @@ export async function buildProject(
       [],
     diagnostics: EngineDiagnostic[] = [];
   const reports: ReportDownload[] = [];
-  const pending = (name: string, kind: string) => {
+  // Outputs may be declared across several modules, so two of them writing the
+  // same file is a mistake worth naming rather than a silent overwrite.
+  const claim = (name: string) => {
     if (basename(name) !== name || name.startsWith("."))
       throw new Error("Output filename must be a plain filename");
+    if (files.some((file) => file.name === name))
+      throw new Error(
+        `Another output already writes ${name}; give one of them its own fileName`,
+      );
+  };
+  const pending = (name: string, kind: string) => {
+    claim(name);
     files.push({ name, kind, size: 0, ready: false });
   };
   const save = async (
@@ -76,8 +133,7 @@ export async function buildProject(
     kind: string,
     data: Uint8Array | string,
   ) => {
-    if (basename(name) !== name || name.startsWith("."))
-      throw new Error("Output filename must be a plain filename");
+    claim(name);
     await writeFile(join(directory, name), data);
     files.push({
       name,
@@ -105,59 +161,67 @@ export async function buildProject(
         frames: MotionFrame[];
       }[] = [],
       clearances: ReturnType<typeof clearanceResults> = [];
+    const emitDrawing = async (
+      value: TechnicalDrawing,
+      name: string,
+      onView?: ViewObserver,
+    ) => {
+      const stem = name.replace(/\.(svg|pdf|dxf)$/i, "");
+      if (
+        options.exportOnly &&
+        !options.exportOnly.startsWith(stem + ".") &&
+        !options.exportOnly.startsWith(stem + "-page-")
+      )
+        return;
+      const rendered = options.lazyExports
+        ? {
+            pages: await renderDrawingPreviews(engine, value, onView),
+            dxf: undefined,
+          }
+        : await renderDrawingFormats(engine, value, onView);
+      const { pages } = rendered;
+      await save(stem + ".svg", "drawing", pages[0]!);
+      const previews = [stem + ".svg"];
+      for (let i = 1; i < pages.length; i++) {
+        const name = `${stem}-page-${i + 1}.svg`;
+        await save(name, "drawing", pages[i]!);
+        previews.push(name);
+      }
+      if (options.lazyExports) {
+        pending(stem + ".pdf", "pdf");
+        pending(stem + ".dxf", "drawing-dxf");
+      } else {
+        await save(stem + ".pdf", "pdf", await pdfPages(pages));
+        await save(stem + ".dxf", "drawing-dxf", rendered.dxf!);
+      }
+      reports.push({
+        title: value.options.title || stem,
+        kind: "drawing",
+        preview: stem + ".svg",
+        previews,
+        formats: { pdf: stem + ".pdf", dxf: stem + ".dxf" },
+      });
+    };
     const outputOwners = [
       project,
       ...outputProviders
-        .filter(({ projectType }) => project instanceof projectType)
+        .filter(
+          ({ projectType, providerType }) =>
+            project instanceof projectTypeOf(projectType, providerType),
+        )
         .map(({ providerType }) => new providerType(project)),
     ];
-    const outputs = outputOwners.flatMap((owner) =>
+    const declared = outputOwners.flatMap((owner) =>
       (outputRegistry.get(owner) ?? []).map((output) => ({ ...output, owner })),
     );
+    // A project that declares no outputs still gets the usual deliverables.
+    const outputs = declared.length ? declared : standardOutputs(project);
     for (const output of outputs) {
       try {
         const value = (output.owner as any)[output.name](),
           requested = output.options.fileName;
         if (value instanceof TechnicalDrawing) {
-          const stem = (requested ?? output.name).replace(
-            /\.(svg|pdf|dxf)$/i,
-            "",
-          );
-          if (
-            options.exportOnly &&
-            !options.exportOnly.startsWith(stem + ".") &&
-            !options.exportOnly.startsWith(stem + "-page-")
-          )
-            continue;
-          const rendered = options.lazyExports
-            ? {
-                pages: await renderDrawingPreviews(engine, value),
-                dxf: undefined,
-              }
-            : await renderDrawingFormats(engine, value);
-          const { pages } = rendered,
-            svg = pages[0]!;
-          await save(stem + ".svg", "drawing", svg);
-          const previews = [stem + ".svg"];
-          for (let i = 1; i < pages.length; i++) {
-            const name = `${stem}-page-${i + 1}.svg`;
-            await save(name, "drawing", pages[i]!);
-            previews.push(name);
-          }
-          if (options.lazyExports) {
-            pending(stem + ".pdf", "pdf");
-            pending(stem + ".dxf", "drawing-dxf");
-          } else {
-            await save(stem + ".pdf", "pdf", await pdfPages(pages));
-            await save(stem + ".dxf", "drawing-dxf", rendered.dxf!);
-          }
-          reports.push({
-            title: stem,
-            kind: "drawing",
-            preview: stem + ".svg",
-            previews,
-            formats: { pdf: stem + ".pdf", dxf: stem + ".dxf" },
-          });
+          await emitDrawing(value, requested ?? output.name);
         } else if (value instanceof CutList) {
           const stem = (requested ?? output.name).replace(
             /\.(svg|pdf|dxf|csv)$/i,
@@ -240,12 +304,23 @@ export async function buildProject(
           }
         } else if (value instanceof ManufacturingDxf) {
           const name = requested ?? "manufacturing.zip";
+          // The Drawings plane is part of the model, not an export, so it is
+          // drawn even when the files themselves are left for later.
+          if (value.options.showInDrawings)
+            await drawManufacturing(engine, value, project.view2D);
           if (options.exportOnly && options.exportOnly !== name) continue;
           if (options.lazyExports) {
             pending(name, "dxf");
             continue;
           }
-          const exports = await engine.exportDxf(value);
+          const exports = await engine.exportDxf(value, (part, finding) =>
+            diagnostics.push({
+              severity: "warning",
+              code: "THIN_MATERIAL",
+              componentPath: part.path,
+              message: `${finding.mm.toFixed(2)} mm of material between ${finding.between.join(" and ")} at ${finding.at.x.toFixed(1)}, ${finding.at.y.toFixed(1)} on the blank; ${value.options.minimumMaterial} mm wanted (sampled)`,
+            }),
+          );
           await save(name, "dxf", zipSync(Object.fromEntries(exports)));
           for (const [name, data] of exports)
             await save(name, "dxf-part", data);
@@ -264,7 +339,9 @@ export async function buildProject(
               await engine.exportStep(value.options.of as Project),
             );
         } else if (value instanceof MotionStudy) {
-          const name = requested ?? "motion.glb";
+          // One study per file, named after the method, so a project can hold
+          // several of them in separate modules.
+          const name = requested ?? `${output.name}.glb`;
           if (options.exportOnly && options.exportOnly !== name) continue;
           const parts = descendants(project).filter(
             (p): p is Part => p instanceof Part,
@@ -299,11 +376,64 @@ export async function buildProject(
         } else throw new Error("Output method returned the wrong output type");
       } catch (error) {
         diagnostics.push({
-          severity: "error",
+          severity: declared.length ? "error" : "warning",
           code: "OUTPUT",
           message: `${output.name}: ${error instanceof Error ? error.message : String(error)}`,
         });
       }
+    }
+    // Studio's plan editor saves its sheet beside the project source.
+    const planViews: Record<
+      string,
+      { key: string; visible: number[]; hidden: number[] }
+    > = {};
+    try {
+      const plan = validateDrawingPlan(
+        JSON.parse(
+          await readFile(
+            entry.replace(/\.[^.]+$/, "") + ".drawings.json",
+            "utf8",
+          ),
+        ),
+      );
+      if (plan.items.some((item) => item.kind === "view")) {
+        const { drawing, warnings } = planDrawing(plan, project);
+        for (const message of warnings)
+          diagnostics.push({
+            severity: "warning",
+            code: "DRAWING_PLAN",
+            message,
+          });
+        const flatten = (lines: number[]) => {
+          const result: number[] = [];
+          for (let i = 0; i < lines.length; i += 6)
+            for (const j of [0, 1, 3, 4])
+              result.push(Math.round(lines[i + j]! * 1000) / 1000);
+          return result;
+        };
+        const views = new Map(
+          plan.items.flatMap((item) =>
+            item.kind === "view" ? [[item.id, item] as const] : [],
+          ),
+        );
+        if (drawing.views.length)
+          await emitDrawing(drawing, "drawing-plan", ({ view, linework }) => {
+            const item = views.get(view.id);
+            if (item && linework)
+              planViews[view.id] = {
+                key: planViewKey(item),
+                visible: flatten(linework.visible),
+                hidden: flatten(linework.hidden),
+              };
+          });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        diagnostics.push({
+          severity: "warning",
+          code: "DRAWING_PLAN",
+          message: `Drawing plan: ${error instanceof Error ? error.message : String(error)}`,
+        });
     }
     if (options.lazyExports) pending("preview.glb", "model");
     else if (!options.exportOnly || options.exportOnly === "preview.glb")
@@ -348,6 +478,7 @@ export async function buildProject(
       unfolds,
       cutList: cutRows(project),
       view2D: project.view2D.primitives,
+      planViews,
       components: [project, ...project.registry.all].map((c) => ({
         path: c.path,
         id: c.id,

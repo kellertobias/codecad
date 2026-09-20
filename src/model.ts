@@ -1,17 +1,36 @@
 import { Matrix4, Euler, Vector3 as V3 } from "three";
 import type { Material } from "./stock.js";
 import {
+  InputParameters,
+  defineParameters,
   resolveParameters,
   type ParameterSchema,
   type ParameterState,
   type ParameterValues,
 } from "./parameters.js";
 import { View2D } from "./view2d.js";
+import {
+  PartCorner,
+  PartEdge,
+  edgeQuery,
+  selectionBasis,
+  type DirectionName,
+  type FaceDirection,
+  type EdgeQuery,
+  type EdgeTreatment,
+  type SelectionOptions,
+} from "./edges.js";
 
 export type Length = number;
 export type Angle = number;
 export type Axis = "x" | "y" | "z";
 export type SignedAxis = Axis | `-${Axis}`;
+/** Unit world directions, for rotation axes named without a vector literal. */
+export const WorldAxes = {
+  X: { x: 1, y: 0, z: 0 },
+  Y: { x: 0, y: 1, z: 0 },
+  Z: { x: 0, y: 0, z: 1 },
+} as const;
 export const sharedDefinition = Symbol("CodeCAD shared definition");
 export interface Point2 {
   readonly x: number;
@@ -80,7 +99,21 @@ export type Recipe =
   | { kind: "step"; path: string }
   | { kind: "transform"; source: Recipe; matrix: number[] }
   | { kind: "cut" | "union" | "intersect"; left: Recipe; right: Recipe }
-  | { kind: "offset"; source: Recipe; distance: number };
+  | { kind: "offset"; source: Recipe; distance: number }
+  | {
+      kind: "fillet";
+      source: Recipe;
+      edges: EdgeQuery;
+      radius: number;
+      endRadius?: number;
+    }
+  | {
+      kind: "chamfer";
+      source: Recipe;
+      edges: EdgeQuery;
+      distance: number;
+      secondDistance?: number;
+    };
 export function positive(value: number, name: string): number {
   if (!Number.isFinite(value) || value <= 0)
     throw new Error(`${name} must be positive`);
@@ -214,6 +247,27 @@ export class PartInterface<F extends MountingFeatures = MountingFeatures> {
     i.owner = this.owner;
     return i;
   }
+  /** The same features, with the interface frame carried into `component`'s own
+   * coordinates. Use it to hand a fitting's holes on to the assembly around it,
+   * or to a part that has to be machined for them. */
+  relativeTo(component: Component): PartInterface<F> {
+    const m = component.worldMatrix().invert().multiply(this.worldMatrix());
+    const origin = new V3().applyMatrix4(m);
+    const axis = (x: number, y: number, z: number) =>
+      new V3(x, y, z).transformDirection(m);
+    const xAxis = axis(1, 0, 0),
+      yAxis = axis(0, 1, 0);
+    const i = new PartInterface({
+      ...this.options,
+      frame: {
+        origin: { x: origin.x, y: origin.y, z: origin.z },
+        xAxis: { x: xAxis.x, y: xAxis.y, z: xAxis.z },
+        yAxis: { x: yAxis.x, y: yAxis.y, z: yAxis.z },
+      },
+    });
+    i.owner = component;
+    return i;
+  }
   recipe(): Recipe {
     const r =
       this.options.shape?.recipe ??
@@ -253,6 +307,12 @@ export abstract class Shape {
 }
 export abstract class Shape2D extends Shape {
   private arcTolerance?: number;
+  /** The tolerance `fitArcs` was asked for, when it was. Consumers that can
+   * carry exact arcs — the DXF writer — reconstruct them instead of the
+   * sampled points. */
+  get fittedArcTolerance(): number | undefined {
+    return this.arcTolerance;
+  }
   /** Opt in to circular-arc reconstruction for sampled curved profiles. */
   fitArcs(tolerance = 0.01): this {
     this.arcTolerance = positive(tolerance, "arc fit tolerance");
@@ -397,11 +457,17 @@ export interface ComponentOptions {
 interface ConstructionScope {
   owner?: Component;
   detached?: boolean;
+  /** Decorator metadata used when the class passes no id or label to super(). */
+  defaults?: ComponentOptions | undefined;
 }
 const scopes: ConstructionScope[] = [];
 export const interfaceMethods = new WeakMap<object, Map<string, string>>();
-export function construction<T>(fn: () => T, detached = false): T {
-  scopes.push({ detached });
+export function construction<T>(
+  fn: () => T,
+  detached = false,
+  defaults?: ComponentOptions,
+): T {
+  scopes.push({ detached, defaults });
   try {
     return fn();
   } finally {
@@ -424,21 +490,39 @@ export abstract class Component {
     const parent = scope?.detached ? undefined : parentScope?.owner;
     this.parent = parent instanceof Assembly ? parent : undefined;
     const siblings = this.parent?.children ?? [];
-    this.id = o.id ?? `part-${siblings.length + 1 || ++outsideId}`;
-    this.label = o.label ?? this.id;
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(this.id))
+    // The first component of a decorated class is the instance itself.
+    const defaults = scope && !scope.owner ? scope.defaults : undefined;
+    let id = o.id ?? defaults?.id;
+    if (o.id === undefined && id !== undefined)
+      for (let n = 2; siblings.some((c) => c.id === id); n++)
+        id = `${defaults!.id}-${n}`;
+    this.id = id ?? `part-${siblings.length + 1 || ++outsideId}`;
+    this.label = o.label ?? defaults?.label ?? this.id;
+    // Ids only have to tell siblings apart. They are joined with "/" into
+    // paths and sanitized before they reach file names, so anything that is not
+    // a path separator, a traversal segment or padded with whitespace is fine.
+    if (
+      !this.id.trim() ||
+      this.id !== this.id.trim() ||
+      /[/\\]|[\x00-\x1f]/.test(this.id) ||
+      this.id === "." ||
+      this.id === ".."
+    )
       throw new Error(
-        "Component ids must be nonempty path segments using letters, numbers, dots, underscores or hyphens",
+        `Invalid component id ${JSON.stringify(this.id)}: ids must be nonempty, must not be "." or "..", and must not contain slashes or leading or trailing whitespace`,
       );
     if (siblings.some((c) => c.id === this.id))
-      throw new Error(`Duplicate component id: ${this.id}`);
+      throw new Error(
+        `Duplicate component id ${this.id}${this.parent ? ` in ${this.parent.path}` : ""}`,
+      );
     if (this.parent) this.parent.children.push(this);
     if (scope && !scope.owner) scope.owner = this;
   }
   get path(): string {
     return this.parent ? `${this.parent.path}/${this.id}` : this.id;
   }
-  worldMatrix(visiting = new Set<Component>()): Matrix4 {
+  /** The frame `placement` is expressed in: the reference, parent or world. */
+  protected baseMatrix(visiting = new Set<Component>()): Matrix4 {
     if (visiting.has(this))
       throw new Error(`Circular placement reference: ${this.path}`);
     visiting.add(this);
@@ -455,18 +539,82 @@ export abstract class Component {
           ? new Matrix4()
           : (this.parent?.worldMatrix(visiting) ?? new Matrix4());
     visiting.delete(this);
-    return base.multiply(matrix(this.placement)).multiply(this.extraMatrix);
+    return base;
   }
-  place(p: Placement): this {
+  worldMatrix(visiting = new Set<Component>()): Matrix4 {
+    return this.baseMatrix(visiting)
+      .multiply(matrix(this.placement))
+      .multiply(this.extraMatrix);
+  }
+  place(p: Placement): this;
+  /** Translate so that a point on this component lands on a target point.
+   * Both are world points; the current rotation is kept. */
+  place(from: Point3 | PartCorner, to: Point3 | PartCorner): this;
+  place(p: Placement | Point3 | PartCorner, to?: Point3 | PartCorner): this {
     this.sourceTraces.push(new Error().stack ?? "");
+    if (to !== undefined) return this.shift(worldPoint(p), worldPoint(to));
     const old = this.placement;
-    this.placement = { ...p, rotate: { ...p.rotate } };
+    this.placement = {
+      ...(p as Placement),
+      rotate: { ...(p as Placement).rotate },
+    };
     try {
       this.worldMatrix();
     } catch (error) {
       this.placement = old;
       throw error;
     }
+    return this;
+  }
+  private shift(from: Point3, to: Point3): this {
+    const delta = new V3(
+      to.x - from.x,
+      to.y - from.y,
+      to.z - from.z,
+    ).applyMatrix4(new Matrix4().extractRotation(this.baseMatrix()).invert());
+    this.placement = {
+      ...this.placement,
+      x: (this.placement.x ?? 0) + delta.x,
+      y: (this.placement.y ?? 0) + delta.y,
+      z: (this.placement.z ?? 0) + delta.z,
+    };
+    return this;
+  }
+  /** Turn the component about a world axis. The axis is a direction through
+   * `through` (the component's own origin by default), or the line `from`→`to`.
+   * The world frame is read once, here; later moves of a reference do not
+   * revisit it. */
+  rotate(o: RotationOptions): this {
+    this.sourceTraces.push(new Error().stack ?? "");
+    const angle = finite(o.angle ?? o.rotation ?? NaN, "rotation angle");
+    const axis =
+      o.from && o.to
+        ? new V3(o.to.x - o.from.x, o.to.y - o.from.y, o.to.z - o.from.z)
+        : o.axis
+          ? new V3(o.axis.x, o.axis.y, o.axis.z)
+          : undefined;
+    if (!axis) throw new Error("Rotation needs an axis, or a from/to line");
+    if (axis.lengthSq() < 1e-12)
+      throw new Error("Rotation axis must not be zero length");
+    const through =
+      o.through ?? o.from ?? new V3().setFromMatrixPosition(this.worldMatrix());
+    const pivot = new V3(through.x, through.y, through.z);
+    const world = new Matrix4()
+      .makeTranslation(pivot.x, pivot.y, pivot.z)
+      .multiply(
+        new Matrix4().makeRotationAxis(
+          axis.normalize(),
+          (angle * Math.PI) / 180,
+        ),
+      )
+      .multiply(new Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
+    const placed = this.baseMatrix().multiply(matrix(this.placement));
+    this.extraMatrix = placed
+      .clone()
+      .invert()
+      .multiply(world)
+      .multiply(placed)
+      .multiply(this.extraMatrix);
     return this;
   }
   move(p: Placement): this {
@@ -543,6 +691,15 @@ export abstract class Component {
     c.parent?.children.push(c);
     return c;
   }
+  /** Publish an interface on this component. An assembly can carry one too, so
+   * a fitting's holes can be handed on to whatever the assembly mounts into. */
+  addInterface<F extends MountingFeatures>(
+    name: string,
+    value: PartInterface<F>,
+  ): this {
+    this.interfaces.set(name, value.bind(this));
+    return this;
+  }
   interface(name = "default"): PartInterface {
     const method = interfaceMethods.get(this)?.get(name);
     if (method) return (this as any)[method]();
@@ -554,6 +711,40 @@ export abstract class Component {
       }).bind(this);
     throw new Error(`Unknown interface ${name} on ${this.path}`);
   }
+}
+export interface RotationOptions {
+  /** A direction in world space, e.g. `WorldAxes.Z`. */
+  readonly axis?: Vector3;
+  /** Axis through two world points, instead of `axis`. */
+  readonly from?: Point3;
+  readonly to?: Point3;
+  /** A world point the axis passes through. Defaults to `from`, then to the
+   * component's own origin. */
+  readonly through?: Point3;
+  readonly angle?: number;
+  /** Alias for `angle`. */
+  readonly rotation?: number;
+}
+function worldPoint(value: Point3 | PartCorner | Placement): Point3 {
+  if (value instanceof PartCorner) return value.point();
+  const p = value as Point3;
+  return {
+    x: finite(p.x, "point x"),
+    y: finite(p.y, "point y"),
+    z: finite(p.z, "point z"),
+  };
+}
+function splitSelection(selection: readonly unknown[]): {
+  names: DirectionName[];
+  options: SelectionOptions;
+} {
+  const last = selection.at(-1);
+  const options =
+    typeof last === "object" && last !== null ? (last as SelectionOptions) : {};
+  const names = (
+    typeof last === "string" ? selection : selection.slice(0, -1)
+  ) as DirectionName[];
+  return { names, options };
 }
 export type SubtractionSource = Shape | Component | PartInterface;
 export interface MachiningOperation {
@@ -567,6 +758,8 @@ export interface MachiningOperation {
 export class Part extends Component {
   recipe: Recipe;
   operations: MachiningOperation[] = [];
+  /** Fillets and chamfers applied to named edges, in application order. */
+  edgeTreatments: EdgeTreatment[] = [];
   /** Display material retained when homogeneous stock parts are fused. */
   drawingMaterial?: Material;
   constructor(o: ComponentOptions & { shape: Shape }) {
@@ -616,12 +809,48 @@ export class Part extends Component {
     this.operations.push({ kind, recipe: cutter });
     return this;
   }
-  addInterface<F extends MountingFeatures>(
-    name: string,
-    value: PartInterface<F>,
-  ): this {
-    this.interfaces.set(name, value.bind(this));
-    return this;
+  /** How a named direction maps into this part's own material coordinates.
+   * The identity for solids modelled where they stand; sheet panels override
+   * it so a blank is named as if it stood upright, facing the viewer. */
+  materialBasis(): Matrix4 {
+    return new Matrix4();
+  }
+  /** Extra direction names this part answers to, mapped onto the canonical
+   * six. Sheet panels add the compass they are already named by elsewhere. */
+  directionAliases(): Readonly<Partial<Record<string, FaceDirection>>> {
+    return {};
+  }
+  /** The edges where the named faces meet, as a fillet/chamfer target.
+   * Directions are read in the part's material frame unless
+   * `{ frame: "world" }` is given. */
+  getEdge(...names: DirectionName[]): PartEdge;
+  getEdge(
+    ...selection: [...names: DirectionName[], options: SelectionOptions]
+  ): PartEdge;
+  getEdge(...selection: unknown[]): PartEdge {
+    const { names, options } = splitSelection(selection);
+    if (names.length < 1 || names.length > 2)
+      throw new Error("An edge is named by one or two face directions");
+    return new PartEdge(
+      this,
+      edgeQuery(this, names, options),
+      selectionBasis(this, options),
+    );
+  }
+  /** A named bounding-box corner: its point, and the edges meeting there. */
+  getCorner(...names: DirectionName[]): PartCorner;
+  getCorner(
+    ...selection: [...names: DirectionName[], options: SelectionOptions]
+  ): PartCorner;
+  getCorner(...selection: unknown[]): PartCorner {
+    const { names, options } = splitSelection(selection);
+    if (names.length !== 3)
+      throw new Error("A corner is named by three face directions");
+    return new PartCorner(
+      this,
+      edgeQuery(this, names, options),
+      selectionBasis(this, options),
+    );
   }
 }
 export class HardwarePart extends Part {
@@ -785,10 +1014,17 @@ export abstract class Project extends Assembly {
   parameterState?: ParameterState;
   /** Resolve the active Studio values before constructing dependent geometry. */
   protected configureParameters<const S extends ParameterSchema>(
-    schema: S,
+    parameters: S | InputParameters<S>,
+    defaults?: Partial<ParameterValues<S>>,
   ): ParameterValues<S> {
     if (this.parameterState)
       throw new Error("Project parameters are already configured");
+    const schema =
+      parameters instanceof InputParameters
+        ? parameters.with(defaults)
+        : defaults
+          ? new InputParameters(parameters).with(defaults)
+          : defineParameters(parameters);
     const overrides = JSON.parse(process.env.CODECAD_PARAMETER_VALUES ?? "{}");
     const values = resolveParameters(schema, overrides);
     this.parameterState = { definitions: schema, values };

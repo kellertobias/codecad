@@ -7,6 +7,7 @@ import { saveDesktopPreview, setupDesktop } from "./desktop.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
+import { DrawingPlanEditor } from "./drawing-plan-editor.js";
 import { initiallyExpandedPaths } from "./component-tree.js";
 import { inspectorDetails } from "./inspector.js";
 import { applyWoodAppearance } from "./wood-material.js";
@@ -61,6 +62,10 @@ type StudioAnimation = {
 };
 type Model = {
   view2D?: View2DPrimitive[];
+  planViews?: Record<
+    string,
+    { key: string; visible: number[]; hidden: number[] }
+  >;
   parameters: ParameterState | null;
   components: {
     path: string;
@@ -86,6 +91,15 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let sourceFile = "";
 const edgesEnabled = () => $("edges").getAttribute("aria-pressed") === "true";
+/** Edge line strength, 0.05 - 1: WebGL ignores line width, so strength is opacity. */
+const edgeStrength = () =>
+  Number($<HTMLInputElement>("edge-strength").value) / 100;
+const applyEdgeStrength = () => {
+  const opacity = edgeStrength();
+  for (const edges of edgeObjects.values())
+    (edges.material as THREE.LineBasicMaterial).opacity = opacity;
+  $<HTMLInputElement>("edge-strength").disabled = !edgesEnabled();
+};
 const isolation = new IsolationSession<{
   visible: Map<string, boolean>;
   position: THREE.Vector3;
@@ -161,6 +175,10 @@ const canvas = $("canvas"),
   scene = new THREE.Scene(),
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 const plane2D = new Plane2DCanvas($<HTMLCanvasElement>("plane2d-canvas"));
+const drawingPlan = new DrawingPlanEditor(
+  () => token,
+  (name) => artifactUrl(name),
+);
 let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera =
   new THREE.PerspectiveCamera(40, 1, 0.1, 100000);
 camera.up.set(0, 0, 1);
@@ -234,12 +252,16 @@ function fit(direction?: string) {
     0.1,
   );
   const distance = (extent * 1.85) / Math.min(aspect, 1);
-  const dir =
-    direction === "front"
-      ? new THREE.Vector3(0, -1, 0.02)
-      : direction === "top"
-        ? new THREE.Vector3(0, -0.001, 1)
-        : new THREE.Vector3(1, -1.5, 0.9).normalize();
+  const directions: Record<string, THREE.Vector3> = {
+    front: new THREE.Vector3(0, -1, 0.02),
+    back: new THREE.Vector3(0, 1, 0.02),
+    left: new THREE.Vector3(-1, 0, 0.02),
+    right: new THREE.Vector3(1, 0, 0.02),
+    top: new THREE.Vector3(0, -0.001, 1),
+  };
+  const dir = (
+    directions[direction ?? ""] ?? new THREE.Vector3(1, -1.5, 0.9)
+  ).normalize();
   camera.position.copy(center).addScaledVector(dir, distance);
   controls.target.copy(center);
   camera.near = distance / 10000;
@@ -273,6 +295,9 @@ function setProjection(parallel: boolean) {
   };
   controls.target.copy(target);
   fit();
+  // A fresh camera starts square. Without this the perspective view renders
+  // at aspect 1 until the next canvas resize, which stretches the model.
+  resize();
   const toggle = $("projection-toggle");
   toggle.setAttribute("aria-pressed", String(parallel));
   toggle.setAttribute(
@@ -376,7 +401,7 @@ function showModel(data: Model) {
       new THREE.LineBasicMaterial({
         color: 0x28383d,
         transparent: true,
-        opacity: 0.55,
+        opacity: edgeStrength(),
       }),
     );
     edges.matrixAutoUpdate = false;
@@ -400,6 +425,7 @@ function showModel(data: Model) {
   } else $("messages").className = "";
   renderParts();
   plane2D.setItems(data.view2D ?? []);
+  drawingPlan.setModel(data);
   renderOutputs();
   renderCuts();
   updateAvailableTabs();
@@ -909,8 +935,14 @@ let pdfViewers: ReturnType<typeof pdfViewer>[] = [];
 function renderOutputs() {
   pdfViewers.forEach((viewer) => viewer.dispose());
   pdfViewers = [];
-  const pdfReports: PdfReport[] = [];
-  for (const id of ["drawing-download-list", "nesting", "exports"])
+  const pdfReports: PdfReport[] = [],
+    sheetReports: PdfReport[] = [];
+  for (const id of [
+    "drawing-download-list",
+    "drawing-sheets",
+    "nesting",
+    "exports",
+  ])
     $(id).replaceChildren();
   const grouped = new Set<string>();
   for (const report of model?.reports ?? []) {
@@ -925,6 +957,11 @@ function renderOutputs() {
       });
     }
     if (report.kind === "drawing") {
+      sheetReports.push({
+        title: report.title,
+        url: artifactUrl(report.formats.pdf),
+        download: downloadControl(report),
+      });
       const row = document.createElement("div"),
         label = document.createElement("span");
       row.className = "export-row";
@@ -971,6 +1008,18 @@ function renderOutputs() {
   }
   if (!$("drawing-download-list").childElementCount)
     $("drawing-download-list").textContent = "No printable plans configured.";
+  if (sheetReports.length) {
+    const viewer = pdfViewer(sheetReports);
+    pdfViewers.push(viewer);
+    $("drawing-sheets").append(viewer.element);
+  } else {
+    const empty = document.createElement("p");
+    empty.textContent =
+      "No drawing sheets yet. Compose one in the Sheet editor, or return a TechnicalDrawing from a @cad.output method.";
+    $("drawing-sheets").append(empty);
+  }
+  // Open on finished sheets when the project has them, else on the editor.
+  showDrawingMode(drawingMode ?? (sheetReports.length ? "sheets" : "plan"));
   if (pdfReports.length) {
     const viewer = pdfViewer(pdfReports);
     pdfViewers.push(viewer);
@@ -1026,16 +1075,19 @@ function renderCutTable(rows: Model["cutList"]) {
     header.append(cell);
   }
   table.append(header);
+  // Computed sizes such as 463.99999999 read as the millimetres they mean.
+  const mm = (value: number | null | undefined) =>
+    value == null ? "" : String(Number(value.toFixed(2)));
   for (const r of rows) {
     const row = document.createElement("tr");
     for (const value of [
       r.path.split("/").slice(1).join("/"),
       r.material,
-      r.width,
-      r.height,
-      r.length ?? r.thickness ?? "",
-      r.wallThickness ?? "",
-      r.cornerRadius ?? "",
+      mm(r.width),
+      mm(r.height),
+      mm(r.length ?? r.thickness),
+      mm(r.wallThickness),
+      mm(r.cornerRadius),
       r.quantity,
     ]) {
       const cell = document.createElement("td");
@@ -1057,6 +1109,12 @@ async function loadSource() {
   setSource(data.source, data.file);
   version = data.version;
   token = data.token;
+  try {
+    await drawingPlan.load();
+    if (model) drawingPlan.setModel(model);
+  } catch (error) {
+    $("plan-status").textContent = String(error);
+  }
   dirty = false;
   if (!model)
     $("project-name").textContent =
@@ -1092,8 +1150,29 @@ onSourceChange(() => {
 window.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === "s") {
     event.preventDefault();
-    void save();
+    // Save what the user is looking at: the sheet editor or the source.
+    if ($("tabs").classList.contains("drawing-active")) void drawingPlan.save();
+    else void save();
+    return;
   }
+  const typing = (event.target as HTMLElement | null)?.closest(
+    "input, select, textarea, [contenteditable], .monaco-editor",
+  );
+  if (
+    typing ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    !$("model").classList.contains("active")
+  )
+    return;
+  const camera = { "1": "front", "2": "right", "3": "top", "0": "iso" }[
+    event.key
+  ];
+  if (event.key === "f" || event.key === "F") fit();
+  else if (camera) fit(camera);
+  else if (event.key === "Escape" && measurementMode)
+    $("measure-toggle").click();
 });
 window.addEventListener("beforeunload", (event) => {
   if (dirty) {
@@ -1123,6 +1202,33 @@ $("fit").onclick = () => {
   $("view-presets").removeAttribute("open");
 };
 $("plane2d-fit").onclick = () => plane2D.fit();
+type DrawingMode = "sheets" | "plan" | "plane";
+let drawingMode: DrawingMode | undefined;
+function showDrawingMode(mode: DrawingMode) {
+  drawingMode = mode;
+  for (const [button, panel, id] of [
+    ["show-sheets", "drawing-sheets", "sheets"],
+    ["show-plan", "plan-editor", "plan"],
+    ["show-plane", "plane2d-workspace", "plane"],
+  ] as const) {
+    $(panel).hidden = mode !== id;
+    $(button).setAttribute("aria-pressed", String(mode === id));
+  }
+  // Every sheet carries its own download control.
+  $("drawing-downloads").hidden = mode === "sheets";
+  $("tabs").classList.toggle(
+    "drawing-active",
+    mode === "plan" && $("drawing").classList.contains("active"),
+  );
+  if (mode === "plane") plane2D.render();
+  if (mode === "sheets")
+    pdfViewers
+      .filter((viewer) => viewer.element.parentElement?.id === "drawing-sheets")
+      .forEach((viewer) => viewer.start());
+}
+$("show-sheets").onclick = () => showDrawingMode("sheets");
+$("show-plan").onclick = () => showDrawingMode("plan");
+$("show-plane").onclick = () => showDrawingMode("plane");
 $("projection-toggle").onclick = () =>
   setProjection(!(camera instanceof THREE.OrthographicCamera));
 $("show-all").onclick = () => showOnly("");
@@ -1145,8 +1251,11 @@ $("edges").onclick = () => {
   const enabled = !edgesEnabled();
   button.setAttribute("aria-pressed", String(enabled));
   button.title = enabled ? "Hide edges" : "Show edges";
+  applyEdgeStrength();
   applyPose();
 };
+$("edge-strength").oninput = applyEdgeStrength;
+applyEdgeStrength();
 $("explode").oninput = () => {
   clearMeasurement();
   applyPose();
@@ -1177,13 +1286,21 @@ function activateTab(id: string) {
   document.querySelector(`[data-tab="${id}"]`)?.classList.add("active");
   $(id).classList.add("active");
   $("tabs").classList.toggle("model-active", id === "model");
+  $("tabs").classList.toggle(
+    "drawing-active",
+    id === "drawing" && drawingMode === "plan",
+  );
   $("more-views").classList.toggle(
     "active",
     ["nesting", "cuts", "exports"].includes(id),
   );
   if (id !== "model") $("view-presets").removeAttribute("open");
   pdfViewers
-    .filter((viewer) => viewer.element.parentElement?.id === id)
+    .filter(
+      (viewer) =>
+        viewer.element.parentElement?.id ===
+        (id === "drawing" && drawingMode === "sheets" ? "drawing-sheets" : id),
+    )
     .forEach((viewer) => viewer.start());
   resize();
   if (id === "drawing") plane2D.render();

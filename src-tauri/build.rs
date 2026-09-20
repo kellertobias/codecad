@@ -2,7 +2,10 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "open_project",
-            "close_project",
+            "show_home",
+            "session_tabs",
+            "activate_session",
+            "close_session",
             "recent_projects",
             "project_catalog",
             "save_project_preview",

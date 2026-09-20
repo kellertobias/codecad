@@ -28,50 +28,33 @@ const WIDTH = 600;
 const DEPTH = 500;
 const HEIGHT = 900;
 const DRAWERS = 4;
-const multiplexLayers = (thickness: number, count: number) =>
-  Array.from({ length: count }, (_, index) => ({
-    thickness: thickness / count,
-    direction: index % 2 === 0 ? ("height" as const) : ("width" as const),
-    species: "birch",
-  }));
 const plywood = new SheetMaterial({
   id: "birch-18",
   name: "Birch multiplex 18 mm",
   thickness: 18,
+  plies: 9,
   width: 1250,
   height: 2500,
   color: "#c6a77d",
   grain: "height",
-  layers: multiplexLayers(18, 9),
   kerf: 3.2,
   partSpacing: 8,
   sheetMargin: 10,
 });
-const drawerStock = new SheetMaterial({
+// Same sheet size, kerf and margins; only what differs is restated.
+const drawerStock = plywood.with({
   id: "birch-12",
   name: "Birch multiplex 12 mm",
   thickness: 12,
-  width: 1250,
-  height: 2500,
+  plies: 7,
   color: "#dfca9e",
-  grain: "height",
-  layers: multiplexLayers(12, 7),
-  kerf: 3.2,
-  partSpacing: 8,
-  sheetMargin: 10,
 });
-const backStock = new SheetMaterial({
+const backStock = plywood.with({
   id: "birch-6",
   name: "Birch plywood 6 mm",
   thickness: 6,
-  width: 1250,
-  height: 2500,
+  plies: 3,
   color: "#b79d75",
-  grain: "height",
-  layers: multiplexLayers(6, 3),
-  kerf: 3.2,
-  partSpacing: 8,
-  sheetMargin: 10,
 });
 
 @cad.part({ id: "cabinet-drawer", revision: "1" })
@@ -170,7 +153,7 @@ export class KitchenCabinet extends Project {
   }[] = [];
 
   constructor() {
-    super({ id: "kitchen-cabinet", label: "Four-drawer kitchen cabinet" });
+    super(); // id and label come from @cad.project
     // Interactive front-elevation sketch, separate from printable drawings.
     this.view2D.path(
       [

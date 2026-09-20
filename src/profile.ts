@@ -3,10 +3,7 @@ import type { Point2 } from "./model.js";
 
 /** @internal Reconstruct runs of >=5 co-circular samples. Straight segments remain exact.
  * This is opt-in and bounded by the caller's radial fitting tolerance. */
-export function profileFace(
-  points: Point2[],
-  tolerance: number,
-) {
+export function profileFace(points: Point2[], tolerance: number) {
   const ps = [...points, points[0]!],
     edges: b.Edge[] = [];
   const vec = (p: Point2): [number, number, number] => [p.x, p.y, 0];

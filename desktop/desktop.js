@@ -1,4 +1,8 @@
+import { mountProjectTabs } from "./project-tabs.js";
 const invoke = window.__TAURI__.core.invoke;
+const message = (text) => {
+  document.getElementById("message").textContent = text;
+};
 const bar = document.getElementById("titlebar");
 if (navigator.platform.includes("Mac")) {
   document.body.classList.add("platform-macos");
@@ -19,6 +23,12 @@ document
       (button.onclick = () =>
         invoke("window_action", { action: button.dataset.window })),
   );
+// Projects opened earlier keep running; their tabs lead back to them.
+const projectTabs = mountProjectTabs({
+  invoke,
+  container: document.getElementById("project-tabs"),
+  onError: message,
+});
 let catalog = { recent: [], examples: [] };
 const exampleDetails = {
   cabinet: "Joinery · hardware · motion",
@@ -69,13 +79,14 @@ async function refreshCatalog() {
 async function openProject(example = null, path = null) {
   const buttons = document.querySelectorAll("main button");
   buttons.forEach((b) => (b.disabled = true));
-  document.getElementById("message").textContent = "Opening project…";
+  message("Opening project…");
   try {
     const url = await invoke("open_project", { example, path });
     if (url) location.replace(url);
-    else document.getElementById("message").textContent = "";
+    else message("");
   } catch (e) {
-    document.getElementById("message").textContent = String(e);
+    message(String(e));
+    void projectTabs.refresh();
   } finally {
     buttons.forEach((b) => (b.disabled = false));
   }
@@ -87,6 +98,4 @@ window.addEventListener("keydown", (event) => {
     void openProject();
   }
 });
-void refreshCatalog().catch((e) => {
-  document.getElementById("message").textContent = String(e);
-});
+void refreshCatalog().catch((e) => message(String(e)));

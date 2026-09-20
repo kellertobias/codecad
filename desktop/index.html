@@ -4,10 +4,12 @@
     <meta charset="utf-8" />
     <title>CodeCAD</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="project-tabs.css" />
   </head>
   <body>
     <header id="titlebar">
       <strong>⌘ CodeCAD</strong><span>DESKTOP STUDIO</span>
+      <div id="project-tabs" hidden></div>
       <div class="controls">
         <button data-window="minimize" aria-label="Minimize">−</button
         ><button data-window="maximize" aria-label="Maximize or restore">
@@ -39,6 +41,6 @@
       <div class="examples" id="example-list"></div>
       <p id="message" role="status"></p>
     </main>
-    <script src="desktop.js"></script>
+    <script type="module" src="desktop.js"></script>
   </body>
 </html>

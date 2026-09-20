@@ -1,12 +1,10 @@
 import {
-  CutList,
   CodeCadParameters,
   MetalStockMaterial,
   Project,
-  StepModel,
   cad,
   type MetalStockPart,
-  type ParameterValues,
+  type ParametersOf,
 } from "../src/index.js";
 
 /** Outside dimensions and cut lengths are in millimetres. */
@@ -71,13 +69,13 @@ export const params = new CodeCadParameters({
 })
 export class WeldedTableBase extends Project {
   readonly members: MetalStockPart[] = [];
-  readonly settings: ParameterValues<typeof params.definitions>;
+  readonly settings: ParametersOf<typeof params>;
 
-  constructor(
-    defaults: Partial<ParameterValues<typeof params.definitions>> = {},
-  ) {
-    super({ id: "welded-table-base", label: "Welded steel table base" });
-    this.settings = this.configureParameters(params.with(defaults));
+  // The id and label come from @cad.project; defaults let other projects reuse
+  // this base at another size while Studio's parameter panel still wins.
+  constructor(defaults: Partial<ParametersOf<typeof params>> = {}) {
+    super();
+    this.settings = this.configureParameters(params, defaults);
     const { width, depth, height, tube, wall, lowerRailTop } = this.settings;
     const steelTube = new MetalStockMaterial({
       id: `square-steel-tube-${tube}x${tube}x${wall}`,
@@ -148,13 +146,6 @@ export class WeldedTableBase extends Project {
     }
   }
 
-  @cad.output.cutList()
-  cutList() {
-    return new CutList();
-  }
-
-  @cad.output.step()
-  step() {
-    return new StepModel({ of: this });
-  }
+  // No @cad.output methods: the build adds the standard drawing (front, top,
+  // right and isometric views with overall dimensions), cut list and STEP.
 }

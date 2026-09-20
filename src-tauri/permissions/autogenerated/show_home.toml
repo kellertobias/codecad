@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-home"
+description = "Enables the show_home command without any pre-configured scope."
+commands.allow = ["show_home"]
+
+[[permission]]
+identifier = "deny-show-home"
+description = "Denies the show_home command without any pre-configured scope."
+commands.deny = ["show_home"]

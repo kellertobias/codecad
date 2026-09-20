@@ -7,3 +7,5 @@ src-tauri/target/
 src-tauri/gen/
 artifacts/
 dist/
+desktop/project-tabs.js
+desktop/project-tabs.css

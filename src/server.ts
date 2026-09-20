@@ -7,6 +7,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { build } from "esbuild";
 import { editorService } from "./editor-service.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
+import { validateDrawingPlan } from "./drawing-plan.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const entry = resolve(
@@ -22,6 +23,7 @@ const parameterFile = join(
   "parameters",
   createHash("sha256").update(entry).digest("hex") + ".json",
 );
+const drawingPlanFile = entry.replace(/\.[^.]+$/, "") + ".drawings.json";
 let parameterValues: Record<string, number | boolean | string> = {};
 try {
   parameterValues = JSON.parse(await readFile(parameterFile, "utf8"));
@@ -272,6 +274,25 @@ const server = createServer(async (req, res) => {
       json({ source, version: hash(source), file: entry, token });
       return;
     }
+    if (url.pathname === "/api/drawing-plan" && req.method === "GET") {
+      try {
+        const source = await readFile(drawingPlanFile, "utf8");
+        json({
+          plan: validateDrawingPlan(JSON.parse(source)),
+          version: hash(source),
+          file: drawingPlanFile,
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          json({
+            plan: { version: 1, title: "", items: [] },
+            version: "",
+            file: drawingPlanFile,
+          });
+        else throw error;
+      }
+      return;
+    }
     if (url.pathname === "/api/editor-libraries" && req.method === "GET") {
       json(languageService.libraries());
       return;
@@ -289,6 +310,47 @@ const server = createServer(async (req, res) => {
       if (url.pathname === "/api/rebuild") {
         schedule();
         json({ ok: true });
+        return;
+      }
+      if (url.pathname === "/api/drawing-plan") {
+        let body = "";
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 250_000) {
+            json({ error: "Drawing plan exceeds 250 KB" }, 413);
+            return;
+          }
+        }
+        try {
+          const input = JSON.parse(body);
+          let previous = "";
+          try {
+            previous = await readFile(drawingPlanFile, "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          if (input.version !== (previous ? hash(previous) : "")) {
+            json(
+              { error: "Drawing plan changed on disk. Reload before saving." },
+              409,
+            );
+            return;
+          }
+          const plan = validateDrawingPlan(input.plan);
+          const serialized = JSON.stringify(plan, null, 2) + "\n";
+          const staged =
+            drawingPlanFile + ".tmp-" + randomBytes(6).toString("hex");
+          await writeFile(staged, serialized);
+          await rename(staged, drawingPlanFile);
+          json({ version: hash(serialized), file: drawingPlanFile });
+          // The sheet is a build output: refresh its hidden-line views and PDF.
+          schedule();
+        } catch (error) {
+          json(
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          );
+        }
         return;
       }
       if (url.pathname === "/api/parameters") {
@@ -440,6 +502,7 @@ const server = createServer(async (req, res) => {
         "text/javascript",
       ],
       "/style.css": [join(root, "web/style.css"), "text/css"],
+      "/project-tabs.css": [join(root, "web/project-tabs.css"), "text/css"],
       "/codecad-icon.png": [join(root, "desktop/icon.png"), "image/png"],
       "/previews/cabinet.png": [
         join(root, "desktop/previews/cabinet.png"),
