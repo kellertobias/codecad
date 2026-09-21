@@ -199,7 +199,9 @@ unless `CODECAD_SIGN_IDENTITY` is set; no notarization is performed.
 
 The macOS app has a custom draggable window frame with minimize, maximize/restore
 and close controls. **Open from disk…** on the welcome screen opens a native file
-picker directly: select a project's `.ts` or `.mts` entry file, not its folder.
+picker for a project's `.ts` or `.mts` entry file, and **Open a project folder…**
+(Shift+Cmd/Ctrl+O) takes a folder and opens the `index.ts` inside it. In Studio,
+the project picker offers the same two under **Entry file** and **Folder**.
 Recent projects and examples are shown directly on the welcome screen with model
 previews. Cmd/Ctrl+O opens the project picker from the editor. Opening a new
 project executes local TypeScript and asks for trust the first time only.
@@ -687,7 +689,13 @@ method using `@cad.interface()`.
   slotted through another's **face**, `minimumWeb` spaces the slots out instead:
   the fingers stay `fingerWidth` wide and the panel being slotted keeps at least
   that much between them, so a sheet cut through its middle is not left as
-  narrow webs. Corner joints have no receiving panel and alternate evenly.
+  narrow webs. Corner joints have no receiving panel and alternate evenly:
+  the overlap is shared out into as many fingers of about `fingerWidth` as
+  fit, so a long joint never ends in a sliver. Where three panels meet, the
+  corner belongs to one of them, and the finger next to it stays with the
+  same panel, so the corner is never left hanging on nothing. A `context`
+  (which `joinAll` passes for you) is what tells a joint about the third
+  panel.
 - A panel slotted through another's face keeps a fifth of the overlap at each
   end, so the receiving panel is not left hanging on its edges. `edgeMargin`
   raises that floor; `exactEdgeMargin` replaces it, so the receiving panel keeps
@@ -821,9 +829,10 @@ addressable instances in the assembly.
 DXF exports are in millimetres:
 
 - `BLANK_OUTLINE` is the stock blank, not a finished toolpath.
-- `PART_OUTLINE` is added when through cuts break the blank's edge (finger
-  joints, notches, corner reliefs). It is the finished contour sectioned from
-  the machined solid, so those cuts are not repeated as separate pockets.
+- `PART_OUTLINE` is the finished contour the router follows. Where through
+  cuts break the blank's edge (finger joints, notches, corner reliefs) it is
+  sectioned from the machined solid, so those cuts are not repeated as
+  separate pockets; otherwise it repeats the blank.
 - `DRILL_TOP_D6.000`, `POCKET_BOTTOM_D6.000`, `CUT_THROUGH_D18.000`, etc.
   describe machining operations and depth/side in part coordinates.
 - Axial circular holes are DXF circles. Other contours are chained polylines

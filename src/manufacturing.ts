@@ -477,9 +477,33 @@ function contourChains(
     // it already carries the closing segment's bulge.
     const closed = near(points[0]!, points.at(-1)!);
     if (closed) points.pop();
-    chains.push({ points, closed });
+    chains.push({ points: straightened(points, closed), closed });
   }
   return chains;
+}
+/** Two cuts meeting along one line leave a vertex where nothing turns; the
+ * contour reads better, and measures the same, without it. */
+function straightened(points: DxfVertex[], closed: boolean): DxfVertex[] {
+  const kept: DxfVertex[] = [];
+  for (const [index, point] of points.entries()) {
+    const before = kept.at(-1) ?? (closed ? points.at(-1) : undefined),
+      after = points[index + 1] ?? (closed ? points[0] : undefined);
+    if (before && after && !before.bulge && !point.bulge) {
+      const ax = point.x - before.x,
+        ay = point.y - before.y,
+        bx = after.x - point.x,
+        by = after.y - point.y;
+      const cross = ax * by - ay * bx,
+        dot = ax * bx + ay * by;
+      if (
+        Math.abs(cross) < 1e-6 * Math.hypot(ax, ay) * Math.hypot(bx, by) &&
+        dot > 0
+      )
+        continue;
+    }
+    kept.push(point);
+  }
+  return kept.length >= 2 ? kept : points;
 }
 /** `tan(sweep / 4)`, which is what LWPOLYLINE group code 42 wants, derived
  * from the chord and a point on the arc. Positive counter-clockwise, and
@@ -822,6 +846,16 @@ export async function partEntities(
         ...contour,
       })),
     );
+  } else {
+    // Nothing breaks the edge, so the finished contour is the blank itself.
+    // It is still stated, so every part carries the contour the router
+    // follows and reads the same way wherever the layers are drawn.
+    const blank = entities.filter((entity) => entity.layer === "BLANK_OUTLINE");
+    entities.splice(
+      blank.length,
+      0,
+      ...blank.map((entity) => ({ ...entity, layer: "PART_OUTLINE" })),
+    );
   }
   return entities;
 }
@@ -1123,12 +1157,27 @@ export function thinMaterial(
   const cuts = entities.filter(
     (e) => e.layer.startsWith("CUT") || e.layer.startsWith("DRILL"),
   );
-  if (!cuts.length) return undefined;
+  // The finished contour can be its own worst enemy: a finger left hanging on
+  // a sliver, or a corner both joints cut, shows up as a neck in it.
+  let worst: ThinMaterial | undefined;
+  for (const entity of entities)
+    if (
+      entity.kind === "polyline" &&
+      entity.layer === "PART_OUTLINE" &&
+      entity.closed
+    ) {
+      const neck = narrowestNeck(
+        flattened(entity.points, true),
+        worst?.mm ?? minimum,
+        entity.layer,
+      );
+      if (neck) worst = neck;
+    }
+  if (!cuts.length) return worst;
   const sampled = new Map<DxfEntity, Point2[]>();
   for (const entity of [...edge, ...cuts])
     sampled.set(entity, contourPoints(entity));
   const edgePoints = edge.flatMap((entity) => sampled.get(entity)!);
-  let worst: ThinMaterial | undefined;
   const measure = (
     a: readonly Point2[],
     b: readonly Point2[],
@@ -1155,6 +1204,69 @@ export function thinMaterial(
     measure(points, edgePoints, [cut.layer, "blank edge"]);
     for (const other of cuts.slice(index + 1))
       measure(points, sampled.get(other)!, [cut.layer, other.layer]);
+  }
+  return worst;
+}
+/** The narrowest neck of material inside one closed contour: a concave corner
+ * facing another edge across material, closer than `minimum`. A concave corner
+ * is where two cuts meet, so that is where a finger or a corner can be left
+ * hanging on next to nothing — or on nothing at all, where the contour touches
+ * itself. */
+export function narrowestNeck(
+  points: readonly Point2[],
+  minimum: number,
+  layer = "PART_OUTLINE",
+): ThinMaterial | undefined {
+  const count = points.length;
+  if (count < 4) return undefined;
+  const area = points.reduce((sum, p, i) => {
+    const q = points[(i + 1) % count]!;
+    return sum + p.x * q.y - q.x * p.y;
+  }, 0);
+  const counterClockwise = area > 0;
+  let worst: ThinMaterial | undefined;
+  for (let i = 0; i < count; i++) {
+    const before = points[(i + count - 1) % count]!,
+      v = points[i]!,
+      after = points[(i + 1) % count]!;
+    const cross =
+      (v.x - before.x) * (after.y - v.y) - (v.y - before.y) * (after.x - v.x);
+    const concave = counterClockwise ? cross < -1e-9 : cross > 1e-9;
+    if (!concave) continue;
+    for (let j = 0; j < count; j++) {
+      // Not the two edges that make this corner.
+      if (j === i || (j + 1) % count === i) continue;
+      const a = points[j]!,
+        c = points[(j + 1) % count]!;
+      const dx = c.x - a.x,
+        dy = c.y - a.y,
+        length2 = dx * dx + dy * dy;
+      const t = length2
+        ? Math.max(
+            0,
+            Math.min(1, ((v.x - a.x) * dx + (v.y - a.y) * dy) / length2),
+          )
+        : 0;
+      const q = { x: a.x + dx * t, y: a.y + dy * t };
+      const distance = Math.hypot(v.x - q.x, v.y - q.y);
+      if (distance >= (worst?.mm ?? minimum)) continue;
+      // The contour touching itself is a neck of nothing at all.
+      if (distance < 1e-6) {
+        worst = { mm: 0, between: [layer, layer], at: v };
+        continue;
+      }
+      // Only a gap that crosses material counts: either side of its middle
+      // has to be inside the contour, not across a notch.
+      const middle = { x: (v.x + q.x) / 2, y: (v.y + q.y) / 2 },
+        step = Math.min(0.01, distance / 4),
+        nx = (-(q.y - v.y) / distance) * step,
+        ny = ((q.x - v.x) / distance) * step;
+      if (
+        strictlyInside({ x: middle.x + nx, y: middle.y + ny }, points, 1e-6) &&
+        strictlyInside({ x: middle.x - nx, y: middle.y - ny }, points, 1e-6)
+      )
+        worst = { mm: distance, between: [layer, layer], at: v };
+    }
   }
   return worst;
 }

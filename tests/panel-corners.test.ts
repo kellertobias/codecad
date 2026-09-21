@@ -97,7 +97,8 @@ test("the rounded contour reaches the cut list and the cut DXF", async () => {
     };
     const has = (points: { x: number; y: number }[], x: number, y: number) =>
       points.some((p) => Math.hypot(p.x - x, p.y - y) < 0.01);
-    assert.equal(contour("square").length, 4);
+    // Four corners, stated twice: as the blank and as the finished contour.
+    assert.equal(contour("square").length, 8);
     assert.ok(
       has(contour("square"), 0, 300) && has(contour("square"), 220, 300),
     );
@@ -109,10 +110,11 @@ test("the rounded contour reaches the cut list and the cut DXF", async () => {
     // The arcs start and end exactly one radius back from where they were.
     assert.ok(has(rounded, 0, 290) && has(rounded, 10, 300));
     assert.ok(has(rounded, 210, 300) && has(rounded, 220, 290));
-    // Six vertices, not a tessellated fan: the two corners are real arcs.
-    assert.equal(rounded.length, 6);
+    // Six vertices per contour, not a tessellated fan: the two corners are
+    // real arcs, on the blank and on the finished contour alike.
+    assert.equal(rounded.length, 12);
     const arcs = rounded.filter((vertex) => vertex.bulge !== 0);
-    assert.equal(arcs.length, 2);
+    assert.equal(arcs.length, 4);
     for (const arc of arcs)
       // tan(90 degrees / 4) is the exact bulge of a quarter turn.
       assert.ok(Math.abs(Math.abs(arc.bulge) - Math.tan(Math.PI / 8)) < 1e-9);

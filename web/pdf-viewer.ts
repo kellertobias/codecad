@@ -173,7 +173,7 @@ export function pdfViewer(reports: PdfReport[]) {
         16;
   };
   const hint = document.createElement("small");
-  hint.textContent = "Scroll pages · drag to pan · Ctrl/⌘ + scroll to zoom";
+  hint.textContent = "Scroll to zoom · drag or middle-drag to pan";
   tools.append(readout, pageNumber, status, hint);
   viewport.append(stack);
   element.append(tools, viewport);
@@ -181,11 +181,15 @@ export function pdfViewer(reports: PdfReport[]) {
   viewport.addEventListener(
     "wheel",
     (event) => {
-      if (!event.ctrlKey && !event.metaKey) return;
+      // The wheel zooms, like every other 2D view; pages are reached by
+      // dragging or from the page selector.
       event.preventDefault();
       const r = viewport.getBoundingClientRect();
+      const delta =
+        event.deltaY *
+        (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? r.height : 1);
       zoom(
-        Math.exp(-Math.max(-200, Math.min(200, event.deltaY)) * 0.005),
+        Math.exp(-Math.max(-200, Math.min(200, delta)) * 0.002),
         event.clientX - r.left,
         event.clientY - r.top,
       );

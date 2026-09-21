@@ -616,22 +616,14 @@ export class FingerJoint extends Technique {
       }))
       .filter((claim) => claim.to - claim.from > 1e-6)
       .sort((a, c) => a.from - c.from);
+    type Side = "first" | "second";
+    const other = (side: Side): Side => (side === "first" ? "second" : "first");
     for (const claim of claims) {
       const from = Math.max(interval.start, claim.from - clearance / 2),
         to = Math.min(interval.end, claim.to + clearance / 2);
       if (claim.keep !== "first") cut(o.first, from, to);
       if (claim.keep !== "second") cut(o.second, from, to);
     }
-    // Finger the stretches the corners left over, alternating right across
-    // them so the two panels keep interlocking either side of a corner.
-    const runs: { start: number; end: number }[] = [];
-    let open = interval.start;
-    for (const claim of claims) {
-      if (claim.from > open + 1e-6) runs.push({ start: open, end: claim.from });
-      open = Math.max(open, claim.to);
-    }
-    if (interval.end > open + 1e-6)
-      runs.push({ start: open, end: interval.end });
     // A slot through a face can be spaced out: the receiving panel keeps wider
     // stretches between slots while the fingers stay their own width. A corner
     // joint has no receiving panel, so it alternates evenly.
@@ -641,21 +633,95 @@ export class FingerJoint extends Technique {
         ? o.second
         : undefined;
     const web = Math.max(pitch, this.options.minimumWeb ?? 0);
-    let n = 0;
+    // Finger the stretches the corners left over. Where a corner joint keeps
+    // a corner on one of its two panels, the finger beside it has to be that
+    // panel's as well: cut there, the corner would hang on nothing, since the
+    // joint round the corner cuts behind it. So a run bordering a kept corner
+    // starts or ends by cutting the other panel. A slot through a face keeps
+    // the material behind whatever it keeps, so it alternates freely.
+    const runs: {
+      start: number;
+      end: number;
+      startCut?: Side;
+      endCut?: Side;
+    }[] = [];
+    let open = interval.start,
+      after: Side | undefined;
+    for (const claim of claims) {
+      if (claim.from > open + 1e-6)
+        runs.push({
+          start: open,
+          end: claim.from,
+          ...(after ? { startCut: after } : {}),
+          ...(claim.keep && !receiving ? { endCut: other(claim.keep) } : {}),
+        });
+      open = Math.max(open, claim.to);
+      after = claim.keep && !receiving ? other(claim.keep) : undefined;
+    }
+    if (interval.end > open + 1e-6)
+      runs.push({
+        start: open,
+        end: interval.end,
+        ...(after ? { startCut: after } : {}),
+      });
+    const panel = (side: Side) => (side === "first" ? o.first : o.second);
+    const nominal = (side: Side) =>
+      receiving && panel(side) !== receiving ? web : pitch;
+    let last: Side | undefined;
     for (const run of runs) {
+      const length = run.end - run.start;
+      // Keep alternating across a corner both panels lost, so they interlock
+      // either side of it; otherwise the corner's owner decides.
+      const start: Side =
+        run.startCut ??
+        (last ? other(last) : o.startWith === "second" ? "second" : "first");
+      const at = (n: number): Side => (n % 2 === 0 ? start : other(start));
+      const fingers: { side: Side; width: number }[] = [];
+      if (receiving) {
+        // Slots stay their stated width and the webs between them their
+        // stated width; whatever is left over at the end goes to the entering
+        // panel, unless a slot at least half its width still fits there.
+        let total = 0;
+        while (total + nominal(at(fingers.length)) <= length + 1e-6) {
+          const side = at(fingers.length);
+          fingers.push({ side, width: nominal(side) });
+          total += nominal(side);
+        }
+        const left = length - total,
+          next = at(fingers.length);
+        if (!fingers.length) fingers.push({ side: start, width: length });
+        else if (left > 1e-6 && panel(next) !== receiving)
+          fingers.push({ side: next, width: left });
+        else if (left > 1e-6 && left >= pitch / 2)
+          fingers.push({ side: next, width: left });
+        else if (left > 1e-6) fingers.at(-1)!.width += left;
+      } else {
+        // A corner joint shares the run out evenly, so no finger is left as a
+        // sliver at the end; the count is whichever leaves the fingers nearest
+        // their stated width and ends on the panel a kept corner asks for.
+        const fit = Math.max(1, Math.floor(length / pitch + 1e-9));
+        const allowed = (count: number) =>
+          count >= 1 && (!run.endCut || at(count - 1) === run.endCut);
+        const count = [fit, fit + 1, fit - 1, fit + 2]
+          .filter(allowed)
+          .reduce((best, candidate) =>
+            Math.abs(length / candidate - pitch) <
+            Math.abs(length / best - pitch)
+              ? candidate
+              : best,
+          );
+        for (let n = 0; n < count; n++)
+          fingers.push({ side: at(n), width: length / count });
+      }
       let x = run.start;
-      while (x < run.end - 1e-6) {
-        const i =
-          (n % 2 === 0) === (o.startWith !== "second") ? o.first : o.second;
-        const span = receiving && i !== receiving ? web : pitch;
-        const end = Math.min(run.end, x + span);
+      for (const finger of fingers) {
         cut(
-          i,
+          panel(finger.side),
           Math.max(run.start, x - clearance / 2),
-          Math.min(run.end, end + clearance / 2),
+          Math.min(run.end, x + finger.width + clearance / 2),
         );
-        x = end;
-        n++;
+        x += finger.width;
+        last = finger.side;
       }
     }
   }

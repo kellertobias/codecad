@@ -44,8 +44,10 @@ test("the CAM geometry can be laid out on the Drawings plane", async () => {
       new ManufacturingDxf({ parts: "all", layout: "one-file-per-part" }),
       view,
     );
+    // Every part draws its blank and its finished contour, even where the
+    // two are the same.
     const paths = view.primitives.filter((entry) => entry.kind === "path");
-    assert.equal(paths.length, 2);
+    assert.equal(paths.length, 4);
     // One label per piece, naming the part it came from.
     assert.deepEqual(
       view.primitives.flatMap((entry) => (entry.label ? [entry.label] : [])),
@@ -67,7 +69,8 @@ test("the CAM geometry can be laid out on the Drawings plane", async () => {
     assert.ok(rounded.points > 8, `${rounded.points} points`);
     assert.deepEqual([rounded.from, rounded.to], [0, 200]);
     // The parts are placed in a row, in the order they are exported.
-    assert.deepEqual(span(1), { points: 4, from: 220, to: 340 });
+    assert.deepEqual(span(2), { points: 4, from: 220, to: 340 });
+    assert.deepEqual(span(3), span(2));
   } finally {
     engine.dispose();
   }
