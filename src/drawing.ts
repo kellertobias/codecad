@@ -24,7 +24,7 @@ import type {
   DrawingViewKind,
   ResolvedDrawingView,
 } from "./outputs.js";
-import { standardScales, viewBasis } from "./view-basis.js";
+import { rotatePaper, standardScales, viewBasis } from "./view-basis.js";
 import type { OpenCascadeEngine } from "./engine.js";
 import { partEntities } from "./manufacturing.js";
 import { formatMm } from "./precision.js";
@@ -329,9 +329,33 @@ function paperDimension(
   });
 }
 
-export function viewCamera(kind: DrawingViewKind): b.Camera {
+interface DrawnView {
+  camera: b.Camera;
+  x: number;
+  y: number;
+  scale: number;
+  flat: boolean;
+  rotate: number;
+}
+/** Where a point of a drawn view lands on the page, in paper millimetres. */
+const paperPoint = (info: DrawnView) => (p: Vector3) => {
+  // Spatial views carry their turn in the camera axes; flat ones do not.
+  const local = info.flat
+    ? rotatePaper(p, info.rotate)
+    : {
+        x: p.dot(new Vector3(...info.camera.xAxis)),
+        y: p.dot(new Vector3(...info.camera.yAxis)),
+      };
+  return {
+    x: info.x + local.x * info.scale,
+    y: info.y - local.y * info.scale,
+  };
+};
+
+export function viewCamera(kind: DrawingViewKind, rotate = 0): b.Camera {
   const basis = viewBasis(
     kind === "exploded" ? "isometric" : kind === "flat" ? "top" : kind,
+    rotate,
   );
   return b.unwrap(b.createCamera([0, 0, 0], [...basis.toward], [...basis.x]));
 }
@@ -355,7 +379,7 @@ async function prepareView(
   engine: OpenCascadeEngine,
   view: ResolvedDrawingView,
 ): Promise<PreparedView> {
-  const camera = viewCamera(view.kind);
+  const camera = viewCamera(view.kind, view.rotate ?? 0);
   const omitted = view.without ? new Set(subjects(view.without)) : undefined;
   const parts = omitted
     ? subjects(view.of).filter((part) => !omitted.has(part))
@@ -367,37 +391,41 @@ async function prepareView(
     const entities = await partEntities(engine, part);
     const bounds = part.manufacturingOutline.points;
     const regular = part.material.options.drawingStyle?.regular;
+    // A flat pattern is already developed in 2D, so it turns on the paper
+    // rather than through the camera the spatial views are rotated with.
+    const turn = view.rotate ?? 0;
+    const corners = bounds.map((p) => rotatePaper(p, turn));
     return {
       view,
       camera,
       flat: true,
       min: {
-        x: Math.min(...bounds.map((p) => p.x)),
-        y: Math.min(...bounds.map((p) => p.y)),
+        x: Math.min(...corners.map((p) => p.x)),
+        y: Math.min(...corners.map((p) => p.y)),
       },
       max: {
-        x: Math.max(...bounds.map((p) => p.x)),
-        y: Math.max(...bounds.map((p) => p.y)),
+        x: Math.max(...corners.map((p) => p.x)),
+        y: Math.max(...corners.map((p) => p.y)),
       },
       emit(page, x, y, scale) {
+        const place = (p: { x: number; y: number }) => {
+          const turned = rotatePaper(p, turn);
+          return { x: x + turned.x * scale, y: y - turned.y * scale };
+        };
         for (const e of entities) {
           if (e.kind === "polyline")
             page.entities.push({
               ...e,
               ...(regular ? { style: regular } : {}),
-              points: e.points.map((p) => ({
-                x: x + p.x * scale,
-                y: y - p.y * scale,
-              })),
+              points: e.points.map(place),
             });
           else
             page.entities.push({
               ...e,
-              x: x + e.x * scale,
-              y: y - e.y * scale,
+              ...place(e),
               ...(e.kind === "circle"
                 ? { radius: e.radius * scale }
-                : { height: 2.5 }),
+                : { height: 2.5, rotation: (e.rotation ?? 0) + turn }),
             });
         }
       },
@@ -814,10 +842,7 @@ async function drawingPage(
       { x: 20, y: 16, width: w - 40, height: h - 16 - 78 },
     ).map((placed, i) => [automatic[i]!, placed]),
   );
-  const viewInfo = new Map<
-    string,
-    { camera: b.Camera; x: number; y: number; scale: number; flat: boolean }
-  >();
+  const viewInfo = new Map<string, DrawnView>();
   const scales: number[] = [];
   for (const entry of prepared) {
     const { view } = entry,
@@ -855,6 +880,7 @@ async function drawingPage(
       y,
       scale,
       flat: entry.flat,
+      rotate: view.rotate ?? 0,
     });
     entry.emit(page, x, y, scale);
     if (view.overallDimensions) {
@@ -911,16 +937,7 @@ async function drawingPage(
     const a = point(dim.from),
       c = point(dim.to),
       distance = a.distanceTo(c);
-    const project = (p: Vector3) => ({
-      x:
-        info.x +
-        (info.flat ? p.x : p.dot(new Vector3(...info.camera.xAxis))) *
-          info.scale,
-      y:
-        info.y -
-        (info.flat ? p.y : p.dot(new Vector3(...info.camera.yAxis))) *
-          info.scale,
-    });
+    const project = paperPoint(info);
     paperDimension(
       page,
       project(a),
@@ -940,16 +957,7 @@ async function drawingPage(
         new Vector3(p.x, p.y, p.z).applyMatrix4(
           relativeTo?.worldMatrix() ?? new Matrix4(),
         ),
-      project: (p: Vector3) => ({
-        x:
-          info.x +
-          (info.flat ? p.x : p.dot(new Vector3(...info.camera.xAxis))) *
-            info.scale,
-        y:
-          info.y -
-          (info.flat ? p.y : p.dot(new Vector3(...info.camera.yAxis))) *
-            info.scale,
-      }),
+      project: paperPoint(info),
     };
   };
   const arrow = (a: { x: number; y: number }, c: { x: number; y: number }) => {

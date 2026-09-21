@@ -118,6 +118,14 @@ and projects the angle arc into the view. Radius is in paper mm. Use `label` onl
 when an intentional displayed override is required. Leaders are arbitrary callouts,
 not automatically verified radius/diameter constraints.
 
+`rotate` turns a view counter-clockwise on the paper by that many degrees, so a long
+part can lie across the sheet without changing which side it is seen from. Spatial
+views are turned through the projection camera and flat patterns through their
+developed outline; dimensions, notes and captions of the view turn with it. In
+Studio's sheet editor the same control is on a selected view, with ↺/↻ buttons for
+quarter turns, and it turns that view's dimensions with it so they stay on the edges
+they measure.
+
 Reserve the bottom 50 mm at the right for the title block, and bottom 30 mm at the
 left for the graphic scale. `at` is each view's top-left bounding position, in paper
 mm. Views are explicitly placed; there is no automatic collision-avoiding layout.

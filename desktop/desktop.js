@@ -29,7 +29,7 @@ const projectTabs = mountProjectTabs({
   container: document.getElementById("project-tabs"),
   onError: message,
 });
-let catalog = { recent: [], examples: [] };
+let catalog = { version: "", recent: [], examples: [] };
 const exampleDetails = {
   cabinet: "Joinery · hardware · motion",
   keyboard: "Sheet metal · MDF interfaces",
@@ -64,6 +64,7 @@ function projectButton(item) {
   return button;
 }
 function renderHome() {
+  document.getElementById("app-version").textContent = catalog.version;
   document
     .getElementById("recent-list")
     .replaceChildren(...catalog.recent.map(projectButton));
@@ -76,12 +77,12 @@ async function refreshCatalog() {
   catalog = await invoke("project_catalog", {});
   renderHome();
 }
-async function openProject(example = null, path = null) {
+async function openProject(example = null, path = null, folder = false) {
   const buttons = document.querySelectorAll("main button");
   buttons.forEach((b) => (b.disabled = true));
   message("Opening project…");
   try {
-    const url = await invoke("open_project", { example, path });
+    const url = await invoke("open_project", { example, path, folder });
     if (url) location.replace(url);
     else message("");
   } catch (e) {
@@ -92,10 +93,13 @@ async function openProject(example = null, path = null) {
   }
 }
 document.getElementById("open-disk").onclick = () => openProject();
+document.getElementById("open-folder").onclick = () =>
+  openProject(null, null, true);
 window.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "o") {
     event.preventDefault();
-    void openProject();
+    // Shift asks for the folder picker instead of a single entry file.
+    void openProject(null, null, event.shiftKey);
   }
 });
 void refreshCatalog().catch((e) => message(String(e)));

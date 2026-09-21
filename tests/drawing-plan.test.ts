@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { planViewKey, validateDrawingPlan } from "../src/drawing-plan.js";
+import { rotatePaper, viewBasis, type Triple } from "../src/view-basis.js";
 
 test("drawing instructions preserve views, part references, measurements and notes", () => {
   const plan = {
@@ -85,4 +86,50 @@ test("a view remembers which parts it leaves out", () => {
     planViewKey(view),
     planViewKey({ ...view, hiddenParts: [...hiddenParts].reverse() }),
   );
+});
+
+test("a turned view keeps its dimensions on the geometry they measure", () => {
+  const view = {
+    id: "view_1",
+    kind: "view" as const,
+    subject: "*",
+    angle: "front" as const,
+    x: 20,
+    y: 20,
+    width: 160,
+    height: 100,
+    scale: 10,
+    rotate: 90,
+    label: "",
+  };
+  const plan = { version: 1 as const, title: "Turned", items: [view] };
+  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), plan);
+  for (const rotate of [400, Number.NaN, "90"])
+    assert.throws(
+      () => validateDrawingPlan({ ...plan, items: [{ ...view, rotate }] }),
+      /Invalid model view/,
+      `rotate ${String(rotate)} should be rejected`,
+    );
+
+  // The built projection depends on the turn, but an upright view keeps the
+  // key it had before rotation existed, so saved builds stay usable.
+  const { rotate, ...upright } = view;
+  assert.notEqual(planViewKey(view), planViewKey(upright));
+  assert.equal(planViewKey(upright), planViewKey({ ...view, rotate: 0 }));
+
+  // A front view turned a quarter turn still looks along the same axis, but
+  // the model's up (world +Z) now points left on the paper.
+  const turned = viewBasis("front", 90);
+  const close = (a: Triple, b: Triple) =>
+    a.forEach((n, i) => assert(Math.abs(n - b[i]!) < 1e-12, `${a} vs ${b}`));
+  close(turned.x, [0, 0, -1]);
+  close(turned.y, [1, 0, 0]);
+  close(turned.toward, viewBasis("front").toward);
+  // Four quarter turns come back to where they started.
+  close(viewBasis("front", 360).x, viewBasis("front").x);
+
+  // A point turns with the frame: 90° puts paper-right onto paper-up.
+  const p = rotatePaper({ x: 3, y: 0 }, 90);
+  assert(Math.abs(p.x) < 1e-12 && Math.abs(p.y - 3) < 1e-12);
+  assert.deepEqual(rotatePaper({ x: 3, y: -2 }, 0), { x: 3, y: -2 });
 });

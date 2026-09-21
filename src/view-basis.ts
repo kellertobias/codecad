@@ -30,10 +30,43 @@ const bases: Record<ViewAngle, ViewBasis> = {
   },
 };
 export const viewAngles = Object.keys(bases) as ViewAngle[];
-export function viewBasis(angle: ViewAngle): ViewBasis {
+/**
+ * The same view turned in the paper plane. Positive degrees turn the drawing
+ * counter-clockwise on the page, which is what turning the axes the other way
+ * does to every projected point.
+ */
+export function rotatedBasis(basis: ViewBasis, degrees: number): ViewBasis {
+  if (!degrees) return basis;
+  if (!Number.isFinite(degrees))
+    throw new Error("View rotation must be finite degrees");
+  const radians = (degrees * Math.PI) / 180,
+    cos = Math.cos(radians),
+    sin = Math.sin(radians);
+  const mix = (a: number, b: number): Triple => [
+    basis.x[0] * a + basis.y[0] * b,
+    basis.x[1] * a + basis.y[1] * b,
+    basis.x[2] * a + basis.y[2] * b,
+  ];
+  return { x: mix(cos, -sin), y: mix(sin, cos), toward: basis.toward };
+}
+/** Rotate a point already in paper coordinates (x right, y up) to match. */
+export function rotatePaper<T extends { x: number; y: number }>(
+  point: T,
+  degrees: number,
+): { x: number; y: number } {
+  if (!degrees) return { x: point.x, y: point.y };
+  const radians = (degrees * Math.PI) / 180,
+    cos = Math.cos(radians),
+    sin = Math.sin(radians);
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  };
+}
+export function viewBasis(angle: ViewAngle, rotate = 0): ViewBasis {
   const basis = bases[angle];
   if (!basis) throw new Error(`Unknown view angle: ${String(angle)}`);
-  return basis;
+  return rotatedBasis(basis, rotate);
 }
 /** Conventional drawing scales, largest first. */
 export const standardScales = [

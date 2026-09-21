@@ -107,6 +107,11 @@ p {
   color: #adbfbc;
   line-height: 1.6;
 }
+.app-version {
+  color: #79928d;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .primary {
   background: #71dfc0;
   color: #112821;

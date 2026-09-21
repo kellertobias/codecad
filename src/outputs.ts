@@ -48,6 +48,9 @@ export interface DrawingView {
   readonly box?: { readonly width: number; readonly height: number };
   /** Add overall width and height dimensions of the projected subject. */
   readonly overallDimensions?: boolean;
+  /** Degrees to turn the projection counter-clockwise on the paper, so a long
+   * part can lie across the sheet. Dimensions and notes turn with it. */
+  readonly rotate?: number;
   readonly hiddenLines?: boolean;
   readonly explode?: number;
   readonly tangentEdges?: boolean;
@@ -117,6 +120,8 @@ export class TechnicalDrawing {
       throw new Error("Duplicate view id");
     if (o.scale !== undefined && !(o.scale > 0))
       throw new Error("View scale must be positive");
+    if (o.rotate !== undefined && !Number.isFinite(o.rotate))
+      throw new Error("View rotation must be finite degrees");
     if (o.box && !(o.box.width > 0 && o.box.height > 0))
       throw new Error("View box must have positive width and height");
     if (o.box && !o.at) throw new Error("A view box needs a paper position");

@@ -3,7 +3,12 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ReportDownload } from "../src/reports.js";
 import type { ParameterState } from "../src/parameters.js";
 import { IsolationSession } from "./isolation.js";
-import { saveDesktopPreview, setupDesktop } from "./desktop.js";
+import {
+  reportProjectTitle,
+  saveDesktopPreview,
+  setupDesktop,
+} from "./desktop.js";
+import { loadPanes, rememberPane, whenRemembered } from "./panes.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
@@ -101,11 +106,36 @@ const edgesEnabled = () => $("edges").getAttribute("aria-pressed") === "true";
 /** Edge line strength, 0.05 - 1: WebGL ignores line width, so strength is opacity. */
 const edgeStrength = () =>
   Number($<HTMLInputElement>("edge-strength").value) / 100;
-const applyEdgeStrength = () => {
+/** Perceived brightness of a material colour, 0 - 1. */
+const brightness = (colour: string) => {
+  const hex = new THREE.Color(colour).getHex(THREE.SRGBColorSpace);
+  return (
+    (0.2126 * ((hex >> 16) & 255) +
+      0.7152 * ((hex >> 8) & 255) +
+      0.0722 * (hex & 255)) /
+    255
+  );
+};
+/** Edge line colour: automatic picks the contrast that reads on the material. */
+const edgeColour = (materialColour: string) => {
+  const choice = $<HTMLSelectElement>("edge-color").value;
+  if (choice === "custom")
+    return $<HTMLInputElement>("edge-color-custom").value;
+  if (choice !== "auto") return choice;
+  return brightness(materialColour) < 0.5 ? "#ffffff" : "#000000";
+};
+const applyEdgeAppearance = () => {
   const opacity = edgeStrength();
-  for (const edges of edgeObjects.values())
-    (edges.material as THREE.LineBasicMaterial).opacity = opacity;
+  for (const edges of edgeObjects.values()) {
+    const material = edges.material as THREE.LineBasicMaterial;
+    material.opacity = opacity;
+    material.color.set(edgeColour(edges.userData.materialColour));
+  }
+  const custom = $<HTMLSelectElement>("edge-color").value === "custom";
+  $<HTMLInputElement>("edge-color-custom").hidden = !custom;
   $<HTMLInputElement>("edge-strength").disabled = !edgesEnabled();
+  $<HTMLSelectElement>("edge-color").disabled = !edgesEnabled();
+  $<HTMLInputElement>("edge-color-custom").disabled = !edgesEnabled();
 };
 const isolation = new IsolationSession<{
   visible: Map<string, boolean>;
@@ -374,6 +404,8 @@ function showModel(data: Model) {
     );
   document.title = data.title + " · CodeCAD";
   $("project-name").textContent = data.title;
+  // The desktop tab beside this page is named by the project, not by its file.
+  reportProjectTitle(data.title);
   // The identity from index.ts, so the header says whose project this is.
   $("project-name").title = [
     data.info?.description,
@@ -414,11 +446,12 @@ function showModel(data: Model) {
         new THREE.Float32BufferAttribute(d.edges, 3),
       ),
       new THREE.LineBasicMaterial({
-        color: 0x28383d,
+        color: edgeColour(d.color),
         transparent: true,
         opacity: edgeStrength(),
       }),
     );
+    edges.userData.materialColour = d.color;
     edges.matrixAutoUpdate = false;
     edges.matrix.copy(mesh.matrix);
     group.add(edges);
@@ -1202,8 +1235,10 @@ $("toggle-source").onclick = () => {
     "aria-label",
     open ? "Hide code" : "Show code",
   );
+  rememberPane("code", open);
 };
-$("toggle-parts").onclick = () => document.body.classList.toggle("parts-open");
+$("toggle-parts").onclick = () =>
+  rememberPane("parts", document.body.classList.toggle("parts-open"));
 $("reload-source").onclick = () => {
   if (!dirty || confirm("Discard unsaved editor changes?")) void loadSource();
 };
@@ -1266,11 +1301,13 @@ $("edges").onclick = () => {
   const enabled = !edgesEnabled();
   button.setAttribute("aria-pressed", String(enabled));
   button.title = enabled ? "Hide edges" : "Show edges";
-  applyEdgeStrength();
+  applyEdgeAppearance();
   applyPose();
 };
-$("edge-strength").oninput = applyEdgeStrength;
-applyEdgeStrength();
+$("edge-strength").oninput = applyEdgeAppearance;
+$("edge-color").onchange = applyEdgeAppearance;
+$("edge-color-custom").oninput = applyEdgeAppearance;
+applyEdgeAppearance();
 $("explode").oninput = () => {
   clearMeasurement();
   applyPose();
@@ -1716,6 +1753,15 @@ $<HTMLButtonElement>("copy-build-output").onclick = async () => {
 };
 await loadSource();
 await configureEditor(token);
+// Put the panes back the way this project was left. The desktop shell applies
+// the code pane itself, because there it is a different pane with a toggle of
+// its own.
+whenRemembered((panes) => {
+  if (panes.parts) document.body.classList.add("parts-open");
+  if (panes.code && !document.body.classList.contains("desktop"))
+    $("toggle-source").click();
+});
+await loadPanes(token);
 const events = new EventSource("/api/events");
 events.onmessage = async (event) => {
   const state = JSON.parse(event.data);

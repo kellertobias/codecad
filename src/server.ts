@@ -24,6 +24,39 @@ const parameterFile = join(
   createHash("sha256").update(entry).digest("hex") + ".json",
 );
 const planFile = drawingPlanFile(entry);
+// Which panes were open last time this project was looked at. It belongs to
+// the project rather than the browser, because every session gets a fresh
+// port and so a fresh origin: anything kept in the page's own storage would be
+// gone the next time the project is opened.
+const viewFile = join(
+  storage,
+  "views",
+  createHash("sha256").update(entry).digest("hex") + ".json",
+);
+const paneNames = ["code", "parts"] as const;
+type PaneState = Partial<Record<(typeof paneNames)[number], boolean>>;
+// Never fatal: a missing or damaged file just means no preference yet.
+const readPanes = async (): Promise<PaneState> => {
+  try {
+    return validatePanes(JSON.parse(await readFile(viewFile, "utf8")));
+  } catch {
+    return {};
+  }
+};
+/** Only the panes we know about, and only as booleans. */
+function validatePanes(value: unknown): PaneState {
+  if (!value || typeof value !== "object")
+    throw new Error("Expected an object");
+  const panes: PaneState = {};
+  for (const name of paneNames) {
+    const open = (value as Record<string, unknown>)[name];
+    if (open === undefined) continue;
+    if (typeof open !== "boolean")
+      throw new Error(`Pane ${name} must be a boolean`);
+    panes[name] = open;
+  }
+  return panes;
+}
 let parameterValues: Record<string, number | boolean | string> = {};
 try {
   parameterValues = JSON.parse(await readFile(parameterFile, "utf8"));
@@ -293,6 +326,10 @@ const server = createServer(async (req, res) => {
       }
       return;
     }
+    if (url.pathname === "/api/view" && req.method === "GET") {
+      json({ panes: await readPanes() });
+      return;
+    }
     if (url.pathname === "/api/editor-libraries" && req.method === "GET") {
       json(languageService.libraries());
       return;
@@ -310,6 +347,35 @@ const server = createServer(async (req, res) => {
       if (url.pathname === "/api/rebuild") {
         schedule();
         json({ ok: true });
+        return;
+      }
+      if (url.pathname === "/api/view") {
+        let body = "";
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 1_000) {
+            json({ error: "View state exceeds 1 KB" }, 413);
+            return;
+          }
+        }
+        try {
+          // Merge, so a page that only knows about one pane cannot drop the
+          // other one's state.
+          const panes = {
+            ...(await readPanes()),
+            ...validatePanes(JSON.parse(body)),
+          };
+          await mkdir(dirname(viewFile), { recursive: true });
+          const staged = viewFile + ".tmp-" + randomBytes(6).toString("hex");
+          await writeFile(staged, JSON.stringify(panes));
+          await rename(staged, viewFile);
+          json({ panes });
+        } catch (error) {
+          json(
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          );
+        }
         return;
       }
       if (url.pathname === "/api/drawing-plan") {

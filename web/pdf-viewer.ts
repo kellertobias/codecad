@@ -32,12 +32,19 @@ export function pdfViewer(reports: PdfReport[]) {
   const status = document.createElement("span");
   status.textContent = "Loading PDF…";
   status.setAttribute("role", "status");
+  interface Region {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }
   const pages: {
     page: PDFPageProxy;
     slot: HTMLElement;
     width: number;
     height: number;
     rendered: number;
+    region?: Region;
     task?: RenderTask;
   }[] = [];
   const loading: PDFDocumentLoadingTask[] = [];
@@ -53,6 +60,31 @@ export function pdfViewer(reports: PdfReport[]) {
   pageNumber.value = "1";
   pageNumber.setAttribute("aria-label", "PDF page number");
   const widest = () => Math.max(1, ...pages.map((p) => p.width));
+  /** The slice of a page, in its own CSS pixels, kept at device resolution. */
+  const slice = (
+    rect: DOMRect,
+    bounds: DOMRect,
+    width: number,
+    height: number,
+    margin: number,
+  ): Region => {
+    const x = Math.max(0, Math.min(width, bounds.left - margin - rect.left));
+    const y = Math.max(0, Math.min(height, bounds.top - margin - rect.top));
+    return {
+      x,
+      y,
+      width: Math.max(0, Math.min(width, bounds.right + margin - rect.left) - x),
+      height: Math.max(
+        0,
+        Math.min(height, bounds.bottom + margin - rect.top) - y,
+      ),
+    };
+  };
+  const covers = (outer: Region, inner: Region) =>
+    outer.x <= inner.x + 0.5 &&
+    outer.y <= inner.y + 0.5 &&
+    outer.x + outer.width >= inner.x + inner.width - 0.5 &&
+    outer.y + outer.height >= inner.y + inner.height - 0.5;
   const update = () => {
     if (disposed) return;
     const bounds = viewport.getBoundingClientRect();
@@ -65,36 +97,55 @@ export function pdfViewer(reports: PdfReport[]) {
       if (!visible) {
         p.task?.cancel();
         delete p.task;
+        delete p.region;
         p.slot.replaceChildren();
         p.rendered = 0;
         continue;
       }
-      if (p.rendered === scale) continue;
+      const slotWidth = p.width * scale,
+        slotHeight = p.height * scale;
+      // Only the visible slice is rasterised, so zooming in buys detail
+      // instead of stretching one page-sized bitmap over more screen.
+      const needed = slice(rect, bounds, slotWidth, slotHeight, 60);
+      if (!needed.width || !needed.height) continue;
+      if (p.rendered === scale && p.region && covers(p.region, needed)) continue;
       p.task?.cancel();
+      const region = slice(rect, bounds, slotWidth, slotHeight, 240);
       const canvas = document.createElement("canvas");
       canvas.setAttribute("aria-label", p.slot.getAttribute("aria-label")!);
       const view = p.page.getViewport({ scale });
       const dpr = Math.min(
         window.devicePixelRatio || 1,
         2,
-        Math.sqrt(8_000_000 / (view.width * view.height)),
+        Math.sqrt(12_000_000 / Math.max(1, region.width * region.height)),
       );
-      canvas.width = Math.ceil(view.width * dpr);
-      canvas.height = Math.ceil(view.height * dpr);
-      canvas.style.width = "100%";
-      canvas.style.height = "100%";
-      p.slot.replaceChildren(canvas);
+      canvas.width = Math.ceil(region.width * dpr);
+      canvas.height = Math.ceil(region.height * dpr);
+      canvas.style.left = `${region.x}px`;
+      canvas.style.top = `${region.y}px`;
+      canvas.style.width = `${region.width}px`;
+      canvas.style.height = `${region.height}px`;
+      // A canvas from the same zoom level still shows the right pixels while
+      // the wider slice renders; one from another zoom level does not.
+      const previous = p.rendered === scale ? p.slot.firstElementChild : null;
+      if (!previous) p.slot.replaceChildren();
+      p.slot.append(canvas);
       p.rendered = scale;
+      p.region = region;
       const task = p.page.render({
         canvas,
         viewport: view,
-        transform: [dpr, 0, 0, dpr, 0, 0],
+        transform: [dpr, 0, 0, dpr, -region.x * dpr, -region.y * dpr],
       });
       p.task = task;
-      task.promise.catch((error) => {
-        if (error?.name !== "RenderingCancelledException" && !disposed)
+      task.promise.then(
+        () => previous?.remove(),
+        (error) => {
+          canvas.remove();
+          if (error?.name === "RenderingCancelledException" || disposed) return;
           status.textContent = `PDF render failed: ${String(error)}`;
-      });
+        },
+      );
     }
     let active = -1,
       mostVisible = 0;

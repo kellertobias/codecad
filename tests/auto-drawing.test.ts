@@ -283,3 +283,68 @@ test("a plan view leaves out the parts switched off for it", async () => {
     engine.dispose();
   }
 });
+
+test("a plan view turned on the paper takes its dimensions with it", async () => {
+  const project = new Crate(),
+    engine = new OpenCascadeEngine();
+  try {
+    await engine.evaluate({ root: project, revision: 1 });
+    // A 400 × 140 front view of the body, measured across its full width.
+    const sheet = (rotate: number) =>
+      validateDrawingPlan({
+        version: 1,
+        title: "Crate sheet",
+        items: [
+          {
+            id: "v1",
+            kind: "view",
+            subject: "crate/body",
+            angle: "front",
+            x: 20,
+            y: 20,
+            width: 200,
+            height: 200,
+            scale: 5,
+            label: "Body",
+            ...(rotate ? { rotate } : {}),
+          },
+          {
+            id: "d1",
+            kind: "dimension",
+            view: "v1",
+            // Turned with the view by the editor: paper-right becomes
+            // paper-up, so the same measurement is stored along v.
+            ...(rotate
+              ? { u1: 0, v1: 0, u2: 0, v2: 400 }
+              : { u1: 0, v1: 0, u2: 400, v2: 0 }),
+            offset: 8,
+            label: "",
+          },
+        ],
+      });
+    const render = async (rotate: number) => {
+      const { drawing, warnings } = planDrawing(sheet(rotate), project);
+      assert.deepEqual(warnings, []);
+      const prepared: PreparedView[] = [];
+      const { svg } = await renderDrawingFormats(engine, drawing, (view) =>
+        prepared.push(view),
+      );
+      const { min, max } = prepared[0]!;
+      return {
+        width: Math.round(max.x - min.x),
+        height: Math.round(max.y - min.y),
+        svg: Buffer.from(svg).toString(),
+      };
+    };
+    const upright = await render(0);
+    assert.deepEqual([upright.width, upright.height], [400, 140]);
+    const turned = await render(90);
+    // A quarter turn swaps the projected extents; the model is not rebuilt.
+    assert.deepEqual([turned.width, turned.height], [140, 400]);
+    // The dimension still measures the same 400 mm edge in both.
+    assert.match(upright.svg, />400</);
+    assert.match(turned.svg, />400</);
+  } finally {
+    engine.dispose();
+  }
+});

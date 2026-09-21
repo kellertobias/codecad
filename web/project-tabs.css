@@ -1,4 +1,8 @@
 /* Shared by the desktop home screen and every open project window. */
+/* An author rule beats the browser's own [hidden], so restate it here. */
+.project-tabs[hidden] {
+  display: none;
+}
 .project-tabs {
   display: flex;
   align-items: center;

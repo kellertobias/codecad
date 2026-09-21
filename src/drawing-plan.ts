@@ -18,6 +18,9 @@ export type PlanItem =
       height: number;
       /** Denominator: 10 draws the model at 1:10. */
       scale: number;
+      /** Degrees the projection is turned counter-clockwise on the paper.
+       * Dimension points are stored in the turned frame, so they stay put. */
+      rotate?: number;
       /** Empty for an automatic "Front · 1:10" caption. */
       label: string;
       hiddenLines?: boolean;
@@ -69,10 +72,13 @@ export const planViewLabel = (view: { angle: PlanAngle; scale: number }) =>
 export const planViewKey = (view: {
   subject: string;
   angle: string;
+  rotate?: number;
   hiddenLines?: boolean;
   hiddenParts?: readonly string[];
 }) =>
-  `${view.subject}|${view.angle}|${view.hiddenLines ? "hidden" : "visible"}` +
+  `${view.subject}|${view.angle}${view.rotate ? `@${view.rotate}` : ""}|${
+    view.hiddenLines ? "hidden" : "visible"
+  }` +
   (view.hiddenParts?.length
     ? `|-${[...view.hiddenParts].sort().join(",")}`
     : "");
@@ -109,6 +115,8 @@ export function validateDrawingPlan(value: unknown): DrawingPlan {
         item.width <= 0 ||
         item.height <= 0 ||
         item.scale <= 0 ||
+        (item.rotate !== undefined &&
+          (!finite(item.rotate) || Math.abs(item.rotate) > 360)) ||
         typeof item.label !== "string" ||
         item.label.length > 200 ||
         (item.hiddenLines !== undefined &&

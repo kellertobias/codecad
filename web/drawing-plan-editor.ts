@@ -7,8 +7,9 @@ import {
   type DrawingPlan,
   type PlanItem,
 } from "../src/drawing-plan.js";
-import { PanZoom } from "./pan-zoom.js";
+import { PanZoom, viewBoxFor } from "./pan-zoom.js";
 import {
+  rotatePaper,
   standardScales,
   viewAngles,
   viewBasis,
@@ -123,6 +124,7 @@ export class DrawingPlanEditor {
     this.wrap.addEventListener("pointermove", (event) => this.panMove(event));
     for (const type of ["pointerup", "pointercancel"] as const)
       this.wrap.addEventListener(type, () => this.panUp());
+    new ResizeObserver(() => this.applyZoom()).observe(this.wrap);
     this.applyZoom();
     byId("plan-save").onclick = () => void this.save();
     byId("plan-export").onclick = () => void this.download();
@@ -227,7 +229,7 @@ export class DrawingPlanEditor {
     const exact = built?.key === viewKey(view);
     if (exact) ({ visible, hidden } = built!);
     else {
-      const basis = viewBasis(view.angle),
+      const basis = viewBasis(view.angle, view.rotate ?? 0),
         horizontal = new THREE.Vector3(...basis.x),
         vertical = new THREE.Vector3(...basis.y),
         point = new THREE.Vector3();
@@ -341,9 +343,21 @@ export class DrawingPlanEditor {
     this.pan = undefined;
     this.wrap.classList.remove("panning");
   }
+  /**
+   * Zooming moves the viewBox rather than scaling the element, so the sheet is
+   * re-rasterised at the display's resolution instead of being stretched.
+   */
   private applyZoom() {
     const { x, y, scale } = this.viewport;
-    this.sheet.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    const width = this.wrap.clientWidth,
+      height = this.wrap.clientHeight;
+    if (width > 0 && height > 0) {
+      const box = viewBoxFor({ scale, x, y }, planSheet, width, height);
+      this.sheet.setAttribute(
+        "viewBox",
+        `${fmt(box.minX)} ${fmt(box.minY)} ${fmt(box.width)} ${fmt(box.height)}`,
+      );
+    }
     byId("plan-zoom-level").textContent = `${Math.round(scale * 100)}%`;
   }
   private point(event: PointerEvent): Point {
@@ -621,8 +635,31 @@ export class DrawingPlanEditor {
   }
   private renderSheet() {
     const { width, height } = planSheet;
+    const shadow = svgNode("filter", {
+      id: "plan-sheet-shadow",
+      x: "-10%",
+      y: "-10%",
+      width: "120%",
+      height: "120%",
+    });
+    shadow.append(
+      svgNode("feDropShadow", {
+        dx: 0,
+        dy: 2,
+        stdDeviation: 3,
+        "flood-opacity": 0.45,
+      }),
+    );
     this.sheet.replaceChildren(
-      svgNode("rect", { x: 0, y: 0, width, height, fill: "white" }),
+      shadow,
+      svgNode("rect", {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        fill: "white",
+        filter: "url(#plan-sheet-shadow)",
+      }),
       svgNode("rect", {
         x: 10,
         y: 10,
@@ -902,6 +939,29 @@ export class DrawingPlanEditor {
     };
     panel.append(all);
   }
+  /**
+   * Turn a view on the paper. Dimension points are kept in the view's own
+   * projected frame, so they are turned by the same amount and stay on the
+   * geometry they measure.
+   */
+  private rotateView(view: View, degrees: number) {
+    const next = Number.isFinite(degrees)
+      ? fmt(Math.max(-360, Math.min(360, degrees)))
+      : 0;
+    const delta = next - (view.rotate ?? 0);
+    if (!delta) return;
+    if (next) view.rotate = next;
+    else delete view.rotate;
+    for (const item of this.plan.items) {
+      if (item.kind !== "dimension" || item.view !== view.id) continue;
+      const a = rotatePaper({ x: item.u1, y: item.v1 }, delta),
+        c = rotatePaper({ x: item.u2, y: item.v2 }, delta);
+      item.u1 = fmt(a.x);
+      item.v1 = fmt(a.y);
+      item.u2 = fmt(c.x);
+      item.v2 = fmt(c.y);
+    }
+  }
   /** Keeps only switched-off paths that still sit under the view's subject. */
   private pruneHiddenParts(item: View) {
     if (!item.hiddenParts) return;
@@ -1048,6 +1108,33 @@ export class DrawingPlanEditor {
         (value) => (item.angle = value as ViewAngle),
         false,
       );
+      const turn = (degrees: number) => {
+        const next = ((((item.rotate ?? 0) + degrees) % 360) + 360) % 360;
+        this.rotateView(item, next);
+        this.change();
+      };
+      const rotation = numberField(
+        "Rotate (°)",
+        item.rotate ?? 0,
+        (value) => this.rotateView(item, value),
+      );
+      rotation.setAttribute("step", "15");
+      const quarter = document.createElement("div");
+      quarter.className = "plan-turn";
+      for (const [label, degrees] of [
+        ["↺ 90°", 90],
+        ["↻ 90°", -90],
+      ] as const) {
+        const button = document.createElement("button");
+        button.textContent = label;
+        button.setAttribute(
+          "aria-label",
+          `Turn the view ${degrees > 0 ? "counter-clockwise" : "clockwise"} by 90 degrees`,
+        );
+        button.onclick = () => turn(degrees);
+        quarter.append(button);
+      }
+      panel.append(quarter);
       const known = scaleChoices.includes(item.scale);
       selectField(
         "Scale",

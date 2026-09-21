@@ -1,3 +1,4 @@
+import { rememberPane, whenRemembered } from "./panes.js";
 import { mountProjectTabs } from "./project-tabs.js";
 type Native = {
   core: {
@@ -12,6 +13,23 @@ type ProjectCard = {
 };
 type ProjectCatalog = { recent: ProjectCard[]; examples: ProjectCard[] };
 const native = (window as unknown as { __TAURI__?: Native }).__TAURI__;
+let refreshTabs: (() => void) | undefined;
+let reportedTitle = "";
+/**
+ * Names this project's tab after the project rather than after its entry file.
+ * Only the page knows the title, because it is the model that carries it, so
+ * it hands it to the native side once the build has named itself.
+ */
+export function reportProjectTitle(title: string) {
+  if (!native || !title || title === reportedTitle) return;
+  reportedTitle = title;
+  void native.core
+    .invoke("set_project_title", { title })
+    .then(() => refreshTabs?.())
+    .catch(() => {
+      reportedTitle = "";
+    });
+}
 export async function saveDesktopPreview(source: HTMLCanvasElement) {
   if (!native || !source.width || !source.height) return;
   const canvas = document.createElement("canvas");
@@ -67,20 +85,29 @@ export function setupDesktop(canLeave: () => boolean) {
   sourceHeader.append(source);
   source.setAttribute("aria-label", "Hide code");
   source.title = "Hide code";
-  source.onclick = () => {
-    const hidden = document.body.classList.toggle("source-hidden");
-    document.getElementById("rebuild")!.hidden = !hidden;
-    source.textContent = hidden ? "◨" : "◧";
-    source.setAttribute("aria-label", hidden ? "Show code" : "Hide code");
-    source.title = hidden ? "Show code" : "Hide code";
-    source.setAttribute("aria-pressed", String(hidden));
-    if (hidden) {
+  const showCode = (shown: boolean) => {
+    document.body.classList.toggle("source-hidden", !shown);
+    document.getElementById("rebuild")!.hidden = shown;
+    source.textContent = shown ? "◧" : "◨";
+    source.setAttribute("aria-label", shown ? "Hide code" : "Show code");
+    source.title = shown ? "Hide code" : "Show code";
+    source.setAttribute("aria-pressed", String(!shown));
+    // The identity and the toggle follow the pane they belong to.
+    if (shown) sourceHeader.append(brand, source);
+    else {
       toolbarStart.prepend(brand);
       workspace.append(source);
-    } else {
-      sourceHeader.append(brand, source);
     }
   };
+  source.onclick = () => {
+    const shown = document.body.classList.contains("source-hidden");
+    showCode(shown);
+    rememberPane("code", shown);
+  };
+  // Reopen the project with the code pane the way it was left.
+  whenRemembered((panes) => {
+    if (panes.code !== undefined) showCode(panes.code);
+  });
   const editors = document.createElement("select");
   editors.id = "external-editor";
   editors.setAttribute("aria-label", "Open in external editor");
@@ -130,10 +157,12 @@ export function setupDesktop(canLeave: () => boolean) {
   const recentTab = document.createElement("button");
   const examplesTab = document.createElement("button");
   const diskTab = document.createElement("button");
+  const folderTab = document.createElement("button");
   for (const [button, label] of [
     [recentTab, "Recent"],
     [examplesTab, "Examples"],
-    [diskTab, "From disk"],
+    [diskTab, "Entry file"],
+    [folderTab, "Folder"],
   ] as const) {
     button.textContent = label;
     tabs.append(button);
@@ -144,6 +173,7 @@ export function setupDesktop(canLeave: () => boolean) {
   async function openSelection(
     example: string | null = null,
     path: string | null = null,
+    folder = false,
   ) {
     if (!canLeave()) return;
     home.disabled = true;
@@ -151,6 +181,7 @@ export function setupDesktop(canLeave: () => boolean) {
       const url = await bridge.core.invoke<string | null>("open_project", {
         example,
         path,
+        folder,
       });
       if (url) location.replace(url);
     } catch (e) {
@@ -165,6 +196,7 @@ export function setupDesktop(canLeave: () => boolean) {
       [recentTab, "recent"],
       [examplesTab, "examples"],
       [diskTab, "disk"],
+      [folderTab, "folder"],
     ] as const)
       button.setAttribute("aria-selected", String(tab === name));
     const items = tab === "recent" ? catalog.recent : catalog.examples;
@@ -203,6 +235,7 @@ export function setupDesktop(canLeave: () => boolean) {
   recentTab.onclick = () => renderTab("recent");
   examplesTab.onclick = () => renderTab("examples");
   diskTab.onclick = () => void openSelection();
+  folderTab.onclick = () => void openSelection(null, null, true);
   picker.onclick = (event) => {
     if (event.target === picker) picker.close();
   };
@@ -243,13 +276,13 @@ export function setupDesktop(canLeave: () => boolean) {
   if (document.body.classList.contains("platform-macos"))
     projectBar.prepend(controls);
   else projectBar.append(controls);
-  mountProjectTabs({
+  refreshTabs = mountProjectTabs({
     invoke: (command, args) => bridge.core.invoke(command, args),
     container: tabStrip,
     canLeave,
     newTab: () => void showPicker(),
     onError: (message) => status(message),
-  });
+  }).refresh;
   const dragWindow = (e: MouseEvent) => {
     if (
       e.button === 0 &&

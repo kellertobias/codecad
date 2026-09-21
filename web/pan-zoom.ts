@@ -19,6 +19,30 @@ export class PanZoom {
   }
 }
 
+/**
+ * The region of a page, in page units, that a pan/zoom state shows inside an
+ * element of the given pixel size. Driving an SVG viewBox with this keeps the
+ * drawing sharp at every zoom level, where scaling the element would only
+ * stretch the pixels it was first rasterised with.
+ */
+export function viewBoxFor(
+  view: { scale: number; x: number; y: number },
+  page: { width: number; height: number },
+  width: number,
+  height: number,
+) {
+  const perUnit =
+    Math.min(width / page.width, height / page.height) * view.scale;
+  const boxWidth = width / perUnit,
+    boxHeight = height / perUnit;
+  return {
+    minX: page.width / 2 - view.x / perUnit - boxWidth / 2,
+    minY: page.height / 2 - view.y / perUnit - boxHeight / 2,
+    width: boxWidth,
+    height: boxHeight,
+  };
+}
+
 /** Independent, vector-sharp viewport for each drawing or sheet page. */
 export function drawingViewport(src: string, title: string) {
   const wrapper = document.createElement("div");

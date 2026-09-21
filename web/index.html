@@ -242,6 +242,26 @@
               max="100"
               value="55"
             />
+            <label class="tool-option" for="edge-color">Edge colour</label>
+            <select
+              id="edge-color"
+              aria-label="Edge line colour"
+              title="Edge line colour"
+            >
+              <option value="auto">Automatic</option>
+              <option value="#000000">Black</option>
+              <option value="#ffffff">White</option>
+              <option value="#28383d">Slate</option>
+              <option value="custom">Custom</option>
+            </select>
+            <input
+              id="edge-color-custom"
+              aria-label="Custom edge line colour"
+              title="Custom edge line colour"
+              type="color"
+              value="#28383d"
+              hidden
+            />
             <label class="tool-option" for="explode">Explode</label>
             <input
               id="explode"

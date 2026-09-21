@@ -55,7 +55,7 @@ fn remember_trusted_file(file: &Path, entry: &Path) -> Result<(), String> {
     std::fs::rename(temporary, file).map_err(|e| e.to_string())
 }
 
-fn read_previews(file: &Path) -> Result<HashMap<String, String>, String> {
+fn read_project_map(file: &Path) -> Result<HashMap<String, String>, String> {
     match std::fs::read(file) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
@@ -63,15 +63,35 @@ fn read_previews(file: &Path) -> Result<HashMap<String, String>, String> {
     }
 }
 
-fn write_previews(file: &Path, previews: &HashMap<String, String>) -> Result<(), String> {
+fn write_project_map(file: &Path, entries: &HashMap<String, String>) -> Result<(), String> {
     std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
     let temporary = file.with_extension("json.tmp");
     std::fs::write(
         &temporary,
-        serde_json::to_vec(previews).map_err(|e| e.to_string())?,
+        serde_json::to_vec(entries).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     std::fs::rename(temporary, file).map_err(|e| e.to_string())
+}
+
+// A project's own title, as its model reports it once it has been built. Kept
+// on disk beside the previews so a tab and a recent card can be named before
+// the project has finished opening, and after the app has been restarted.
+const TITLE_LIMIT: usize = 120;
+fn project_titles(app: &tauri::AppHandle) -> Result<HashMap<String, String>, String> {
+    read_project_map(&data_file(app, "project-titles.json")?)
+}
+fn project_title(titles: &HashMap<String, String>, entry: &Path) -> String {
+    titles
+        .get(&entry.to_string_lossy().into_owned())
+        .cloned()
+        .unwrap_or_else(|| {
+            entry
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Project")
+                .to_owned()
+        })
 }
 
 fn valid_preview(image: &str) -> bool {
@@ -201,6 +221,29 @@ mod tests {
     }
 
     #[test]
+    fn a_project_folder_opens_through_its_index() {
+        let root = std::env::temp_dir().join(format!(
+            "codecad-folder-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("shelf");
+        std::fs::create_dir_all(&project).unwrap();
+        assert!(project_entry(&project)
+            .unwrap_err()
+            .contains("shelf has no index.ts"));
+        let entry = project.join("index.ts");
+        std::fs::write(&entry, "").unwrap();
+        assert_eq!(project_entry(&project).unwrap(), entry);
+        // A file the user picked directly is already the entry.
+        assert_eq!(project_entry(&entry).unwrap(), entry);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn a_page_is_trusted_only_by_its_own_session_origin() {
         assert!(matches_session(
             "http://127.0.0.1:4317/drawings",
@@ -243,8 +286,8 @@ mod tests {
         ));
         let file = root.join("previews.json");
         let map = HashMap::from([("/project.ts".to_owned(), png.to_owned())]);
-        write_previews(&file, &map).unwrap();
-        assert_eq!(read_previews(&file).unwrap(), map);
+        write_project_map(&file, &map).unwrap();
+        assert_eq!(read_project_map(&file).unwrap(), map);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -326,6 +369,7 @@ struct ProjectCard {
 
 #[derive(Serialize)]
 struct ProjectCatalog {
+    version: String,
     recent: Vec<ProjectCard>,
     examples: Vec<ProjectCard>,
 }
@@ -337,18 +381,15 @@ fn project_catalog(
     app: tauri::AppHandle,
 ) -> Result<ProjectCatalog, String> {
     trusted(&window, &state)?;
-    let previews = read_previews(&data_file(&app, "project-previews.json")?)?;
+    let previews = read_project_map(&data_file(&app, "project-previews.json")?)?;
+    let titles = project_titles(&app)?;
     let recent = read_recent(&app)?
         .into_iter()
         .map(|path| {
             let key = path.to_string_lossy().into_owned();
             ProjectCard {
                 id: None,
-                title: path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Project")
-                    .to_owned(),
+                title: project_title(&titles, &path),
                 path: Some(key.clone()),
                 preview: previews.get(&key).cloned(),
             }
@@ -376,7 +417,11 @@ fn project_catalog(
         }
     })
     .collect();
-    Ok(ProjectCatalog { recent, examples })
+    Ok(ProjectCatalog {
+        version: app.package_info().version.to_string(),
+        recent,
+        examples,
+    })
 }
 
 #[tauri::command]
@@ -394,9 +439,9 @@ fn save_project_preview(
         .to_string_lossy()
         .into_owned();
     let file = data_file(&app, "project-previews.json")?;
-    let mut previews = read_previews(&file)?;
+    let mut previews = read_project_map(&file)?;
     previews.insert(entry, image);
-    write_previews(&file, &previews)
+    write_project_map(&file, &previews)
 }
 
 #[cfg(unix)]
@@ -519,9 +564,11 @@ struct SessionTab {
 fn session_tabs(
     window: WebviewWindow,
     state: tauri::State<Desktop>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<SessionTab>, String> {
     trusted(&window, &state)?;
     let page = window.url().map_err(|e| e.to_string())?;
+    let titles = project_titles(&app)?;
     let sessions = state.sessions.lock().unwrap();
     let active = session_index(page.as_str(), &sessions);
     Ok(sessions
@@ -529,17 +576,41 @@ fn session_tabs(
         .enumerate()
         .map(|(index, session)| SessionTab {
             id: session.id,
-            title: session
-                .entry
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Project")
-                .to_owned(),
+            title: project_title(&titles, &session.entry),
             path: session.entry.to_string_lossy().into_owned(),
             url: format!("{}/", session.url),
             active: active == Some(index),
         })
         .collect())
+}
+
+/// The page reports its project's own title once the model has been built, so
+/// the tab beside it stops saying `project.ts`.
+#[tauri::command]
+fn set_project_title(
+    window: WebviewWindow,
+    state: tauri::State<Desktop>,
+    app: tauri::AppHandle,
+    title: String,
+) -> Result<(), String> {
+    trusted(&window, &state)?;
+    let title = title.trim();
+    if title.is_empty()
+        || title.chars().count() > TITLE_LIMIT
+        || title.chars().any(char::is_control)
+    {
+        return Err("Invalid project title".into());
+    }
+    let entry = calling_entry(&window, &state)?
+        .to_string_lossy()
+        .into_owned();
+    let file = data_file(&app, "project-titles.json")?;
+    let mut titles = read_project_map(&file)?;
+    if titles.get(&entry).map(String::as_str) == Some(title) {
+        return Ok(());
+    }
+    titles.insert(entry, title.to_owned());
+    write_project_map(&file, &titles)
 }
 
 #[tauri::command]
@@ -684,6 +755,7 @@ async fn open_project(
     state: tauri::State<'_, Desktop>,
     example: Option<String>,
     path: Option<String>,
+    folder: Option<bool>,
 ) -> Result<Option<String>, String> {
     trusted(&window, &state)?;
     if state.opening.swap(true, Ordering::SeqCst) {
@@ -719,11 +791,16 @@ async fn open_project(
             let entry = if let Some(path) = path {
                 let path = PathBuf::from(path).canonicalize().map_err(|e| e.to_string())?;
                 if !read_recent(&app)?.contains(&path) { return Err("Project is not in Recent".into()); }
-                path
+                project_entry(&path)?
             } else {
-                let picked = rfd::AsyncFileDialog::new().set_parent(&window).set_title("Open CodeCAD project entry file").add_filter("TypeScript project", &["ts", "mts"]).pick_file().await;
+                let dialog = rfd::AsyncFileDialog::new().set_parent(&window);
+                let picked = if folder.unwrap_or(false) {
+                    dialog.set_title("Open CodeCAD project folder").pick_folder().await
+                } else {
+                    dialog.set_title("Open CodeCAD project entry file").add_filter("TypeScript project", &["ts", "mts"]).pick_file().await
+                };
                 let Some(picked) = picked else { return Ok(None); };
-                picked.path().canonicalize().map_err(|e| e.to_string())?
+                project_entry(&picked.path().canonicalize().map_err(|e| e.to_string())?)?
             };
             let trusted_entries = read_trusted_file(&data_file(&app, "trusted-projects.json")?)?;
             if !trusted_entries.contains(&entry) && !read_recent(&app)?.contains(&entry) {
@@ -761,6 +838,26 @@ async fn open_project(
     }.await;
     state.opening.store(false, Ordering::SeqCst);
     result
+}
+/// A project folder is opened through the `index.ts` that names it; anything
+/// else is already an entry file and is taken as it is.
+fn project_entry(chosen: &Path) -> Result<PathBuf, String> {
+    if !chosen.is_dir() {
+        return Ok(chosen.to_owned());
+    }
+    ["index.ts", "index.mts"]
+        .into_iter()
+        .map(|name| chosen.join(name))
+        .find(|entry| entry.is_file())
+        .ok_or_else(|| {
+            format!(
+                "{} has no index.ts to open",
+                chosen
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("That folder")
+            )
+        })
 }
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
@@ -803,6 +900,7 @@ fn main() {
             open_project,
             show_home,
             session_tabs,
+            set_project_title,
             activate_session,
             close_session,
             recent_projects,

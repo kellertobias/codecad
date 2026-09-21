@@ -4,6 +4,7 @@ fn main() {
             "open_project",
             "show_home",
             "session_tabs",
+            "set_project_title",
             "activate_session",
             "close_session",
             "recent_projects",

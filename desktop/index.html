@@ -27,11 +27,14 @@
       />
       <h1>Build with code.<br />Make it real.</h1>
       <p>Parametric parts, woodworking, sheet metal and room plans.</p>
+      <p class="app-version">Version <span id="app-version">…</span></p>
       <div class="start-actions">
-        <button id="open-disk" class="primary">Open from disk…</button>
+        <button id="open-disk" class="primary">Open from disk…</button
+        ><button id="open-folder">Open a project folder…</button>
       </div>
       <p class="muted">
-        Choose a TypeScript project entry (.ts). Only open code you trust.
+        Choose a project folder with an index.ts, or a TypeScript entry file
+        (.ts) directly. Only open code you trust.
       </p>
       <section id="recent-projects" hidden>
         <h2>Recent projects</h2>

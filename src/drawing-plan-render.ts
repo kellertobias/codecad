@@ -49,6 +49,7 @@ export function planDrawing(
         at: { x: item.x, y: item.y },
         box: { width: item.width, height: item.height },
         scale: 1 / item.scale,
+        ...(item.rotate ? { rotate: item.rotate } : {}),
         // The renderer appends the scale to every caption.
         label: item.label || item.angle[0]!.toUpperCase() + item.angle.slice(1),
         ...(item.hiddenLines ? { hiddenLines: true } : {}),
@@ -64,7 +65,9 @@ export function planDrawing(
     if (item.kind !== "dimension" || !drawn.has(item.view)) continue;
     const view = plan.items.find((entry) => entry.id === item.view);
     if (view?.kind !== "view") continue;
-    const { x, y } = viewBasis(view.angle);
+    // Dimension points are stored in the turned frame, so read them back with
+    // the same basis the view is drawn with.
+    const { x, y } = viewBasis(view.angle, view.rotate ?? 0);
     const world = (u: number, v: number) => ({
       x: u * x[0] + v * y[0],
       y: u * x[1] + v * y[1],
