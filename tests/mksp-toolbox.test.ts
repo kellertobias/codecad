@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Box3, Vector3 } from "three";
-import { MakerspaceToolbox } from "../examples/mksp-toolbox.js";
+import { MakerspaceToolbox } from "../examples/mksp-toolbox/project.js";
 import { SheetPart } from "../src/stock.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { motionFrames } from "../src/exporters.js";

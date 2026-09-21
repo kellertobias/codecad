@@ -21,6 +21,8 @@ export type PlanItem =
       /** Empty for an automatic "Front · 1:10" caption. */
       label: string;
       hiddenLines?: boolean;
+      /** Components left out of this view; their children go with them. */
+      hiddenParts?: string[];
     }
   | {
       id: string;
@@ -47,6 +49,14 @@ export interface DrawingPlan {
   title: string;
   items: PlanItem[];
 }
+/** Where a project keeps the sheet composed in Studio. An `index.ts` entry
+ * names it after its folder, so the file is not called `index.drawings.json`. */
+export function drawingPlanFile(entry: string) {
+  const stem = entry.replace(/\.[^.\\/]+$/, "");
+  return /(^|[\\/])index$/.test(stem)
+    ? stem.replace(/index$/, "drawings.json")
+    : stem + ".drawings.json";
+}
 const angles = new Set<PlanAngle>(viewAngles);
 export const planViewLabel = (view: { angle: PlanAngle; scale: number }) =>
   `${view.angle[0]!.toUpperCase()}${view.angle.slice(1)} · ${
@@ -54,6 +64,18 @@ export const planViewLabel = (view: { angle: PlanAngle; scale: number }) =>
       ? `1:${Number(view.scale.toFixed(3))}`
       : `${Number((1 / view.scale).toFixed(3))}:1`
   }`;
+/** Identifies the geometry of a plan view independent of its sheet placement,
+ * so the Studio can tell a built view from one it must draw as a wireframe. */
+export const planViewKey = (view: {
+  subject: string;
+  angle: string;
+  hiddenLines?: boolean;
+  hiddenParts?: readonly string[];
+}) =>
+  `${view.subject}|${view.angle}|${view.hiddenLines ? "hidden" : "visible"}` +
+  (view.hiddenParts?.length
+    ? `|-${[...view.hiddenParts].sort().join(",")}`
+    : "");
 const finite = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value);
 export function validateDrawingPlan(value: unknown): DrawingPlan {
@@ -90,7 +112,13 @@ export function validateDrawingPlan(value: unknown): DrawingPlan {
         typeof item.label !== "string" ||
         item.label.length > 200 ||
         (item.hiddenLines !== undefined &&
-          typeof item.hiddenLines !== "boolean")
+          typeof item.hiddenLines !== "boolean") ||
+        (item.hiddenParts !== undefined &&
+          (!Array.isArray(item.hiddenParts) ||
+            item.hiddenParts.length > 300 ||
+            !item.hiddenParts.every(
+              (path) => typeof path === "string" && path.length <= 500,
+            )))
       )
         throw new Error("Invalid model view");
     } else if (item.kind === "dimension") {

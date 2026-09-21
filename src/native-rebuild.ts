@@ -86,7 +86,7 @@ if (
   process.once("SIGINT", () => controller.abort());
   try {
     const entry = resolve(
-      process.argv[2] ?? join(root, "examples/kitchen-cabinet.ts"),
+      process.argv[2] ?? join(root, "examples/kitchen-cabinet/index.ts"),
     );
     const directory = resolve(
       process.argv[3] ?? join(root, "output/kitchen-cabinet"),

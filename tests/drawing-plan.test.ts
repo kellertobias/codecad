@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateDrawingPlan } from "../src/drawing-plan.js";
+import { planViewKey, validateDrawingPlan } from "../src/drawing-plan.js";
 
 test("drawing instructions preserve views, part references, measurements and notes", () => {
   const plan = {
@@ -49,5 +49,40 @@ test("drawing instructions preserve views, part references, measurements and not
     () =>
       validateDrawingPlan({ ...plan, items: [plan.items[0], plan.items[0]] }),
     /duplicate/,
+  );
+});
+
+test("a view remembers which parts it leaves out", () => {
+  const view = {
+    id: "view_1",
+    kind: "view" as const,
+    subject: "cabinet",
+    angle: "front" as const,
+    x: 20,
+    y: 20,
+    width: 160,
+    height: 100,
+    scale: 10,
+    label: "",
+    hiddenParts: ["cabinet/door", "cabinet/shelf"],
+  };
+  const plan = { version: 1 as const, title: "Carcass", items: [view] };
+  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), plan);
+  assert.throws(
+    () =>
+      validateDrawingPlan({
+        ...plan,
+        items: [{ ...view, hiddenParts: "cabinet/door" }],
+      }),
+    /Invalid model view/,
+  );
+  // Built geometry is reused by key, so switching a part off must change it
+  // while merely reordering the list must not.
+  const { hiddenParts, ...whole } = view;
+  assert.notEqual(planViewKey(view), planViewKey(whole));
+  assert.equal(planViewKey(whole), planViewKey({ ...view, hiddenParts: [] }));
+  assert.equal(
+    planViewKey(view),
+    planViewKey({ ...view, hiddenParts: [...hiddenParts].reverse() }),
   );
 });

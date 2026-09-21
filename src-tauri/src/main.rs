@@ -356,11 +356,11 @@ fn project_catalog(
         .collect();
     let example_root = examples_workspace(&app)?.join("examples");
     let examples = [
-        ("cabinet", "Kitchen cabinet", "kitchen-cabinet.ts"),
-        ("keyboard", "Keyboard case", "keyboard-case.ts"),
-        ("apartment", "Small apartment", "small-apartment.ts"),
-        ("drawing", "Infinite drawing", "infinite-drawing.ts"),
-        ("table-base", "Welded table base", "welded-table-base.ts"),
+        ("cabinet", "Kitchen cabinet", "kitchen-cabinet/index.ts"),
+        ("keyboard", "Keyboard case", "keyboard-case/index.ts"),
+        ("apartment", "Small apartment", "small-apartment/index.ts"),
+        ("drawing", "Infinite drawing", "infinite-drawing/index.ts"),
+        ("table-base", "Welded table base", "welded-table-base/index.ts"),
     ]
     .into_iter()
     .map(|(id, title, file)| {
@@ -463,8 +463,6 @@ fn trusted(window: &WebviewWindow, state: &Desktop) -> Result<(), String> {
     if session_index(url.as_str(), &state.sessions.lock().unwrap()).is_some() {
         return Ok(());
     }
-    // Logged because the only way to hit this is a page the app did not open.
-    eprintln!("CodeCAD: refused a command from {url}");
     Err("This page is not an open CodeCAD session".into())
 }
 fn navigate_home(window: &WebviewWindow) -> Result<(), String> {
@@ -695,11 +693,11 @@ async fn open_project(
         let entry = if let Some(example) = example {
             if path.is_some() { return Err("Choose either an example or a recent project".into()); }
             let file = match example.as_str() {
-                "cabinet" => "kitchen-cabinet.ts",
-                "keyboard" => "keyboard-case.ts",
-                "apartment" => "small-apartment.ts",
-                "drawing" => "infinite-drawing.ts",
-                "table-base" => "welded-table-base.ts",
+                "cabinet" => "kitchen-cabinet/index.ts",
+                "keyboard" => "keyboard-case/index.ts",
+                "apartment" => "small-apartment/index.ts",
+                "drawing" => "infinite-drawing/index.ts",
+                "table-base" => "welded-table-base/index.ts",
                 _ => return Err("Unknown example".into()),
             };
             // Copy the entire example workspace once so relative imports stay valid
@@ -712,8 +710,9 @@ async fn open_project(
             for file in ["package.json", "tsconfig.json"] {
                 if !workspace.join(file).exists() { std::fs::copy(root.join(file), workspace.join(file)).map_err(|e|e.to_string())?; }
             }
-            if !workspace.join("examples").join(file).exists() {
-                std::fs::copy(root.join("examples").join(file), workspace.join("examples").join(file)).map_err(|e|e.to_string())?;
+            let project = Path::new(file).parent().ok_or("Malformed example path")?;
+            if !workspace.join("examples").join(project).exists() {
+                copy_tree(&root.join("examples").join(project), &workspace.join("examples").join(project))?;
             }
             workspace.join("examples").join(file)
         } else {

@@ -7,11 +7,11 @@ import { randomBytes, createHash } from "node:crypto";
 import { build } from "esbuild";
 import { editorService } from "./editor-service.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
-import { validateDrawingPlan } from "./drawing-plan.js";
+import { drawingPlanFile, validateDrawingPlan } from "./drawing-plan.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const entry = resolve(
-  process.argv[2] ?? join(root, "examples/kitchen-cabinet.ts"),
+  process.argv[2] ?? join(root, "examples/kitchen-cabinet/index.ts"),
 );
 let port = Number(process.env.PORT ?? 4317);
 const token = randomBytes(24).toString("hex");
@@ -23,7 +23,7 @@ const parameterFile = join(
   "parameters",
   createHash("sha256").update(entry).digest("hex") + ".json",
 );
-const drawingPlanFile = entry.replace(/\.[^.]+$/, "") + ".drawings.json";
+const planFile = drawingPlanFile(entry);
 let parameterValues: Record<string, number | boolean | string> = {};
 try {
   parameterValues = JSON.parse(await readFile(parameterFile, "utf8"));
@@ -276,18 +276,18 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/api/drawing-plan" && req.method === "GET") {
       try {
-        const source = await readFile(drawingPlanFile, "utf8");
+        const source = await readFile(planFile, "utf8");
         json({
           plan: validateDrawingPlan(JSON.parse(source)),
           version: hash(source),
-          file: drawingPlanFile,
+          file: planFile,
         });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT")
           json({
             plan: { version: 1, title: "", items: [] },
             version: "",
-            file: drawingPlanFile,
+            file: planFile,
           });
         else throw error;
       }
@@ -325,7 +325,7 @@ const server = createServer(async (req, res) => {
           const input = JSON.parse(body);
           let previous = "";
           try {
-            previous = await readFile(drawingPlanFile, "utf8");
+            previous = await readFile(planFile, "utf8");
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
@@ -338,11 +338,10 @@ const server = createServer(async (req, res) => {
           }
           const plan = validateDrawingPlan(input.plan);
           const serialized = JSON.stringify(plan, null, 2) + "\n";
-          const staged =
-            drawingPlanFile + ".tmp-" + randomBytes(6).toString("hex");
+          const staged = planFile + ".tmp-" + randomBytes(6).toString("hex");
           await writeFile(staged, serialized);
-          await rename(staged, drawingPlanFile);
-          json({ version: hash(serialized), file: drawingPlanFile });
+          await rename(staged, planFile);
+          json({ version: hash(serialized), file: planFile });
           // The sheet is a build output: refresh its hidden-line views and PDF.
           schedule();
         } catch (error) {

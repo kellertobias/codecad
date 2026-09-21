@@ -64,5 +64,5 @@ Baseline checkpoint: `c4e0832`. This is an implementation audit, not fabrication
 - The MDF-to-metal interface is demonstrated geometrically; a production retention method,
   assembly access, finish allowance and structural validation have not been specified.
 
-Run `npm run dev -- examples/keyboard-case.ts` or
-`node --import tsx src/worker.ts examples/keyboard-case.ts output/keyboard-case`.
+Run `npm run dev -- examples/keyboard-case/index.ts` or
+`node --import tsx src/worker.ts examples/keyboard-case/index.ts output/keyboard-case`.

@@ -6,11 +6,11 @@ import { editorService } from "../src/editor-service.js";
 test("TypeScript completion inserts and merges imports", async () => {
   const service = await editorService(
     process.cwd(),
-    resolve("examples/kitchen-cabinet.ts"),
+    resolve("examples/kitchen-cabinet/index.ts"),
   );
   for (const source of [
     "const tool = new Dri",
-    'import { CounterSink } from "../src/tools.js";\nconst tool = new Dri',
+    'import { CounterSink } from "../../src/tools.js";\nconst tool = new Dri',
   ]) {
     const items = service.complete(source, source.length),
       drill = items.find((item) => item.name === "Drill");
@@ -25,7 +25,7 @@ test("TypeScript completion inserts and merges imports", async () => {
         updated.slice(edit.span.start + edit.span.length);
     assert.match(updated, /import.*Drill/);
     assert.equal(
-      (updated.match(/from "\.\.\/src\/tools.js"/g) ?? []).length,
+      (updated.match(/from "\.\.\/\.\.\/src\/tools.js"/g) ?? []).length,
       1,
     );
     assert.match(updated, /new Drill$/);

@@ -10,7 +10,7 @@ import { buildProject } from "../src/worker.js";
 test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-integration-"));
   const result = await buildProject(
-    resolve("examples/kitchen-cabinet.ts"),
+    resolve("examples/kitchen-cabinet/index.ts"),
     directory,
   );
   assert.equal(result.meshes.length, 81);
@@ -232,7 +232,7 @@ test("cabinet builds manufacturing outputs, PDF, STEP and animated glTF", async 
 test("sheet-metal project exports folded solids and bend lines", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-metal-"));
   const result = await buildProject(
-    resolve("examples/sheet-metal-project.ts"),
+    resolve("examples/sheet-metal-project/index.ts"),
     directory,
   );
   assert.deepEqual(result.diagnostics, []);

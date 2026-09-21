@@ -4,7 +4,7 @@ import * as b from "brepjs/quick";
 import {
   CabinetMotionOutputs,
   KitchenCabinet,
-} from "../examples/kitchen-cabinet.js";
+} from "../examples/kitchen-cabinet/project.js";
 import { SheetPart, Shapes } from "../src/index.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { outlineBounds } from "../src/manufacturing.js";

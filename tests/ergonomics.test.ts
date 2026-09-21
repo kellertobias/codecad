@@ -53,11 +53,12 @@ test("material variants inherit stock settings and regenerate plies", () => {
 
 test("a project without output methods gets the standard deliverables and its saved sheet", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-standard-"));
-  // The plan lives beside the entry, so build a private copy of the example.
-  const entry = resolve("examples/.standard-outputs-test.ts");
+  // The plan lives beside the entry, so build a private copy of the example
+  // inside its own folder, where its relative imports still resolve.
+  const entry = resolve("examples/welded-table-base/.standard-outputs-test.ts");
   const planFile = entry.replace(/\.ts$/, ".drawings.json");
   try {
-    await copyFile(resolve("examples/welded-table-base.ts"), entry);
+    await copyFile(resolve("examples/welded-table-base/index.ts"), entry);
     await writeFile(
       planFile,
       JSON.stringify({

@@ -6,6 +6,7 @@ export * from "./model.js";
 export * from "./motion.js";
 export * from "./outputs.js";
 export * from "./parameters.js";
+export * from "./project-info.js";
 export * from "./stock.js";
 export type {
   DrawingLineStyle,

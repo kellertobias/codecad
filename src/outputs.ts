@@ -34,6 +34,8 @@ export interface DrawingView {
   /** Defaults to the view kind (`front`, `top-2`, …). */
   readonly id?: string;
   readonly of: DrawingSubject;
+  /** Components to leave out of `of`, with their children. */
+  readonly without?: DrawingSubject;
   readonly kind: DrawingViewKind;
   /** Paper position (mm) of the view's top-left corner. Omit for automatic
    * third-angle layout: top above front, side views beside it. */

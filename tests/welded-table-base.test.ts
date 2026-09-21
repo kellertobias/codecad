@@ -5,7 +5,7 @@ import {
   WeldedTableBase,
   params,
   tableBase,
-} from "../examples/welded-table-base.js";
+} from "../examples/welded-table-base/project.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { cutRows } from "../src/manufacturing.js";
 

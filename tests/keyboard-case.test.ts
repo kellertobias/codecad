@@ -6,7 +6,7 @@ import {
   caseWidth,
   keyboardCase,
   insideProfile,
-} from "../examples/keyboard-case.js";
+} from "../examples/keyboard-case/project.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { partEntities } from "../src/manufacturing.js";
 import { Vector3 } from "three";

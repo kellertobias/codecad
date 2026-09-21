@@ -7,7 +7,7 @@ import {
   Window,
   Door,
   apartment,
-} from "../examples/small-apartment.js";
+} from "../examples/small-apartment/project.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import { renderDrawingFormats } from "../src/drawing.js";
 import { descendants } from "../src/model.js";

@@ -20,7 +20,7 @@ import { ManufacturingDxf } from "../src/outputs.js";
 import { partEntities } from "../src/manufacturing.js";
 import { LinearJoint, MotionStudy } from "../src/motion.js";
 import { RouterBit } from "../src/tools.js";
-import { KitchenCabinet } from "../examples/kitchen-cabinet.js";
+import { KitchenCabinet } from "../examples/kitchen-cabinet/project.js";
 
 @cad.part({ id: "drawer-test", revision: "1" })
 class Drawer extends Assembly {

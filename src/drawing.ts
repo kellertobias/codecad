@@ -356,7 +356,10 @@ async function prepareView(
   view: ResolvedDrawingView,
 ): Promise<PreparedView> {
   const camera = viewCamera(view.kind);
-  const parts = subjects(view.of);
+  const omitted = view.without ? new Set(subjects(view.without)) : undefined;
+  const parts = omitted
+    ? subjects(view.of).filter((part) => !omitted.has(part))
+    : subjects(view.of);
   if (view.kind === "flat") {
     if (parts.length !== 1 || !(parts[0] instanceof SheetMetalPart))
       throw new Error("A flat view needs exactly one sheet-metal part");

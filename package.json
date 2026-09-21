@@ -53,7 +53,7 @@
     "format": "prettier --write src examples web tests package.json tsconfig.json README.md",
     "format:check": "prettier --check src examples web tests package.json tsconfig.json README.md",
     "dev": "node --import tsx src/server.ts",
-    "build": "node --import tsx src/native-rebuild.ts examples/kitchen-cabinet.ts output/kitchen-cabinet",
+    "build": "node --import tsx src/native-rebuild.ts examples/kitchen-cabinet/index.ts output/kitchen-cabinet",
     "cad:build": "node --import tsx src/native-rebuild.ts",
     "package:build": "tsc --project tsconfig.package.json",
     "package:check": "npm run package:build && node --input-type=module --eval \"import('@tobisk/codecad').then(({ Project, Shapes }) => { if (!Project || !Shapes) throw new Error('Missing public CAD API') })\"",

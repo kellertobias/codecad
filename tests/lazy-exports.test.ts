@@ -7,7 +7,7 @@ import { buildProject } from "../src/worker.js";
 
 test("lazy build advertises exports without generating them until requested", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-lazy-"));
-  const entry = resolve("examples/sheet-metal-project.ts");
+  const entry = resolve("examples/sheet-metal-project/index.ts");
   try {
     const manifest = await buildProject(entry, directory, {
       lazyExports: true,
@@ -34,7 +34,7 @@ test("lazy build advertises exports without generating them until requested", as
 
 test("standalone cabinet output classes keep lazy PDF generation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-provider-"));
-  const entry = resolve("examples/kitchen-cabinet.ts");
+  const entry = resolve("examples/kitchen-cabinet/index.ts");
   try {
     const manifest = await buildProject(entry, directory, {
       lazyExports: true,

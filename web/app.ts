@@ -78,6 +78,13 @@ type Model = {
   }[];
   duration: number;
   title: string;
+  /** From the project's `PROJECTINFO`; absent for entry files without one. */
+  info: {
+    name: string;
+    author?: string;
+    description?: string;
+    revision?: string;
+  } | null;
   meshes: MeshData[];
   diagnostics: { severity: string; message: string }[];
   files: { name: string; kind: string; size: number; ready?: boolean }[];
@@ -367,6 +374,14 @@ function showModel(data: Model) {
     );
   document.title = data.title + " · CodeCAD";
   $("project-name").textContent = data.title;
+  // The identity from index.ts, so the header says whose project this is.
+  $("project-name").title = [
+    data.info?.description,
+    data.info?.author && `Drawn by ${data.info.author}`,
+    data.info?.revision && `Revision ${data.info.revision}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
   clearScene();
   for (const d of data.meshes) {
     const geometry = new THREE.BufferGeometry()

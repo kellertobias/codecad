@@ -564,10 +564,21 @@ nav button.active {
 #plan-sheet-wrap {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  /* The sheet is panned and zoomed by transform, so it never scrolls. */
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+  touch-action: none;
+}
+#plan-sheet-wrap.panning {
+  cursor: grabbing;
+}
+#plan-zoom-level {
+  min-width: 42px;
+  text-align: center;
+  color: #96a9b6;
+  font-variant-numeric: tabular-nums;
 }
 #plan-sheet {
   display: block;
@@ -615,6 +626,44 @@ nav button.active {
   justify-content: flex-end;
   align-items: center;
   gap: 7px;
+}
+.plan-parts-head {
+  display: block;
+  margin: 14px 0 6px;
+  color: #96a9b6;
+}
+#plan-fields .plan-parts {
+  display: block;
+  max-height: 210px;
+  overflow: auto;
+  border: 1px solid #42605b;
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+#plan-fields .plan-parts label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+#plan-fields .plan-parts label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#plan-fields .plan-parts .plan-part-implied {
+  opacity: 0.5;
+  cursor: default;
+}
+#plan-fields .plan-parts input {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
+#plan-fields .plan-parts-all {
+  margin-top: 7px;
 }
 #plan-fields .plan-check input {
   width: auto;

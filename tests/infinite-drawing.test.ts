@@ -7,7 +7,7 @@ import { buildProject } from "../src/worker.js";
 
 test("infinite drawing example exposes geometry and a downloadable plan", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-drawing-"));
-  const entry = resolve("examples/infinite-drawing.ts");
+  const entry = resolve("examples/infinite-drawing/index.ts");
   try {
     const manifest = await buildProject(entry, directory, {
       lazyExports: true,

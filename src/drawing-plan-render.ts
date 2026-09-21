@@ -1,26 +1,24 @@
 import type { Component, Project } from "./model.js";
 import { TechnicalDrawing } from "./outputs.js";
 import type { DrawingPlan } from "./drawing-plan.js";
+import type { ProjectInfo } from "./project-info.js";
 import { viewBasis } from "./view-basis.js";
 
-/** Identifies the geometry of a plan view independent of its sheet placement. */
-export const planViewKey = (view: {
-  subject: string;
-  angle: string;
-  hiddenLines?: boolean;
-}) =>
-  `${view.subject}|${view.angle}|${view.hiddenLines ? "hidden" : "visible"}`;
+export { planViewKey } from "./drawing-plan.js";
 
 /** Turn Studio's saved plan into a regular drawing of the built project, so it
  * gets the same hidden-line projection and PDF/DXF export as coded drawings. */
 export function planDrawing(
   plan: DrawingPlan,
   project: Project,
+  info?: ProjectInfo,
 ): { drawing: TechnicalDrawing; warnings: string[] } {
   const drawing = new TechnicalDrawing({
       title: plan.title || project.label,
       paper: "A3",
-      project: project.label,
+      project: info?.name ?? project.label,
+      ...(info?.author ? { author: info.author } : {}),
+      ...(info?.revision ? { revision: info.revision } : {}),
     }),
     warnings: string[] = [],
     drawn = new Set<string>();
@@ -34,10 +32,19 @@ export function planDrawing(
         );
         continue;
       }
+      const omitted = (item.hiddenParts ?? [])
+        .map((path) => project.registry.get(path))
+        .filter((part): part is Component => part !== undefined);
+      for (const path of item.hiddenParts ?? [])
+        if (!project.registry.get(path))
+          warnings.push(
+            `Plan view "${item.label || item.id}" hides missing component ${path}`,
+          );
       drawn.add(item.id);
       drawing.view({
         id: item.id,
         of: subject,
+        ...(omitted.length ? { without: omitted } : {}),
         kind: item.angle,
         at: { x: item.x, y: item.y },
         box: { width: item.width, height: item.height },

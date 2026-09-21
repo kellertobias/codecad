@@ -7,7 +7,7 @@ import { buildProject } from "../src/worker.js";
 
 test("active parameters rebuild geometry, drawing, cut list, layouts, and exports", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-parameters-"));
-  const entry = resolve("examples/parameterized-shelf.ts");
+  const entry = resolve("examples/parameterized-shelf/index.ts");
   const previous = process.env.CODECAD_PARAMETER_VALUES;
   try {
     delete process.env.CODECAD_PARAMETER_VALUES;

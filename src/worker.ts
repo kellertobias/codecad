@@ -5,6 +5,7 @@ import { zipSync } from "fflate";
 import { sourceLinks } from "./source-links.js";
 import { inspectComponent } from "./inspection.js";
 import { Project, Part, descendants } from "./model.js";
+import { validateProjectInfo, type ProjectInfo } from "./project-info.js";
 import { SheetMetalPart } from "./stock.js";
 import {
   outputProviders,
@@ -37,7 +38,7 @@ import {
   renderDrawingPreviews,
   type ViewObserver,
 } from "./drawing.js";
-import { validateDrawingPlan } from "./drawing-plan.js";
+import { drawingPlanFile, validateDrawingPlan } from "./drawing-plan.js";
 import { planDrawing, planViewKey } from "./drawing-plan-render.js";
 import {
   cutListPages,
@@ -62,14 +63,25 @@ const serializeMesh = (mesh: MeshData) => ({
   edges: Array.from(mesh.edges),
 });
 
+/** Title-block fields a project's identity fills in for drawings the build
+ * composes itself; drawings written in project code keep their own. */
+export const titleBlockFrom = (info?: ProjectInfo) => ({
+  ...(info?.name ? { project: info.name } : {}),
+  ...(info?.author ? { author: info.author } : {}),
+  ...(info?.revision ? { revision: info.revision } : {}),
+});
+
 /** Drawing, cut list, CNC DXF and STEP for projects without `@cad.output` methods. */
-function standardOutputs(project: Project) {
+function standardOutputs(project: Project, info?: ProjectInfo) {
   const sheets = sheetParts(project),
     hasParts = descendants(project).some((c) => c instanceof Part);
   const owner: Record<string, () => unknown> = {};
   if (hasParts) {
     owner.drawing = () =>
-      new TechnicalDrawing({ title: project.label }).standardViews(project);
+      new TechnicalDrawing({
+        title: project.label,
+        ...titleBlockFrom(info),
+      }).standardViews(project);
     owner[project.id.replace(/[^a-zA-Z0-9_.-]+/g, "_") + ".step"] = () =>
       new StepModel({ of: project });
   }
@@ -99,6 +111,11 @@ export async function buildProject(
 ) {
   entry = await realpath(entry);
   const module = await import(pathToFileURL(resolve(entry)).href);
+  // An index.ts names its project before any geometry is evaluated.
+  const info =
+    module.PROJECTINFO === undefined
+      ? undefined
+      : validateProjectInfo(module.PROJECTINFO);
   const constructors = Object.values(module).filter(
     (value): value is new () => Project =>
       typeof value === "function" && value.prototype instanceof Project,
@@ -215,7 +232,7 @@ export async function buildProject(
       (outputRegistry.get(owner) ?? []).map((output) => ({ ...output, owner })),
     );
     // A project that declares no outputs still gets the usual deliverables.
-    const outputs = declared.length ? declared : standardOutputs(project);
+    const outputs = declared.length ? declared : standardOutputs(project, info);
     for (const output of outputs) {
       try {
         const value = (output.owner as any)[output.name](),
@@ -389,15 +406,10 @@ export async function buildProject(
     > = {};
     try {
       const plan = validateDrawingPlan(
-        JSON.parse(
-          await readFile(
-            entry.replace(/\.[^.]+$/, "") + ".drawings.json",
-            "utf8",
-          ),
-        ),
+        JSON.parse(await readFile(drawingPlanFile(entry), "utf8")),
       );
       if (plan.items.some((item) => item.kind === "view")) {
-        const { drawing, warnings } = planDrawing(plan, project);
+        const { drawing, warnings } = planDrawing(plan, project, info);
         for (const message of warnings)
           diagnostics.push({
             severity: "warning",
@@ -464,7 +476,8 @@ export async function buildProject(
     }
     const links = sourceLinks(resolve(entry));
     const manifest = {
-      title: project.label,
+      title: info?.name || project.label,
+      info: info ?? null,
       id: project.id,
       parameters: project.parameterState ?? null,
       engine: engine.capabilities,

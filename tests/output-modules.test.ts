@@ -11,7 +11,7 @@ test("outputs declared in their own modules all reach the build", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codecad-modules-"));
   try {
     const manifest = await buildProject(
-      resolve("examples/modular-project.ts"),
+      resolve("examples/modular/index.ts"),
       directory,
     );
     assert.deepEqual(manifest.diagnostics, []);

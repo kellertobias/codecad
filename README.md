@@ -54,7 +54,7 @@ because the plane is part of the model rather than a file.
 Projects can define geometry for the infinite **Drawings** workspace,
 independent of printable plans. Add paths, lines, or circles in millimetres
 from a project constructor. Drawings remains available even for an empty plane,
-and configured plans can be downloaded there. See `examples/infinite-drawing.ts`:
+and configured plans can be downloaded there. See `examples/infinite-drawing/index.ts`:
 
 ```ts
 this.view2D.path(
@@ -72,7 +72,13 @@ this.view2D.circle({ x: 300, y: 450 }, 12, { label: "Pull" });
 The **Sheet editor** in Drawings composes an A3 sheet without editing project
 code. Add a view of the model or of one part (▣), pick the side it is seen from,
 its scale and whether hidden edges are dashed, then drag it into place or resize
-its frame. **Dimension** (⌁) snaps to corners and edges; its two points are
+its frame. Each view lists the parts under its subject with a checkbox, so one
+sheet can show the carcass without the doors while another shows the door alone;
+switching a part off takes its children with it, and the choice applies to the
+live preview and to the built PDF and DXF alike. Scroll to zoom the sheet around
+the cursor, drag its empty background (or hold the middle button) to pan, and use
+−, + and ⛶, or the `-`, `+` and `0` keys, for the same from the toolbar.
+**Dimension** (⌁) snaps to corners and edges; its two points are
 stored in the view's model coordinates, so the value is exact, follows the view
 when it moves, and updates when the design changes. Drag a dimension to slide
 its line, press Delete to remove the selection, Esc to cancel a tool, and the
@@ -242,7 +248,7 @@ npm run dev
 ```
 
 Open **http://127.0.0.1:4317**. The default project is
-[the four-drawer cabinet](examples/kitchen-cabinet.ts).
+[the four-drawer cabinet](examples/kitchen-cabinet/index.ts).
 Edit its source in the application and press **Save & build** (Cmd/Ctrl+S), or save
 from your usual editor. Changes to project-directory and runtime TypeScript files
 trigger a fresh build. Select parts, hide panels, inspect drawings and sheet
@@ -287,9 +293,9 @@ misrepresenting these mortises as face-routing pockets.
 To open another project:
 
 ```sh
-npm run dev -- examples/sheet-metal-project.ts
-npm run dev -- examples/joinery-techniques.ts
-npm run dev -- examples/small-apartment.ts
+npm run dev -- examples/sheet-metal-project/index.ts
+npm run dev -- examples/joinery-techniques/index.ts
+npm run dev -- examples/small-apartment/index.ts
 ```
 
 The apartment example has an 8 x 6.4 m footprint and approximately 43.70 m2 of
@@ -305,7 +311,7 @@ For exports without the viewer:
 
 ```sh
 npm run build
-node --import tsx src/worker.ts examples/sheet-metal-project.ts output/sheet-metal
+node --import tsx src/worker.ts examples/sheet-metal-project/index.ts output/sheet-metal
 npm run check
 npm test
 ```
@@ -364,7 +370,7 @@ For additive edits in a part's **local coordinates**, use
 To union another placed part without consuming it, use
 `part.union(other, { relativeTo: other })`.
 
-See [the joined room shell](examples/joined-solids.ts). Overlapping or face-touching
+See [the joined room shell](examples/joined-solids/index.ts). Overlapping or face-touching
 inputs can form one solid; disconnected inputs remain separate bodies within one
 part. Joining does not bridge gaps or guarantee printability. Material, cut-list,
 bend and machining metadata are not merged; folded sheet metal is explicitly
@@ -416,7 +422,7 @@ export class CabinetCutList {
 }
 ```
 
-See [the kitchen cabinet](examples/kitchen-cabinet.ts) for separate drawing,
+See [the kitchen cabinet](examples/kitchen-cabinet/index.ts) for separate drawing,
 manufacturing, and motion provider classes. The project entry still exports
 exactly one decorated `Project` subclass.
 
@@ -443,15 +449,40 @@ export class TrayDrawings {
 ```
 
 ```ts
-// tray.ts — the entry
-import "./tray-drawing.js";
-import "./tray-motion.js";
-
+// project.ts — the assembly
 @cad.project({ id: "tray", units: "mm" })
 export class Tray extends Project {
   /* assembles the parts */
 }
 ```
+
+```ts
+// index.ts — the entry
+import type { ProjectInfo } from "@tobisk/codecad";
+import "./tray-drawing.js";
+import "./tray-motion.js";
+
+export * from "./project.js";
+
+export const PROJECTINFO: ProjectInfo = {
+  name: "Sliding tray",
+  author: "Workshop",
+  description: "One tray on a linear slide, with its sheets and motion study.",
+  revision: "A",
+};
+```
+
+A project is a folder whose `index.ts` is the entry: it imports the modules that
+make up the project, re-exports the project class so the build still finds
+exactly one, and names the project in `PROJECTINFO`. Studio's header shows that
+`name` (with the description, author and revision on hover) as soon as the
+project builds, and drawings the build composes itself — the standard sheet and
+the one from the Sheet editor — take `PROJECTINFO` as their PROJECT, DRAWN BY
+and REV title-block fields, while drawings written in project code keep whatever
+they set. `PROJECTINFO` is optional: an entry without one is titled by its
+project class as before. A sheet composed in Studio is saved as `drawings.json`
+beside an `index.ts` entry, and as `<entry>.drawings.json` for any other entry
+file.
 
 `@cad.outputsFor(Tray)` still works where no cycle exists, for instance when a
 thin entry module imports the assembly and the output modules and re-exports the
@@ -462,7 +493,7 @@ Each output method writes its own file, so several studies or sheets can coexist
 a `@cad.output.motion()` method writes `<method name>.glb` unless it names a
 `fileName`, and two outputs claiming the same file name is reported instead of
 one silently overwriting the other. See
-[the modular example](examples/modular-project.ts) with its drawing,
+[the modular example](examples/modular/index.ts) with its drawing,
 manufacturing and motion modules.
 
 ### Registry and construction
@@ -754,7 +785,7 @@ tube.makePart({ id: "crossbar", length: 600 });
 
 Metal profile cut-list rows carry outside width/height, cut length, wall
 thickness, and corner radius. Sheet nesting does not apply to profiles.
-See the [welded table base](examples/welded-table-base.ts) for a complete
+See the [welded table base](examples/welded-table-base/index.ts) for a complete
 square-tube frame with butt-fitted legs and rails, a cut list, and STEP output.
 The example marks intended welded contacts; it does not model weld beads or
 calculate weld strength.
@@ -832,8 +863,8 @@ collision planning are not supported. Unsupported geometry is rejected. Final-po
 flange self-intersections are checked, but this is not press-brake feasibility analysis.
 
 See [sheet-metal authoring and drawing examples](docs/sheet-metal-and-drawings.md),
-the [keyboard case](examples/keyboard-case.ts), and
-[relief comparison / Z profile](examples/sheet-metal-reliefs.ts).
+the [keyboard case](examples/keyboard-case/index.ts), and
+[relief comparison / Z profile](examples/sheet-metal-reliefs/index.ts).
 
 ### Drawings, motion and exports
 
@@ -881,27 +912,31 @@ the [keyboard case](examples/keyboard-case.ts), and
 
 ## Examples
 
-- [Modular outputs](examples/modular-project.ts): one assembly module plus a
+- [Modular outputs](examples/modular/index.ts): one assembly module plus a
   drawing, a manufacturing and a motion module, each bound with
   `@cad.outputsFor(() => Project)`, and two motion studies in their own files.
-- [Welded table base](examples/welded-table-base.ts): 40 × 40 × 3 mm steel tube
+- [Welded table base](examples/welded-table-base/index.ts): 40 × 40 × 3 mm steel tube
   legs and butt-fitted rails, with cut list and STEP output.
-- [MKSP toolbox](examples/mksp-toolbox.ts): port of the existing Python toolbox,
+- [MKSP toolbox](examples/mksp-toolbox/index.ts): port of the existing Python toolbox,
   with finger-jointed plywood, telescoping rails and animated drawers. See the
   [port notes](docs/mksp-toolbox-port.md) for dimensions and hardware assumptions.
-- [Kitchen cabinet](examples/kitchen-cabinet.ts): complete four-drawer example,
+- [Kitchen cabinet](examples/kitchen-cabinet/index.ts): complete four-drawer example,
   handle screw patterns/countersinks, back grooves, rails, nesting and all outputs.
-- [Simple cabinet API example](examples/simple-kitchen-cabinet.ts): compact
+- [Simple cabinet API example](examples/simple-kitchen-cabinet/index.ts): compact
   constructor syntax from the interface discussion. Its provisional hinge
   intentionally produces a clearance warning.
-- [Reusable hinge](examples/my-custom-hinge.ts): named interfaces and revolute motion.
-- [Joinery project](examples/joinery-techniques.ts): paired Domino, finger and miter samples.
-- [Broken edges](examples/edge-treatments.ts): named chamfers, fillets and corner-to-corner placement.
-- [Sheet-metal project](examples/sheet-metal-project.ts): cut flat blank and two bends.
-- [Keyboard case](examples/keyboard-case.ts): twelve slots, four R5 bends,
+- [Reusable hinge](examples/simple-kitchen-cabinet/my-custom-hinge.ts): named interfaces and revolute motion.
+- [Joinery project](examples/joinery-techniques/index.ts): paired Domino, finger and miter samples.
+- [Broken edges](examples/edge-treatments/index.ts): named chamfers, fillets and corner-to-corner placement.
+- [Sheet-metal project](examples/sheet-metal-project/index.ts): cut flat blank and two bends.
+- [Keyboard case](examples/keyboard-case/index.ts): twelve slots, four R5 bends,
   a 20° deck, bottom returns, internal stud envelopes, and routed MDF cheeks
   consuming the shell's mating outline. See the [capability audit](docs/capability-audit.md)
   for assumptions, current coverage and missing features.
+
+Each example is a folder: `index.ts` names it and pulls in its modules,
+`project.ts` holds the assembly, and any helper modules sit beside them. Open
+one with `npm run dev -- examples/<name>/index.ts`.
 
 The example hardware uses provisional simplified geometry; replace it with
 measured or supplier STEP geometry and mounting dimensions for your hardware.
@@ -937,7 +972,7 @@ through Node and evaluate OpenCascade geometry and reports. The launcher/server
 still bootstraps with `tsx`. Monaco's browser-bundled language service is unchanged;
 upgrading the CLI does not replace it with a native language server.
 
-`npm run cad:build -- examples/mksp-toolbox.ts output/mksp-toolbox` uses the same
+`npm run cad:build -- examples/mksp-toolbox/index.ts output/mksp-toolbox` uses the same
 native rebuild path as the UI. Emission uses `noCheck` for iteration speed;
 `npm run check` remains the strict project type-check. Each rebuild gets an isolated
 `.native` output directory and never writes JavaScript beside your project.

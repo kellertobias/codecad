@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Project, Assembly, Part, Shapes, cad } from "../src/index.js";
 import { getSolids } from "brepjs";
 import { OpenCascadeEngine } from "../src/engine.js";
-import { JoinedSolids } from "../examples/joined-solids.js";
+import { JoinedSolids } from "../examples/joined-solids/project.js";
 
 @cad.project({ id: "join-test", units: "mm" })
 class Fixture extends Project {

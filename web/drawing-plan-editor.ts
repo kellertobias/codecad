@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import {
   planSheet,
+  planViewKey,
   planViewLabel,
   validateDrawingPlan,
   type DrawingPlan,
   type PlanItem,
 } from "../src/drawing-plan.js";
+import { PanZoom } from "./pan-zoom.js";
 import {
   standardScales,
   viewAngles,
@@ -46,8 +48,12 @@ const byId = <T extends HTMLElement | SVGSVGElement = HTMLElement>(
 ) => document.getElementById(id) as T;
 const uid = () => "item_" + crypto.randomUUID().replaceAll("-", "");
 const fmt = (n: number) => Number(n.toFixed(3));
-const viewKey = (view: View) =>
-  `${view.subject}|${view.angle}|${view.hiddenLines ? "hidden" : "visible"}`;
+const viewKey = planViewKey;
+/** A path is in the view when neither it nor an ancestor was switched off. */
+const underPath = (path: string, root: string) =>
+  path === root || path.startsWith(root + "/");
+const hiddenBy = (view: View, path: string) =>
+  view.hiddenParts?.find((root) => underPath(path, root));
 const scaleChoices = standardScales.map((scale) => fmt(1 / scale));
 const scaleName = (denominator: number) =>
   denominator >= 1 ? `1:${fmt(denominator)}` : `${fmt(1 / denominator)}:1`;
@@ -70,6 +76,9 @@ export class DrawingPlanEditor {
   private dirty = false;
   private loaded = false;
   private readonly sheet = byId<SVGSVGElement>("plan-sheet");
+  private readonly wrap = byId("plan-sheet-wrap");
+  private readonly viewport = new PanZoom();
+  private pan: { x: number; y: number; pointer: number } | undefined;
   private readonly overlay = svgNode("g", { "pointer-events": "none" });
   constructor(
     private token: () => string,
@@ -80,6 +89,41 @@ export class DrawingPlanEditor {
       this.setTool(this.tool === "measure" ? "select" : "measure");
     byId("plan-text").onclick = () =>
       this.setTool(this.tool === "text" ? "select" : "text");
+    for (const [id, action] of [
+      ["plan-zoom-out", () => this.viewport.zoom(1 / 1.25)],
+      ["plan-zoom-in", () => this.viewport.zoom(1.25)],
+      ["plan-zoom-fit", () => this.viewport.reset()],
+    ] as const)
+      byId(id).onclick = () => {
+        action();
+        this.applyZoom();
+      };
+    this.wrap.addEventListener(
+      "wheel",
+      (event) => {
+        event.preventDefault();
+        const bounds = this.wrap.getBoundingClientRect();
+        const delta =
+          event.deltaY *
+          (event.deltaMode === 1
+            ? 16
+            : event.deltaMode === 2
+              ? bounds.height
+              : 1);
+        this.viewport.zoom(
+          Math.exp(-Math.max(-200, Math.min(200, delta)) * 0.002),
+          event.clientX - bounds.left - bounds.width / 2,
+          event.clientY - bounds.top - bounds.height / 2,
+        );
+        this.applyZoom();
+      },
+      { passive: false },
+    );
+    this.wrap.addEventListener("pointerdown", (event) => this.panDown(event));
+    this.wrap.addEventListener("pointermove", (event) => this.panMove(event));
+    for (const type of ["pointerup", "pointercancel"] as const)
+      this.wrap.addEventListener(type, () => this.panUp());
+    this.applyZoom();
     byId("plan-save").onclick = () => void this.save();
     byId("plan-export").onclick = () => void this.download();
     this.sheet.addEventListener("pointerdown", (event) =>
@@ -190,10 +234,10 @@ export class DrawingPlanEditor {
       for (const mesh of this.meshes) {
         if (
           view.subject !== "*" &&
-          mesh.componentPath !== view.subject &&
-          !mesh.componentPath.startsWith(view.subject + "/")
+          !underPath(mesh.componentPath, view.subject)
         )
           continue;
+        if (hiddenBy(view, mesh.componentPath)) continue;
         const matrix = new THREE.Matrix4().fromArray(mesh.matrix);
         for (let i = 0; i + 2 < mesh.edges.length; i += 3) {
           point
@@ -276,6 +320,31 @@ export class DrawingPlanEditor {
     this.selected = view.id;
     this.setTool("select");
     this.change();
+  }
+  /** Middle button anywhere, or dragging the sheet's empty background. */
+  private panDown(event: PointerEvent) {
+    const onItem =
+      event.button === 0 &&
+      (this.tool !== "select" || Boolean(this.itemAt(event)));
+    if ((event.button !== 0 && event.button !== 1) || onItem) return;
+    this.pan = { x: event.clientX, y: event.clientY, pointer: event.pointerId };
+    this.wrap.setPointerCapture(event.pointerId);
+    this.wrap.classList.add("panning");
+  }
+  private panMove(event: PointerEvent) {
+    if (this.pan?.pointer !== event.pointerId) return;
+    this.viewport.pan(event.clientX - this.pan.x, event.clientY - this.pan.y);
+    this.pan = { ...this.pan, x: event.clientX, y: event.clientY };
+    this.applyZoom();
+  }
+  private panUp() {
+    this.pan = undefined;
+    this.wrap.classList.remove("panning");
+  }
+  private applyZoom() {
+    const { x, y, scale } = this.viewport;
+    this.sheet.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    byId("plan-zoom-level").textContent = `${Math.round(scale * 100)}%`;
   }
   private point(event: PointerEvent): Point {
     const svg = this.sheet.createSVGPoint();
@@ -462,6 +531,13 @@ export class DrawingPlanEditor {
         this.selected = "";
         this.render();
       }
+      return;
+    }
+    if (["+", "=", "-", "0"].includes(event.key)) {
+      event.preventDefault();
+      if (event.key === "0") this.viewport.reset();
+      else this.viewport.zoom(event.key === "-" ? 1 / 1.25 : 1.25);
+      this.applyZoom();
       return;
     }
     const item = this.plan.items.find((entry) => entry.id === this.selected);
@@ -767,6 +843,77 @@ export class DrawingPlanEditor {
     this.sheet.append(this.overlay);
     this.renderOverlay();
   }
+  /** Per-view checklist of the parts under its subject. */
+  private partList(panel: HTMLElement, item: View) {
+    const scope = item.subject;
+    const parts = this.components.filter(
+      (component) =>
+        component.parent !== undefined &&
+        component.path !== scope &&
+        (scope === "*" || underPath(component.path, scope)),
+    );
+    const caption = document.createElement("span");
+    caption.className = "plan-parts-head";
+    panel.append(caption);
+    if (!parts.length) {
+      caption.textContent = "Drawn parts";
+      const note = document.createElement("p");
+      note.textContent = "This subject has no separate parts to switch off.";
+      panel.append(note);
+      return;
+    }
+    const drawn = parts.filter((part) => !hiddenBy(item, part.path)).length;
+    caption.textContent = `Drawn parts · ${drawn} of ${parts.length}`;
+    const list = document.createElement("div");
+    list.className = "plan-parts";
+    const base = scope === "*" ? 1 : scope.split("/").length;
+    for (const part of parts) {
+      const wrap = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      const hiding = hiddenBy(item, part.path);
+      box.checked = !hiding;
+      // A part inside a switched-off parent follows its parent.
+      box.disabled = Boolean(hiding) && hiding !== part.path;
+      if (box.disabled) wrap.className = "plan-part-implied";
+      box.onchange = () => {
+        const kept = (item.hiddenParts ?? []).filter(
+          (root) => !underPath(root, part.path),
+        );
+        item.hiddenParts = box.checked ? kept : [...kept, part.path];
+        if (!item.hiddenParts.length) delete item.hiddenParts;
+        this.change();
+      };
+      const name = document.createElement("span");
+      name.textContent = part.label;
+      name.style.paddingLeft = `${Math.max(0, part.path.split("/").length - base) * 10}px`;
+      name.title = part.path;
+      wrap.append(box, name);
+      list.append(wrap);
+    }
+    panel.append(list);
+    if (drawn === parts.length) return;
+    const all = document.createElement("button");
+    all.className = "plan-parts-all";
+    all.textContent = "Draw every part";
+    all.onclick = () => {
+      delete item.hiddenParts;
+      this.change();
+    };
+    panel.append(all);
+  }
+  /** Keeps only switched-off paths that still sit under the view's subject. */
+  private pruneHiddenParts(item: View) {
+    if (!item.hiddenParts) return;
+    const kept = item.hiddenParts.filter(
+      (path) =>
+        // Showing a part outright overrides having switched it off before.
+        path !== item.subject &&
+        (item.subject === "*" || underPath(path, item.subject)),
+    );
+    if (kept.length) item.hiddenParts = kept;
+    else delete item.hiddenParts;
+  }
   private fields() {
     const panel = byId("plan-fields");
     panel.replaceChildren();
@@ -885,8 +1032,13 @@ export class DrawingPlanEditor {
             ? [[item.subject, `${item.subject} (missing)`] as const]
             : []),
         ],
-        (value) => (item.subject = value),
+        (value) => {
+          item.subject = value;
+          // Paths outside the new subject can no longer be switched off.
+          this.pruneHiddenParts(item);
+        },
       );
+      this.partList(panel, item);
       selectField(
         "View from",
         item.angle,

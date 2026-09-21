@@ -1,6 +1,6 @@
 # Makerspace toolbox port
 
-Entry: `examples/mksp-toolbox.ts`. Source of truth:
+Entry: `examples/mksp-toolbox/index.ts`. Source of truth:
 `../Projects/MKSP-Toolbox/project.py`, with the accompanying Python drawer,
 drawer-rail, angle-bracket and interlock-finger library definitions. This is the
 360 × 220 × 300 mm version, not the older `makerspace_toolbox.py` variant.
@@ -27,10 +27,10 @@ The port centres that member at 1.625 mm instead. Hardware remains a simplified
 channel model; verify physical fit before fabrication. The drawers move 160 mm,
 the middle members 80 mm, with the second drawer delayed by 0.75 seconds.
 
-Run `npm run dev -- examples/mksp-toolbox.ts`, or generate outputs with:
+Run `npm run dev -- examples/mksp-toolbox/index.ts`, or generate outputs with:
 
 ```sh
-node --import tsx src/worker.ts examples/mksp-toolbox.ts output/mksp-toolbox
+node --import tsx src/worker.ts examples/mksp-toolbox/index.ts output/mksp-toolbox
 ```
 
 Outputs include a two-page assembly/elevation PDF, drawing DXF, cut-list PDF/DXF/CSV,

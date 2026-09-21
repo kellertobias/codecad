@@ -236,3 +236,50 @@ test("a saved plan renders centred views and model-space dimensions", async () =
     engine.dispose();
   }
 });
+
+test("a plan view leaves out the parts switched off for it", async () => {
+  const project = new Crate(),
+    engine = new OpenCascadeEngine();
+  try {
+    await engine.evaluate({ root: project, revision: 1 });
+    const view = {
+      id: "v1",
+      kind: "view" as const,
+      subject: "*",
+      angle: "front" as const,
+      x: 20,
+      y: 20,
+      width: 200,
+      height: 100,
+      scale: 5,
+      label: "",
+    };
+    const sheet = (hiddenParts: string[]) =>
+      validateDrawingPlan({
+        version: 1,
+        title: "Crate sheet",
+        items: [{ ...view, hiddenParts }],
+      });
+    const height = async (hiddenParts: string[]) => {
+      const { drawing, warnings } = planDrawing(sheet(hiddenParts), project);
+      const prepared: PreparedView[] = [];
+      await renderDrawingFormats(engine, drawing, (item) =>
+        prepared.push(item),
+      );
+      return { span: prepared[0]!.max.y - prepared[0]!.min.y, warnings };
+    };
+    // The panel floats 500 mm above the 100 mm body, so dropping it collapses
+    // the front view to the body alone.
+    const whole = await height([]);
+    assert.equal(whole.warnings.length, 0);
+    assert.ok(whole.span > 500);
+    const bodyOnly = await height(["crate/panel"]);
+    assert.equal(bodyOnly.warnings.length, 0);
+    assert.equal(Math.round(bodyOnly.span), 140);
+    const unknown = await height(["crate/gone"]);
+    assert.match(unknown.warnings[0]!, /hides missing component crate\/gone/);
+    assert.ok(unknown.span > 500);
+  } finally {
+    engine.dispose();
+  }
+});
