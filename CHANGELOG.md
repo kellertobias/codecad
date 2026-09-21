@@ -1,3 +1,16 @@
+# [0.6.0](https://github.com/kellertobias/codecad/compare/v0.5.0...v0.6.0) (2026-09-21)
+
+
+### Bug Fixes
+
+* do not report a pocket that opens onto the edge as thin material ([13c34dd](https://github.com/kellertobias/codecad/commit/13c34dd0df2dabc16b0c1edeb1d8b297ed87d9ff))
+* keep corner fingers attached and spread corner joints evenly ([3ba6dde](https://github.com/kellertobias/codecad/commit/3ba6dde11c73cdcb91cc4f2545878783420db33a))
+
+
+### Features
+
+* show the release version on the home screen ([d61ae64](https://github.com/kellertobias/codecad/commit/d61ae64158f2ad0234905ba953d152888ad03afd))
+
 # [0.5.0](https://github.com/kellertobias/codecad/compare/v0.4.0...v0.5.0) (2026-09-21)
 
 
