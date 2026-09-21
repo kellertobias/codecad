@@ -1178,6 +1178,19 @@ export function thinMaterial(
   for (const entity of [...edge, ...cuts])
     sampled.set(entity, contourPoints(entity));
   const edgePoints = edge.flatMap((entity) => sampled.get(entity)!);
+  // A pocket that runs out through the edge opens onto it on purpose, as a
+  // finger pull does: there is no wall between the two to be thin. Only
+  // pockets that stay inside are measured against the edge.
+  const outline = entities
+    .flatMap((entity) =>
+      entity.kind === "polyline" && entity.layer === "PART_OUTLINE"
+        ? [flattened(entity.points, true)]
+        : [],
+    )
+    .sort((a, c) => Math.abs(polygonArea(c)) - Math.abs(polygonArea(a)))[0];
+  const open = (points: readonly Point2[]) =>
+    outline !== undefined &&
+    points.some((point) => !strictlyInside(point, outline, 1e-6));
   const measure = (
     a: readonly Point2[],
     b: readonly Point2[],
@@ -1201,11 +1214,17 @@ export function thinMaterial(
   };
   for (const [index, cut] of cuts.entries()) {
     const points = sampled.get(cut)!;
-    measure(points, edgePoints, [cut.layer, "blank edge"]);
+    if (!open(points)) measure(points, edgePoints, [cut.layer, "blank edge"]);
     for (const other of cuts.slice(index + 1))
       measure(points, sampled.get(other)!, [cut.layer, other.layer]);
   }
   return worst;
+}
+function polygonArea(points: readonly Point2[]): number {
+  return points.reduce((sum, p, i) => {
+    const q = points[(i + 1) % points.length]!;
+    return sum + p.x * q.y - q.x * p.y;
+  }, 0);
 }
 /** The narrowest neck of material inside one closed contour: a concave corner
  * facing another edge across material, closer than `minimum`. A concave corner

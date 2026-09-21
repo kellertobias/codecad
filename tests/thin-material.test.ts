@@ -10,6 +10,7 @@ import {
 } from "../src/index.js";
 import { OpenCascadeEngine } from "../src/engine.js";
 import {
+  type DxfEntity,
   narrowestNeck,
   partEntities,
   thinMaterial,
@@ -88,6 +89,26 @@ test("the check runs with the CAM export and names the part", async () => {
 });
 
 const box = (points: [number, number][]) => points.map(([x, y]) => ({ x, y }));
+
+test("a pocket that opens onto the edge on purpose is not thin material", () => {
+  const blank = box([
+    [0, 0],
+    [200, 0],
+    [200, 100],
+    [0, 100],
+  ]);
+  const entities = (x: number): DxfEntity[] => [
+    { kind: "polyline", layer: "BLANK_OUTLINE", closed: true, points: blank },
+    { kind: "polyline", layer: "PART_OUTLINE", closed: true, points: blank },
+    { kind: "circle", layer: "CUT_BOTTOM_D5.000", x, y: 50, radius: 10 },
+  ];
+  // Centred on the edge: a half-round finger pull, with no wall to measure.
+  assert.equal(thinMaterial(entities(0), 10), undefined);
+  // Just inside: half a millimetre of wall, which is a finding.
+  const grazing = thinMaterial(entities(10.5), 10);
+  assert.ok(grazing);
+  assert.ok(grazing.mm < 1, `${grazing.mm} mm`);
+});
 
 test("a finger left hanging on a sliver is reported as a neck", () => {
   // The back corner of a drawer side as two joints once left it: the floor's
