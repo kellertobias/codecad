@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/kellertobias/codecad/compare/v0.4.0...v0.5.0) (2026-09-21)
+
+
+### Features
+
+* name projects from an index.ts and choose what each view draws ([83974d9](https://github.com/kellertobias/codecad/commit/83974d9b9a79fc10bbf287a9d0568e1e310c576e))
+
 # [0.4.0](https://github.com/kellertobias/codecad/compare/v0.3.0...v0.4.0) (2026-09-20)
 
 
