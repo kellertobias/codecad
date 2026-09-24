@@ -1,3 +1,15 @@
+# [0.7.0](https://github.com/kellertobias/codecad/compare/v0.6.0...v0.7.0) (2026-09-24)
+
+
+### Bug Fixes
+
+* write DXF files that AutoCAD and strict readers accept ([4ba9181](https://github.com/kellertobias/codecad/commit/4ba9181e8069302c39ccf5c30cf2a9c87d1762cc))
+
+
+### Features
+
+* multiple sheets, flat parts and three-click dimensions in the Sheet editor ([77187a1](https://github.com/kellertobias/codecad/commit/77187a14856d3049148a8f58ad0083acb79780aa))
+
 # [0.6.0](https://github.com/kellertobias/codecad/compare/v0.5.0...v0.6.0) (2026-09-21)
 
 
