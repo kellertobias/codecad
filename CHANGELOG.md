@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/kellertobias/codecad/compare/v0.7.0...v0.8.0) (2026-09-24)
+
+
+### Features
+
+* weigh parts from material density and accept typed zoom levels ([b367b61](https://github.com/kellertobias/codecad/commit/b367b6152d773ee5f4730051282ae72f3e15676a))
+
 # [0.7.0](https://github.com/kellertobias/codecad/compare/v0.6.0...v0.7.0) (2026-09-24)
 
 
