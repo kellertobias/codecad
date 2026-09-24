@@ -29,6 +29,7 @@ import {
   cutRows,
   csv,
   drawManufacturing,
+  entitySegments,
   nest,
   layoutDxf,
   sheetParts,
@@ -178,6 +179,10 @@ export async function buildProject(
         frames: MotionFrame[];
       }[] = [],
       clearances: ReturnType<typeof clearanceResults> = [];
+    const flatParts = new Map<
+      string,
+      { path: string; label: string; lines: number[] }
+    >();
     const emitDrawing = async (
       value: TechnicalDrawing,
       name: string,
@@ -324,7 +329,17 @@ export async function buildProject(
           // The Drawings plane is part of the model, not an export, so it is
           // drawn even when the files themselves are left for later.
           if (value.options.showInDrawings)
-            await drawManufacturing(engine, value, project.view2D);
+            for (const [part, entities] of await drawManufacturing(
+              engine,
+              value,
+              project.view2D,
+            ))
+              // The Sheet editor places these parts as flat views.
+              flatParts.set(part.path, {
+                path: part.path,
+                label: part.label,
+                lines: entitySegments(entities),
+              });
           if (options.exportOnly && options.exportOnly !== name) continue;
           if (options.lazyExports) {
             pending(name, "dxf");
@@ -408,7 +423,8 @@ export async function buildProject(
       const plan = validateDrawingPlan(
         JSON.parse(await readFile(drawingPlanFile(entry), "utf8")),
       );
-      if (plan.items.some((item) => item.kind === "view")) {
+      const items = plan.sheets.flatMap((sheet) => sheet.items);
+      if (items.some((item) => item.kind === "view")) {
         const { drawing, warnings } = planDrawing(plan, project, info);
         for (const message of warnings)
           diagnostics.push({
@@ -424,7 +440,7 @@ export async function buildProject(
           return result;
         };
         const views = new Map(
-          plan.items.flatMap((item) =>
+          items.flatMap((item) =>
             item.kind === "view" ? [[item.id, item] as const] : [],
           ),
         );
@@ -491,6 +507,7 @@ export async function buildProject(
       unfolds,
       cutList: cutRows(project),
       view2D: project.view2D.primitives,
+      flatParts: [...flatParts.values()],
       planViews,
       components: [project, ...project.registry.all].map((c) => ({
         path: c.path,

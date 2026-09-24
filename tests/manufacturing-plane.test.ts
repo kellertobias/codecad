@@ -9,7 +9,7 @@ import {
   type SheetPart,
 } from "../src/index.js";
 import { OpenCascadeEngine } from "../src/engine.js";
-import { drawManufacturing } from "../src/manufacturing.js";
+import { drawManufacturing, entitySegments } from "../src/manufacturing.js";
 
 const stock = new SheetMaterial({
   id: "plane-stock",
@@ -39,7 +39,7 @@ test("the CAM geometry can be laid out on the Drawings plane", async () => {
     view = new View2D();
   try {
     await engine.evaluate({ root: project, revision: 1 });
-    await drawManufacturing(
+    const parts = await drawManufacturing(
       engine,
       new ManufacturingDxf({ parts: "all", layout: "one-file-per-part" }),
       view,
@@ -71,6 +71,19 @@ test("the CAM geometry can be laid out on the Drawings plane", async () => {
     // The parts are placed in a row, in the order they are exported.
     assert.deepEqual(span(2), { points: 4, from: 220, to: 340 });
     assert.deepEqual(span(3), span(2));
+    // Each part also comes back in its own frame, for the Sheet editor to
+    // place: the plain 120 × 80 blank starts at its own origin.
+    assert.deepEqual(
+      [...parts.keys()].map((part) => part.path),
+      ["plane-test/rounded", "plane-test/plain"],
+    );
+    const lines = entitySegments(parts.get(project.plain)!);
+    const xs = lines.filter((_, i) => i % 2 === 0),
+      ys = lines.filter((_, i) => i % 2 === 1);
+    assert.deepEqual(
+      [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)],
+      [0, 120, 0, 80],
+    );
   } finally {
     engine.dispose();
   }

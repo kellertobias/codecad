@@ -41,7 +41,11 @@ test("drawing instructions preserve views, part references, measurements and not
       },
     ],
   };
-  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), plan);
+  // A plan saved before sheets existed reads as the first sheet.
+  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), {
+    version: 2,
+    sheets: [{ id: "sheet_1", title: plan.title, items: plan.items }],
+  });
   assert.throws(
     () => validateDrawingPlan({ ...plan, items: plan.items.slice(1) }),
     /missing view/,
@@ -68,7 +72,10 @@ test("a view remembers which parts it leaves out", () => {
     hiddenParts: ["cabinet/door", "cabinet/shelf"],
   };
   const plan = { version: 1 as const, title: "Carcass", items: [view] };
-  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), plan);
+  assert.deepEqual(
+    validateDrawingPlan(JSON.parse(JSON.stringify(plan))).sheets[0]!.items,
+    plan.items,
+  );
   assert.throws(
     () =>
       validateDrawingPlan({
@@ -103,7 +110,10 @@ test("a turned view keeps its dimensions on the geometry they measure", () => {
     label: "",
   };
   const plan = { version: 1 as const, title: "Turned", items: [view] };
-  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), plan);
+  assert.deepEqual(
+    validateDrawingPlan(JSON.parse(JSON.stringify(plan))).sheets[0]!.items,
+    plan.items,
+  );
   for (const rotate of [400, Number.NaN, "90"])
     assert.throws(
       () => validateDrawingPlan({ ...plan, items: [{ ...view, rotate }] }),
@@ -132,4 +142,86 @@ test("a turned view keeps its dimensions on the geometry they measure", () => {
   const p = rotatePaper({ x: 3, y: 0 }, 90);
   assert(Math.abs(p.x) < 1e-12 && Math.abs(p.y - 3) < 1e-12);
   assert.deepEqual(rotatePaper({ x: 3, y: -2 }, 0), { x: 3, y: -2 });
+});
+
+test("a plan keeps several sheets, each with its own views and dimensions", () => {
+  const view = (id: string) => ({
+    id,
+    kind: "view" as const,
+    subject: "*",
+    angle: "front" as const,
+    x: 20,
+    y: 20,
+    width: 160,
+    height: 100,
+    scale: 10,
+    label: "",
+  });
+  const dimension = (id: string, of: string) => ({
+    id,
+    kind: "dimension" as const,
+    view: of,
+    u1: 0,
+    v1: 0,
+    u2: 100,
+    v2: 0,
+    offset: 8,
+    label: "",
+  });
+  const plan = {
+    version: 2 as const,
+    sheets: [
+      { id: "s1", title: "Assembly", items: [view("a"), dimension("d1", "a")] },
+      { id: "s2", title: "Parts", items: [view("b")] },
+    ],
+  };
+  assert.deepEqual(validateDrawingPlan(JSON.parse(JSON.stringify(plan))), plan);
+  // A dimension is drawn on its view's page, so it cannot point across.
+  assert.throws(
+    () =>
+      validateDrawingPlan({
+        ...plan,
+        sheets: [
+          plan.sheets[0],
+          { ...plan.sheets[1]!, items: [view("b"), dimension("d2", "a")] },
+        ],
+      }),
+    /missing view/,
+  );
+  // Built views are looked up by ID, so IDs stay unique across sheets.
+  assert.throws(
+    () =>
+      validateDrawingPlan({
+        ...plan,
+        sheets: [plan.sheets[0], { ...plan.sheets[1]!, items: [view("a")] }],
+      }),
+    /duplicate/,
+  );
+  assert.throws(
+    () => validateDrawingPlan({ ...plan, sheets: [] }),
+    /Unsupported/,
+  );
+  assert.throws(
+    () =>
+      validateDrawingPlan({
+        ...plan,
+        sheets: [plan.sheets[0], { ...plan.sheets[1]!, id: "s1" }],
+      }),
+    /Invalid drawing sheet/,
+  );
+  // A flat view draws one part as cut, never the whole model.
+  const flat = { ...view("f"), angle: "flat" as const, subject: "shelf" };
+  const withFlat = {
+    version: 2 as const,
+    sheets: [{ id: "s", title: "", items: [flat] }],
+  };
+  assert.deepEqual(validateDrawingPlan(withFlat), withFlat);
+  assert.throws(
+    () =>
+      validateDrawingPlan({
+        ...withFlat,
+        sheets: [{ id: "s", title: "", items: [{ ...flat, subject: "*" }] }],
+      }),
+    /Invalid model view/,
+  );
 });

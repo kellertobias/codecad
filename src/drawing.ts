@@ -7,12 +7,7 @@ import {
   type Component,
   type Point3,
 } from "./model.js";
-import {
-  SheetMetalPart,
-  SheetPart,
-  BlockPart,
-  MetalStockPart,
-} from "./stock.js";
+import { SheetPart, BlockPart, MetalStockPart } from "./stock.js";
 import {
   hatchTriangles,
   type DrawingLineStyle,
@@ -385,8 +380,10 @@ async function prepareView(
     ? subjects(view.of).filter((part) => !omitted.has(part))
     : subjects(view.of);
   if (view.kind === "flat") {
-    if (parts.length !== 1 || !(parts[0] instanceof SheetMetalPart))
-      throw new Error("A flat view needs exactly one sheet-metal part");
+    // Any sheet part can be drawn as cut: sheet metal as its developed
+    // pattern, a panel as the blank the manufacturing DXF describes.
+    if (parts.length !== 1 || !(parts[0] instanceof SheetPart))
+      throw new Error("A flat view needs exactly one sheet part");
     const part = parts[0];
     const entities = await partEntities(engine, part);
     const bounds = part.manufacturingOutline.points;

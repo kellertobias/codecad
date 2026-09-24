@@ -162,10 +162,27 @@
           >
             ▣
           </button>
+          <span class="plan-part-picker">
+            <button
+              id="plan-part"
+              class="tool-icon"
+              title="Place a part from 2D geometry, drawn as it is cut"
+              aria-label="Place part from 2D geometry"
+              aria-haspopup="menu"
+            >
+              ◫
+            </button>
+            <div
+              id="plan-part-menu"
+              role="menu"
+              aria-label="Parts in 2D geometry"
+              hidden
+            ></div>
+          </span>
           <button
             id="plan-measure"
             class="tool-icon"
-            title="Dimension between two points (snaps to corners and edges)"
+            title="Dimension: pick two points, then where the line goes (points snap to corners and edges)"
             aria-label="Add dimension"
             aria-pressed="false"
           >
@@ -318,6 +335,11 @@
                 aria-label="A3 drawing sheet"
               ></svg>
             </div>
+            <div
+              id="plan-sheet-tabs"
+              role="tablist"
+              aria-label="Drawing sheets"
+            ></div>
             <aside id="plan-properties">
               <strong id="plan-heading">Drawing sheet</strong>
               <div id="plan-fields"></div>

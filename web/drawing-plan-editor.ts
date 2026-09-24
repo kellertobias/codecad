@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import {
+  emptyDrawingPlan,
   planSheet,
   planViewKey,
   planViewLabel,
   validateDrawingPlan,
   type DrawingPlan,
   type PlanItem,
+  type PlanSheet,
 } from "../src/drawing-plan.js";
 import { PanZoom, viewBoxFor } from "./pan-zoom.js";
 import {
@@ -18,10 +20,13 @@ import {
 
 type Mesh = { componentPath: string; edges: number[]; matrix: number[] };
 type Component = { path: string; label: string; parent?: string };
+/** A part the 2D geometry tab shows, as segments in its own flat XY. */
+type FlatPart = { path: string; label: string; lines: number[] };
 type View = Extract<PlanItem, { kind: "view" }>;
 type Dimension = Extract<PlanItem, { kind: "dimension" }>;
 type BuiltView = { key: string; visible: number[]; hidden: number[] };
 type Point = { x: number; y: number };
+type ModelPoint = { u: number; v: number };
 /** Projected model millimetres: `[x1, y1, x2, y2, …]` plus their centre. */
 type Linework = {
   visible: number[];
@@ -59,17 +64,26 @@ const scaleChoices = standardScales.map((scale) => fmt(1 / scale));
 const scaleName = (denominator: number) =>
   denominator >= 1 ? `1:${fmt(denominator)}` : `${fmt(1 / denominator)}:1`;
 const titleBlock = { width: 170, height: 40, margin: 10 };
+const measureHints = [
+  "Click the first point in a view. Corners and edges snap; Esc cancels.",
+  "Click the second point in the same view.",
+  "Click where the dimension line goes.",
+];
 
 export class DrawingPlanEditor {
-  private plan: DrawingPlan = { version: 1, title: "", items: [] };
+  private plan: DrawingPlan = emptyDrawingPlan();
+  private sheetId = this.plan.sheets[0]!.id;
   private version = "";
+  private modelTitle = "";
   private meshes: Mesh[] = [];
   private components: Component[] = [];
+  private flatParts = new Map<string, FlatPart>();
   private built: Record<string, BuiltView> = {};
   private linework = new Map<string, Linework>();
   private selected = "";
   private tool: "select" | "measure" | "text" = "select";
-  private firstPoint: { u: number; v: number; view: string } | undefined;
+  /** Dimension in progress: two measured points, then where its line goes. */
+  private measure: { view: string; a: ModelPoint; b?: ModelPoint } | undefined;
   private snap: (Point & { snapped: boolean }) | undefined;
   private drag:
     | { x: number; y: number; item: PlanItem; resize: boolean; moved: boolean }
@@ -86,6 +100,21 @@ export class DrawingPlanEditor {
     private artifactUrl: (name: string) => string,
   ) {
     byId("plan-view").onclick = () => this.addView();
+    const partButton = byId("plan-part"),
+      partMenu = byId("plan-part-menu");
+    partButton.onclick = (event) => {
+      event.stopPropagation();
+      if (partMenu.hidden) this.openPartMenu();
+      else partMenu.hidden = true;
+    };
+    document.addEventListener("pointerdown", (event) => {
+      if (
+        !partMenu.hidden &&
+        !partMenu.contains(event.target as Node) &&
+        event.target !== partButton
+      )
+        partMenu.hidden = true;
+    });
     byId("plan-measure").onclick = () =>
       this.setTool(this.tool === "measure" ? "select" : "measure");
     byId("plan-text").onclick = () =>
@@ -157,11 +186,13 @@ export class DrawingPlanEditor {
     if (!response.ok) throw new Error("Could not load drawing plan");
     const data = await response.json();
     this.plan = validateDrawingPlan(data.plan);
+    this.sheetId = this.plan.sheets[0]!.id;
+    if (!this.page.title) this.page.title = this.modelTitle;
     this.version = data.version;
     this.dirty = false;
     this.loaded = true;
     this.status(
-      this.plan.items.length
+      this.plan.sheets.some((sheet) => sheet.items.length)
         ? "Loaded " + String(data.file).split(/[\\/]/).at(-1)
         : "Add a view to start a drawing sheet.",
     );
@@ -172,12 +203,17 @@ export class DrawingPlanEditor {
     components: Component[];
     title: string;
     planViews?: Record<string, BuiltView>;
+    flatParts?: FlatPart[];
   }) {
     this.meshes = model.meshes;
     this.components = model.components;
     this.built = model.planViews ?? {};
+    this.flatParts = new Map(
+      (model.flatParts ?? []).map((part) => [part.path, part]),
+    );
     this.linework.clear();
-    if (!this.plan.title) this.plan.title = model.title;
+    this.modelTitle = model.title;
+    if (!this.plan.sheets[0]!.title) this.plan.sheets[0]!.title = model.title;
     if (this.loaded && !this.dirty && Object.keys(this.built).length)
       this.status("Sheet is up to date · PDF and DXF are under Sheets.");
     this.render();
@@ -187,6 +223,16 @@ export class DrawingPlanEditor {
       byId("drawing").classList.contains("active") &&
       !byId("plan-editor").hidden
     );
+  }
+  private get page(): PlanSheet {
+    return (
+      this.plan.sheets.find((sheet) => sheet.id === this.sheetId) ??
+      this.plan.sheets[0]!
+    );
+  }
+  /** Items on the sheet being edited. */
+  private get items() {
+    return this.page.items;
   }
   private status(message: string) {
     byId("plan-status").textContent = message;
@@ -198,7 +244,7 @@ export class DrawingPlanEditor {
   }
   private setTool(tool: "select" | "measure" | "text") {
     this.tool = tool;
-    this.firstPoint = undefined;
+    this.measure = undefined;
     this.snap = undefined;
     byId("plan-measure").setAttribute(
       "aria-pressed",
@@ -208,7 +254,7 @@ export class DrawingPlanEditor {
     this.sheet.style.cursor = tool === "select" ? "" : "crosshair";
     this.status(
       tool === "measure"
-        ? "Click two points in a view. Corners and edges snap; Esc cancels."
+        ? measureHints[0]!
         : tool === "text"
           ? "Click the sheet to place a note. Esc cancels."
           : "Drag items to move them. Delete removes the selection.",
@@ -216,19 +262,32 @@ export class DrawingPlanEditor {
     this.renderOverlay();
   }
   private views() {
-    return this.plan.items.filter((item): item is View => item.kind === "view");
+    return this.items.filter((item): item is View => item.kind === "view");
   }
-  /** Hidden-line geometry from the last build, else a live wireframe. */
+  /** Hidden-line geometry from the last build, else a live wireframe. A flat
+   * part is already 2D, so its outline from the build is exact as it is. */
   private lines(view: View): Linework {
     const key = view.id + "|" + viewKey(view);
     const cached = this.linework.get(key);
     if (cached) return cached;
     const built = this.built[view.id];
     let visible: number[] = [],
-      hidden: number[] = [];
-    const exact = built?.key === viewKey(view);
-    if (exact) ({ visible, hidden } = built!);
-    else {
+      hidden: number[] = [],
+      exact = false;
+    if (view.angle === "flat") {
+      const part = this.flatParts.get(view.subject);
+      exact = Boolean(part);
+      for (let i = 0; i + 1 < (part?.lines.length ?? 0); i += 2) {
+        const p = rotatePaper(
+          { x: part!.lines[i]!, y: part!.lines[i + 1]! },
+          view.rotate ?? 0,
+        );
+        visible.push(p.x, p.y);
+      }
+    } else if (built?.key === viewKey(view)) {
+      exact = true;
+      ({ visible, hidden } = built);
+    } else {
       const basis = viewBasis(view.angle, view.rotate ?? 0),
         horizontal = new THREE.Vector3(...basis.x),
         vertical = new THREE.Vector3(...basis.y),
@@ -273,6 +332,14 @@ export class DrawingPlanEditor {
     this.linework.set(key, result);
     return result;
   }
+  /** The automatic caption; a flat part is named after the part. */
+  private caption(view: View) {
+    if (view.angle !== "flat") return planViewLabel(view);
+    const label =
+      this.flatParts.get(view.subject)?.label ??
+      view.subject.split("/").at(-1)!;
+    return `${label} · ${scaleName(view.scale)}`;
+  }
   private toSheet(view: View, u: number, v: number): Point {
     const { cx, cy } = this.lines(view);
     return {
@@ -301,14 +368,22 @@ export class DrawingPlanEditor {
       this.status("Build a model before adding a view.");
       return;
     }
-    const existing = this.views(),
-      index = existing.length,
-      angle = (["front", "top", "right", "isometric"] as const)[index % 4]!;
-    const view: View = {
+    const existing = this.views().filter((view) => view.angle !== "flat"),
+      angle = (["front", "top", "right", "isometric"] as const)[
+        existing.length % 4
+      ]!;
+    this.place(
+      { subject: existing.at(-1)?.subject ?? "*", angle },
+      existing.at(-1)?.scale,
+    );
+  }
+  /** Adds a view in the next free slot of a two-by-two grid on the sheet. */
+  private place(view: Pick<View, "subject" | "angle">, scale = 0) {
+    const index = this.views().length;
+    const item: View = {
       id: uid(),
       kind: "view",
-      subject: existing.at(-1)?.subject ?? "*",
-      angle,
+      ...view,
       x: 18 + (index % 2) * 198,
       y: 20 + (Math.floor(index / 2) % 2) * 112,
       width: 180,
@@ -317,11 +392,97 @@ export class DrawingPlanEditor {
       label: "",
     };
     // Related views read best at one scale; otherwise use the largest that fits.
-    view.scale = Math.max(existing.at(-1)?.scale ?? 0, this.fitScale(view));
-    this.plan.items.push(view);
-    this.selected = view.id;
+    item.scale = Math.max(scale, this.fitScale(item));
+    this.items.push(item);
+    this.selected = item.id;
     this.setTool("select");
     this.change();
+  }
+  /** Lists the parts the 2D geometry tab shows, to place one as cut. */
+  private openPartMenu() {
+    const menu = byId("plan-part-menu");
+    menu.replaceChildren();
+    const placed = new Set(
+      this.views()
+        .filter((view) => view.angle === "flat")
+        .map((view) => view.subject),
+    );
+    if (!this.flatParts.size) {
+      const note = document.createElement("p");
+      note.textContent =
+        "No parts in 2D geometry yet. A manufacturing output with showInDrawings puts its sheet parts there.";
+      menu.append(note);
+    }
+    for (const part of this.flatParts.values()) {
+      const button = document.createElement("button");
+      button.setAttribute("role", "menuitem");
+      const name = document.createElement("span");
+      name.textContent = part.label;
+      const path = document.createElement("small");
+      path.textContent = placed.has(part.path)
+        ? `${part.path} · on this sheet`
+        : part.path;
+      button.append(name, path);
+      button.onclick = () => {
+        menu.hidden = true;
+        this.place({ subject: part.path, angle: "flat" });
+      };
+      menu.append(button);
+    }
+    menu.hidden = false;
+    menu.querySelector("button")?.focus();
+  }
+  private addSheet() {
+    const sheet: PlanSheet = {
+      id: "sheet_" + crypto.randomUUID().replaceAll("-", ""),
+      title: `${this.modelTitle || "Sheet"} · ${this.plan.sheets.length + 1}`,
+      items: [],
+    };
+    this.plan.sheets.push(sheet);
+    this.showSheet(sheet.id);
+    this.change();
+  }
+  private showSheet(id: string) {
+    this.sheetId = id;
+    this.selected = "";
+    this.setTool("select");
+    this.render();
+  }
+  private removeSheet() {
+    if (this.plan.sheets.length < 2) return;
+    const index = this.plan.sheets.indexOf(this.page);
+    if (
+      this.page.items.length &&
+      !confirm(
+        `Delete sheet "${this.page.title || index + 1}" and everything on it?`,
+      )
+    )
+      return;
+    this.plan.sheets.splice(index, 1);
+    this.showSheet(this.plan.sheets[Math.max(0, index - 1)]!.id);
+    this.change();
+  }
+  private renderTabs() {
+    const bar = byId("plan-sheet-tabs");
+    bar.replaceChildren();
+    for (const [index, sheet] of this.plan.sheets.entries()) {
+      const tab = document.createElement("button");
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(sheet.id === this.page.id));
+      tab.textContent = sheet.title || `Sheet ${index + 1}`;
+      tab.title = `Sheet ${index + 1} of ${this.plan.sheets.length}`;
+      tab.onclick = () => {
+        if (sheet.id !== this.page.id) this.showSheet(sheet.id);
+      };
+      bar.append(tab);
+    }
+    const add = document.createElement("button");
+    add.className = "plan-sheet-add";
+    add.textContent = "+";
+    add.title = "Add a sheet (a new page of the PDF and DXF)";
+    add.setAttribute("aria-label", "Add sheet");
+    add.onclick = () => this.addSheet();
+    bar.append(add);
   }
   /** Middle button anywhere, or dragging the sheet's empty background. */
   private panDown(event: PointerEvent) {
@@ -421,7 +582,7 @@ export class DrawingPlanEditor {
   private itemAt(event: PointerEvent) {
     const element = event.target as Element;
     const id = element.closest("[data-plan-id]")?.getAttribute("data-plan-id");
-    return this.plan.items.find((item) => item.id === id);
+    return this.items.find((item) => item.id === id);
   }
   private pointerDown(event: PointerEvent) {
     if (event.button !== 0) return;
@@ -435,7 +596,7 @@ export class DrawingPlanEditor {
         text: "New note",
         size: 4,
       };
-      this.plan.items.push(item);
+      this.items.push(item);
       this.selected = item.id;
       this.setTool("select");
       this.change();
@@ -445,37 +606,39 @@ export class DrawingPlanEditor {
       return;
     }
     if (this.tool === "measure") {
-      const view = this.firstPoint
-        ? this.views().find((item) => item.id === this.firstPoint!.view)
-        : this.viewAt(p);
+      const view = this.measureView(p);
       if (!view) {
         this.status("Click inside a model view.");
         return;
       }
-      const point = this.toModel(view, this.snapPoint(view, p));
-      if (!this.firstPoint) {
-        this.firstPoint = { ...point, view: view.id };
-        this.status("Click the second point in the same view.");
-        this.renderOverlay();
+      const measure = this.measure;
+      // Third click: the points are fixed, this one only places the line.
+      if (measure?.b) {
+        const item: Dimension = {
+          id: uid(),
+          kind: "dimension",
+          view: view.id,
+          u1: measure.a.u,
+          v1: measure.a.v,
+          u2: measure.b.u,
+          v2: measure.b.v,
+          offset: this.offsetAt(view, measure.a, measure.b, p),
+          label: "",
+        };
+        this.items.push(item);
+        this.selected = item.id;
+        this.setTool("select");
+        this.change();
         return;
       }
-      const a = this.firstPoint;
-      if (Math.hypot(point.u - a.u, point.v - a.v) < 1e-6) return;
-      const item: Dimension = {
-        id: uid(),
-        kind: "dimension",
-        view: view.id,
-        u1: a.u,
-        v1: a.v,
-        u2: point.u,
-        v2: point.v,
-        offset: 8,
-        label: "",
-      };
-      this.plan.items.push(item);
-      this.selected = item.id;
-      this.setTool("select");
-      this.change();
+      const point = this.toModel(view, this.snapPoint(view, p));
+      if (!measure) this.measure = { view: view.id, a: point };
+      else if (Math.hypot(point.u - measure.a.u, point.v - measure.a.v) < 1e-6)
+        return;
+      else measure.b = point;
+      this.status(measureHints[this.measure!.b ? 2 : 1]!);
+      this.snap = undefined;
+      this.renderOverlay();
       return;
     }
     const item = this.itemAt(event);
@@ -494,10 +657,13 @@ export class DrawingPlanEditor {
   private pointerMove(event: PointerEvent) {
     const p = this.point(event);
     if (this.tool === "measure") {
-      const view = this.firstPoint
-        ? this.views().find((item) => item.id === this.firstPoint!.view)
-        : this.viewAt(p);
-      this.snap = view ? this.snapPoint(view, p) : undefined;
+      const view = this.measureView(p);
+      // Placing the line follows the cursor freely; only points snap.
+      this.snap = !view
+        ? undefined
+        : this.measure?.b
+          ? { ...p, snapped: false }
+          : this.snapPoint(view, p);
       this.renderOverlay();
       return;
     }
@@ -509,12 +675,12 @@ export class DrawingPlanEditor {
     if (item.kind === "dimension") {
       const view = this.views().find((entry) => entry.id === item.view);
       if (!view) return;
-      const a = this.toSheet(view, item.u1, item.v1),
-        b = this.toSheet(view, item.u2, item.v2),
-        length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
       // Dragging a dimension slides its line toward or away from the geometry.
-      item.offset = fmt(
-        ((p.x - a.x) * -(b.y - a.y) + (p.y - a.y) * (b.x - a.x)) / length,
+      item.offset = this.offsetAt(
+        view,
+        { u: item.u1, v: item.v1 },
+        { u: item.u2, v: item.v2 },
+        p,
       );
     } else if (item.kind === "view" && this.drag.resize) {
       item.width = fmt(Math.max(20, item.width + dx));
@@ -529,6 +695,20 @@ export class DrawingPlanEditor {
     this.dirty = true;
     this.status("Unsaved changes · Save plan to update the PDF and DXF");
     this.renderSheet();
+  }
+  /** Once a dimension is started, it stays in the view it started in. */
+  private measureView(p: Point) {
+    const id = this.measure?.view;
+    return id ? this.views().find((item) => item.id === id) : this.viewAt(p);
+  }
+  /** Paper millimetres from the measured line to `p`, signed by side. */
+  private offsetAt(view: View, from: ModelPoint, to: ModelPoint, p: Point) {
+    const a = this.toSheet(view, from.u, from.v),
+      b = this.toSheet(view, to.u, to.v),
+      length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return fmt(
+      ((p.x - a.x) * -(b.y - a.y) + (p.y - a.y) * (b.x - a.x)) / length,
+    );
   }
   private keyDown(event: KeyboardEvent) {
     if (!this.active) return;
@@ -554,7 +734,7 @@ export class DrawingPlanEditor {
       this.applyZoom();
       return;
     }
-    const item = this.plan.items.find((entry) => entry.id === this.selected);
+    const item = this.items.find((entry) => entry.id === this.selected);
     if (!item) return;
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
@@ -576,7 +756,7 @@ export class DrawingPlanEditor {
     this.change();
   }
   private remove(item: PlanItem) {
-    this.plan.items = this.plan.items.filter(
+    this.page.items = this.items.filter(
       (entry) =>
         entry.id !== item.id &&
         !(entry.kind === "dimension" && entry.view === item.id),
@@ -585,11 +765,13 @@ export class DrawingPlanEditor {
     this.change();
   }
   private render() {
+    this.renderTabs();
     this.renderSheet();
     this.fields();
   }
   private renderOverlay() {
     this.overlay.replaceChildren();
+    const color = "#09a68d";
     const marker = (p: Point, snapped: boolean) =>
       this.overlay.append(
         svgNode("circle", {
@@ -597,41 +779,62 @@ export class DrawingPlanEditor {
           cy: p.y,
           r: snapped ? 1.6 : 1,
           fill: snapped ? "#09a68d55" : "none",
-          stroke: "#09a68d",
+          stroke: color,
           "stroke-width": 0.4,
         }),
       );
-    const view = this.views().find((item) => item.id === this.firstPoint?.view);
-    const first =
-      view && this.firstPoint
-        ? this.toSheet(view, this.firstPoint.u, this.firstPoint.v)
-        : undefined;
-    if (first) marker(first, true);
-    if (this.tool !== "measure" || !this.snap) return;
-    marker(this.snap, this.snap.snapped);
-    if (first && view) {
-      this.overlay.append(
-        svgNode("line", {
-          x1: first.x,
-          y1: first.y,
-          x2: this.snap.x,
-          y2: this.snap.y,
-          stroke: "#09a68d",
-          "stroke-width": 0.35,
-          "stroke-dasharray": "1.5 1",
-        }),
-        svgNode(
-          "text",
-          {
-            x: this.snap.x + 3,
-            y: this.snap.y - 3,
-            "font-size": 3.5,
-            fill: "#067a68",
-          },
-          `${fmt(Math.hypot(this.snap.x - first.x, this.snap.y - first.y) * view.scale)} mm`,
-        ),
-      );
+    const measure = this.measure,
+      view = this.views().find((item) => item.id === measure?.view);
+    if (!measure || !view) {
+      if (this.tool === "measure" && this.snap)
+        marker(this.snap, this.snap.snapped);
+      return;
     }
+    const first = this.toSheet(view, measure.a.u, measure.a.v);
+    marker(first, true);
+    if (measure.b) {
+      marker(this.toSheet(view, measure.b.u, measure.b.v), true);
+      // The finished dimension, its line under the cursor until placed.
+      this.drawDimension(
+        this.overlay,
+        view,
+        {
+          u1: measure.a.u,
+          v1: measure.a.v,
+          u2: measure.b.u,
+          v2: measure.b.v,
+          offset: this.snap
+            ? this.offsetAt(view, measure.a, measure.b, this.snap)
+            : 8,
+          label: "",
+        },
+        color,
+      );
+      return;
+    }
+    if (!this.snap) return;
+    marker(this.snap, this.snap.snapped);
+    this.overlay.append(
+      svgNode("line", {
+        x1: first.x,
+        y1: first.y,
+        x2: this.snap.x,
+        y2: this.snap.y,
+        stroke: color,
+        "stroke-width": 0.35,
+        "stroke-dasharray": "1.5 1",
+      }),
+      svgNode(
+        "text",
+        {
+          x: this.snap.x + 3,
+          y: this.snap.y - 3,
+          "font-size": 3.5,
+          fill: "#067a68",
+        },
+        `${fmt(Math.hypot(this.snap.x - first.x, this.snap.y - first.y) * view.scale)} mm`,
+      ),
+    );
   }
   private renderSheet() {
     const { width, height } = planSheet;
@@ -692,12 +895,12 @@ export class DrawingPlanEditor {
       svgNode(
         "text",
         { x: bx + 3, y: by + 13, "font-size": 4.5, fill: "#24343b" },
-        this.plan.title || "Drawing plan",
+        this.page.title || "Drawing plan",
       ),
     );
     this.sheet.append(block);
     const selectedColor = "#09a68d";
-    for (const item of this.plan.items) {
+    for (const item of this.items) {
       const chosen = this.selected === item.id;
       const g = svgNode("g", {
         "data-plan-id": item.id,
@@ -761,7 +964,7 @@ export class DrawingPlanEditor {
               "font-size": 3.5,
               fill: "#24343b",
             },
-            (item.label || planViewLabel(item)) +
+            (item.label || this.caption(item)) +
               (lines.exact ? "" : "  (wireframe preview · save to refine)"),
           ),
         );
@@ -780,87 +983,7 @@ export class DrawingPlanEditor {
       } else if (item.kind === "dimension") {
         const view = this.views().find((v) => v.id === item.view);
         if (!view) continue;
-        const p1 = this.toSheet(view, item.u1, item.v1),
-          p2 = this.toSheet(view, item.u2, item.v2);
-        const dx = p2.x - p1.x,
-          dy = p2.y - p1.y,
-          length = Math.hypot(dx, dy) || 1;
-        const nx = -dy / length,
-          ny = dx / length,
-          ox = nx * item.offset,
-          oy = ny * item.offset;
-        const a = { x: p1.x + ox, y: p1.y + oy },
-          b = { x: p2.x + ox, y: p2.y + oy };
-        const stroke = chosen ? selectedColor : "#235767";
-        // A wide invisible stroke makes the thin dimension easy to grab.
-        g.append(
-          svgNode("line", {
-            x1: a.x,
-            y1: a.y,
-            x2: b.x,
-            y2: b.y,
-            stroke: "#ffffff00",
-            "stroke-width": 4,
-            style: "cursor: move",
-          }),
-        );
-        for (const [x1, y1, x2, y2] of [
-          [
-            p1.x,
-            p1.y,
-            a.x + nx * Math.sign(item.offset || 1) * 1.5,
-            a.y + ny * Math.sign(item.offset || 1) * 1.5,
-          ],
-          [
-            p2.x,
-            p2.y,
-            b.x + nx * Math.sign(item.offset || 1) * 1.5,
-            b.y + ny * Math.sign(item.offset || 1) * 1.5,
-          ],
-          [a.x, a.y, b.x, b.y],
-        ] as [number, number, number, number][])
-          g.append(
-            svgNode("line", { x1, y1, x2, y2, stroke, "stroke-width": 0.25 }),
-          );
-        const ux = dx / length,
-          uy = dy / length;
-        for (const [p, sign] of [
-          [a, 1],
-          [b, -1],
-        ] as const)
-          g.append(
-            svgNode("path", {
-              d: `M${p.x + ux * 2.5 * sign - uy * 0.7},${p.y + uy * 2.5 * sign + ux * 0.7}L${p.x},${p.y}L${p.x + ux * 2.5 * sign + uy * 0.7},${p.y + uy * 2.5 * sign - ux * 0.7}`,
-              stroke,
-              "stroke-width": 0.25,
-              fill: "none",
-            }),
-          );
-        let rotation = (Math.atan2(uy, ux) * 180) / Math.PI;
-        const flipped = rotation > 90 || rotation < -90;
-        if (flipped) rotation += 180;
-        const lift = flipped ? -1.5 : 1.5,
-          tx = (a.x + b.x) / 2 + uy * lift,
-          ty = (a.y + b.y) / 2 - ux * lift;
-        g.append(
-          svgNode(
-            "text",
-            {
-              x: tx,
-              y: ty,
-              "font-size": 3.2,
-              "text-anchor": "middle",
-              transform: `rotate(${fmt(rotation)},${fmt(tx)},${fmt(ty)})`,
-              fill: stroke,
-            },
-            item.label ||
-              String(
-                Number(
-                  Math.hypot(item.u2 - item.u1, item.v2 - item.v1).toFixed(2),
-                ),
-              ),
-          ),
-        );
+        this.drawDimension(g, view, item, chosen ? selectedColor : "#235767");
       } else
         g.append(
           svgNode(
@@ -879,6 +1002,92 @@ export class DrawingPlanEditor {
     }
     this.sheet.append(this.overlay);
     this.renderOverlay();
+  }
+  /** A dimension as drawn on the sheet; also previews one being placed. */
+  private drawDimension(
+    g: SVGElement,
+    view: View,
+    item: Pick<Dimension, "u1" | "v1" | "u2" | "v2" | "offset" | "label">,
+    stroke: string,
+  ) {
+    const p1 = this.toSheet(view, item.u1, item.v1),
+      p2 = this.toSheet(view, item.u2, item.v2);
+    const dx = p2.x - p1.x,
+      dy = p2.y - p1.y,
+      length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length,
+      ny = dx / length,
+      ox = nx * item.offset,
+      oy = ny * item.offset;
+    const a = { x: p1.x + ox, y: p1.y + oy },
+      b = { x: p2.x + ox, y: p2.y + oy };
+    // A wide invisible stroke makes the thin dimension easy to grab.
+    g.append(
+      svgNode("line", {
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        stroke: "#ffffff00",
+        "stroke-width": 4,
+        style: "cursor: move",
+      }),
+    );
+    for (const [x1, y1, x2, y2] of [
+      [
+        p1.x,
+        p1.y,
+        a.x + nx * Math.sign(item.offset || 1) * 1.5,
+        a.y + ny * Math.sign(item.offset || 1) * 1.5,
+      ],
+      [
+        p2.x,
+        p2.y,
+        b.x + nx * Math.sign(item.offset || 1) * 1.5,
+        b.y + ny * Math.sign(item.offset || 1) * 1.5,
+      ],
+      [a.x, a.y, b.x, b.y],
+    ] as [number, number, number, number][])
+      g.append(
+        svgNode("line", { x1, y1, x2, y2, stroke, "stroke-width": 0.25 }),
+      );
+    const ux = dx / length,
+      uy = dy / length;
+    for (const [p, sign] of [
+      [a, 1],
+      [b, -1],
+    ] as const)
+      g.append(
+        svgNode("path", {
+          d: `M${p.x + ux * 2.5 * sign - uy * 0.7},${p.y + uy * 2.5 * sign + ux * 0.7}L${p.x},${p.y}L${p.x + ux * 2.5 * sign + uy * 0.7},${p.y + uy * 2.5 * sign - ux * 0.7}`,
+          stroke,
+          "stroke-width": 0.25,
+          fill: "none",
+        }),
+      );
+    let rotation = (Math.atan2(uy, ux) * 180) / Math.PI;
+    const flipped = rotation > 90 || rotation < -90;
+    if (flipped) rotation += 180;
+    const lift = flipped ? -1.5 : 1.5,
+      tx = (a.x + b.x) / 2 + uy * lift,
+      ty = (a.y + b.y) / 2 - ux * lift;
+    g.append(
+      svgNode(
+        "text",
+        {
+          x: tx,
+          y: ty,
+          "font-size": 3.2,
+          "text-anchor": "middle",
+          transform: `rotate(${fmt(rotation)},${fmt(tx)},${fmt(ty)})`,
+          fill: stroke,
+        },
+        item.label ||
+          String(
+            Number(Math.hypot(item.u2 - item.u1, item.v2 - item.v1).toFixed(2)),
+          ),
+      ),
+    );
   }
   /** Per-view checklist of the parts under its subject. */
   private partList(panel: HTMLElement, item: View) {
@@ -952,7 +1161,7 @@ export class DrawingPlanEditor {
     if (!delta) return;
     if (next) view.rotate = next;
     else delete view.rotate;
-    for (const item of this.plan.items) {
+    for (const item of this.items) {
       if (item.kind !== "dimension" || item.view !== view.id) continue;
       const a = rotatePaper({ x: item.u1, y: item.v1 }, delta),
         c = rotatePaper({ x: item.u2, y: item.v2 }, delta);
@@ -977,12 +1186,14 @@ export class DrawingPlanEditor {
   private fields() {
     const panel = byId("plan-fields");
     panel.replaceChildren();
-    const item = this.plan.items.find((entry) => entry.id === this.selected);
+    const item = this.items.find((entry) => entry.id === this.selected);
     const heading = byId("plan-heading");
     heading.textContent = !item
-      ? "Drawing sheet"
+      ? `Sheet ${this.plan.sheets.indexOf(this.page) + 1} of ${this.plan.sheets.length}`
       : item.kind === "view"
-        ? "Model view"
+        ? item.angle === "flat"
+          ? "Part as cut"
+          : "Model view"
         : item.kind === "dimension"
           ? "Dimension"
           : "Note";
@@ -1063,15 +1274,39 @@ export class DrawingPlanEditor {
       panel.append(note);
     };
     if (!item) {
-      textField("Title", this.plan.title, (value) => (this.plan.title = value));
+      textField("Title", this.page.title, (value) => (this.page.title = value));
       hint(
-        this.plan.items.length
-          ? "Select an item to edit it. Save plan writes the recipe beside the project and adds the sheet to the build as PDF and DXF."
-          : "Use ▣ to add a view of the model or of one part, ⌁ to dimension it and T for notes.",
+        this.items.length
+          ? "Select an item to edit it. Save plan writes the recipe beside the project and adds every sheet to the build as a page of the PDF and DXF."
+          : "Use ▣ to add a view of the model, ◫ to place a part from 2D geometry, ⌁ to dimension it and T for notes. + above the sheet adds another sheet.",
       );
+      if (this.plan.sheets.length > 1) {
+        const remove = document.createElement("button");
+        remove.className = "plan-delete";
+        remove.textContent = "Delete sheet";
+        remove.onclick = () => this.removeSheet();
+        panel.append(remove);
+      }
       return;
     }
-    if (item.kind === "view") {
+    if (item.kind === "view" && item.angle === "flat") {
+      selectField(
+        "Part",
+        item.subject,
+        [
+          ...[...this.flatParts.values()].map(
+            (part) => [part.path, part.label] as const,
+          ),
+          ...(this.flatParts.has(item.subject)
+            ? []
+            : [
+                [item.subject, `${item.subject} (not in 2D geometry)`] as const,
+              ]),
+        ],
+        (value) => (item.subject = value),
+      );
+    }
+    if (item.kind === "view" && item.angle !== "flat") {
       const depth = (path: string) => path.split("/").length - 1;
       selectField(
         "Shows",
@@ -1108,15 +1343,15 @@ export class DrawingPlanEditor {
         (value) => (item.angle = value as ViewAngle),
         false,
       );
+    }
+    if (item.kind === "view") {
       const turn = (degrees: number) => {
         const next = ((((item.rotate ?? 0) + degrees) % 360) + 360) % 360;
         this.rotateView(item, next);
         this.change();
       };
-      const rotation = numberField(
-        "Rotate (°)",
-        item.rotate ?? 0,
-        (value) => this.rotateView(item, value),
+      const rotation = numberField("Rotate (°)", item.rotate ?? 0, (value) =>
+        this.rotateView(item, value),
       );
       rotation.setAttribute("step", "15");
       const quarter = document.createElement("div");
@@ -1150,21 +1385,23 @@ export class DrawingPlanEditor {
         (value) => (item.scale = Number(value)),
         false,
       );
-      const hidden = document.createElement("input");
-      hidden.type = "checkbox";
-      hidden.checked = Boolean(item.hiddenLines);
-      hidden.onchange = () => {
-        if (hidden.checked) item.hiddenLines = true;
-        else delete item.hiddenLines;
-        this.change();
-      };
-      row("Show hidden edges (dashed)", hidden).parentElement!.className =
-        "plan-check";
+      if (item.angle !== "flat") {
+        const hidden = document.createElement("input");
+        hidden.type = "checkbox";
+        hidden.checked = Boolean(item.hiddenLines);
+        hidden.onchange = () => {
+          if (hidden.checked) item.hiddenLines = true;
+          else delete item.hiddenLines;
+          this.change();
+        };
+        row("Show hidden edges (dashed)", hidden).parentElement!.className =
+          "plan-check";
+      }
       textField(
         "Caption",
         item.label,
         (value) => (item.label = value),
-        planViewLabel(item),
+        this.caption(item),
       );
       numberField("X (mm)", item.x, (value) => (item.x = value));
       numberField("Y (mm)", item.y, (value) => (item.y = value));
@@ -1243,7 +1480,11 @@ export class DrawingPlanEditor {
   }
   /** The PDF comes from the build, so it always has true hidden-line views. */
   private async download() {
-    if (!this.views().length) {
+    if (
+      !this.plan.sheets.some((sheet) =>
+        sheet.items.some((item) => item.kind === "view"),
+      )
+    ) {
       this.status("Add a view before downloading the sheet.");
       return;
     }

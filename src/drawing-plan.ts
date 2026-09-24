@@ -3,8 +3,11 @@ import { viewAngles, type ViewAngle } from "./view-basis.js";
 /** Editable drawing instructions. Sheet coordinates are millimetres on an A3
  * landscape page. Dimension points are stored in the view's projected model
  * millimetres (paper-right, paper-up), so they follow the view when it is
- * moved or rescaled and stay attached to the geometry they measure. */
-export type PlanAngle = ViewAngle;
+ * moved or rescaled and stay attached to the geometry they measure.
+ *
+ * A `flat` view draws one sheet part as it is cut, from the same outline the
+ * 2D geometry tab shows; its points are the part's developed local XY. */
+export type PlanAngle = ViewAngle | "flat";
 export const planSheet = { width: 420, height: 297 } as const;
 export type PlanItem =
   | {
@@ -47,11 +50,20 @@ export type PlanItem =
       text: string;
       size: number;
     };
-export interface DrawingPlan {
-  version: 1;
+/** One page of the plan; every sheet becomes a page of the PDF and DXF. */
+export interface PlanSheet {
+  id: string;
   title: string;
   items: PlanItem[];
 }
+export interface DrawingPlan {
+  version: 2;
+  sheets: PlanSheet[];
+}
+export const emptyDrawingPlan = (): DrawingPlan => ({
+  version: 2,
+  sheets: [{ id: "sheet_1", title: "", items: [] }],
+});
 /** Where a project keeps the sheet composed in Studio. An `index.ts` entry
  * names it after its folder, so the file is not called `index.drawings.json`. */
 export function drawingPlanFile(entry: string) {
@@ -60,7 +72,7 @@ export function drawingPlanFile(entry: string) {
     ? stem.replace(/index$/, "drawings.json")
     : stem + ".drawings.json";
 }
-const angles = new Set<PlanAngle>(viewAngles);
+const angles = new Set<PlanAngle>([...viewAngles, "flat"]);
 export const planViewLabel = (view: { angle: PlanAngle; scale: number }) =>
   `${view.angle[0]!.toUpperCase()}${view.angle.slice(1)} · ${
     view.scale >= 1
@@ -84,24 +96,60 @@ export const planViewKey = (view: {
     : "");
 const finite = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value);
+const idPattern = /^[a-zA-Z0-9_-]{1,80}$/;
+/** Validates a saved plan; a single-sheet plan from before sheets existed is
+ * read as the first sheet of the new format. */
 export function validateDrawingPlan(value: unknown): DrawingPlan {
   if (!value || typeof value !== "object")
     throw new Error("Invalid drawing plan");
-  const plan = value as DrawingPlan;
+  const input = value as { version?: unknown };
+  const plan: DrawingPlan =
+    input.version === 1
+      ? (() => {
+          const legacy = value as { title?: unknown; items?: unknown };
+          return {
+            version: 2,
+            sheets: [
+              {
+                id: "sheet_1",
+                title: legacy.title as string,
+                items: legacy.items as PlanItem[],
+              },
+            ],
+          };
+        })()
+      : (value as DrawingPlan);
   if (
-    plan.version !== 1 ||
-    typeof plan.title !== "string" ||
-    plan.title.length > 200 ||
-    !Array.isArray(plan.items) ||
-    plan.items.length > 300
+    plan.version !== 2 ||
+    !Array.isArray(plan.sheets) ||
+    plan.sheets.length < 1 ||
+    plan.sheets.length > 50
   )
     throw new Error("Unsupported drawing plan");
   const ids = new Set<string>();
-  for (const item of plan.items) {
+  for (const sheet of plan.sheets) {
+    if (
+      !sheet ||
+      typeof sheet.id !== "string" ||
+      !idPattern.test(sheet.id) ||
+      ids.has(sheet.id) ||
+      typeof sheet.title !== "string" ||
+      sheet.title.length > 200 ||
+      !Array.isArray(sheet.items) ||
+      sheet.items.length > 300
+    )
+      throw new Error("Invalid drawing sheet");
+    ids.add(sheet.id);
+    validateItems(sheet.items, ids);
+  }
+  return plan;
+}
+function validateItems(items: PlanItem[], ids: Set<string>) {
+  for (const item of items) {
     if (
       !item ||
       typeof item.id !== "string" ||
-      !/^[a-zA-Z0-9_-]{1,80}$/.test(item.id) ||
+      !idPattern.test(item.id) ||
       ids.has(item.id)
     )
       throw new Error("Invalid or duplicate drawing item ID");
@@ -111,6 +159,8 @@ export function validateDrawingPlan(value: unknown): DrawingPlan {
         typeof item.subject !== "string" ||
         item.subject.length > 500 ||
         !angles.has(item.angle) ||
+        // A flat pattern is of one named part, never of the whole model.
+        (item.angle === "flat" && item.subject === "*") ||
         ![item.x, item.y, item.width, item.height, item.scale].every(finite) ||
         item.width <= 0 ||
         item.height <= 0 ||
@@ -147,11 +197,11 @@ export function validateDrawingPlan(value: unknown): DrawingPlan {
         throw new Error("Invalid text");
     } else throw new Error("Unknown drawing item");
   }
-  for (const item of plan.items)
+  // A dimension is drawn on its view's page, so both live on the same sheet.
+  for (const item of items)
     if (
       item.kind === "dimension" &&
-      !plan.items.some((view) => view.kind === "view" && view.id === item.view)
+      !items.some((view) => view.kind === "view" && view.id === item.view)
     )
       throw new Error("Dimension refers to a missing view");
-  return plan;
 }

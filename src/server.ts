@@ -7,7 +7,11 @@ import { randomBytes, createHash } from "node:crypto";
 import { build } from "esbuild";
 import { editorService } from "./editor-service.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
-import { drawingPlanFile, validateDrawingPlan } from "./drawing-plan.js";
+import {
+  drawingPlanFile,
+  emptyDrawingPlan,
+  validateDrawingPlan,
+} from "./drawing-plan.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const entry = resolve(
@@ -318,7 +322,7 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT")
           json({
-            plan: { version: 1, title: "", items: [] },
+            plan: emptyDrawingPlan(),
             version: "",
             file: planFile,
           });

@@ -1434,13 +1434,39 @@ function drawEntities(
     }
   }
 }
+/** A part's cut geometry as flat line segments `[x1, y1, x2, y2, …]` in its
+ * own developed XY, the frame a flat drawing view places it in. Arcs and
+ * circles are sampled; text is left out. */
+export function entitySegments(entities: readonly DxfEntity[]): number[] {
+  const out: number[] = [];
+  const chain = (points: readonly Point2[], closed: boolean) => {
+    for (let i = 0; i + 1 < points.length + (closed ? 1 : 0); i++) {
+      const a = points[i]!,
+        c = points[(i + 1) % points.length]!;
+      out.push(a.x, a.y, c.x, c.y);
+    }
+  };
+  for (const entity of entities)
+    if (entity.kind === "polyline")
+      chain(flattened(entity.points, entity.closed), entity.closed);
+    else if (entity.kind === "circle")
+      chain(
+        Array.from({ length: 32 }, (_, i) => ({
+          x: entity.x + entity.radius * Math.cos((i / 32) * 2 * Math.PI),
+          y: entity.y + entity.radius * Math.sin((i / 32) * 2 * Math.PI),
+        })),
+        true,
+      );
+  return out.map((n) => Math.round(n * 1000) / 1000);
+}
 /** The geometry the CAM files carry, placed on the Drawings plane: nested
- * sheets where the output nests, otherwise the parts in a row. */
+ * sheets where the output nests, otherwise the parts in a row. Returns each
+ * part's entities in its own frame, so they can be placed on a drawing. */
 export async function drawManufacturing(
   engine: OpenCascadeEngine,
   output: ManufacturingDxf,
   view: View2D,
-): Promise<void> {
+): Promise<ReadonlyMap<SheetPart, DxfEntity[]>> {
   if (!engine.root) throw new Error("Evaluate a project first");
   const parts =
     output.options.parts === "all"
@@ -1462,7 +1488,7 @@ export async function drawManufacturing(
       );
       x += box.width + gap;
     }
-    return;
+    return entities;
   }
   for (const layout of nest(parts)) {
     drawEntities(
@@ -1473,6 +1499,7 @@ export async function drawManufacturing(
     );
     x += layout.material.width! + gap;
   }
+  return entities;
 }
 export async function exportDxf(
   engine: OpenCascadeEngine,

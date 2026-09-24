@@ -72,6 +72,8 @@ type Model = {
     { key: string; visible: number[]; hidden: number[] }
   >;
   parameters: ParameterState | null;
+  /** Sheet parts shown in 2D geometry, placeable on the drawing sheet. */
+  flatParts?: { path: string; label: string; lines: number[] }[];
   components: {
     path: string;
     id: string;

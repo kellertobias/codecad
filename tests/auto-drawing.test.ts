@@ -348,3 +348,96 @@ test("a plan view turned on the paper takes its dimensions with it", async () =>
     engine.dispose();
   }
 });
+
+test("each plan sheet is a page, and a part from 2D geometry draws as cut", async () => {
+  const project = new Crate(),
+    engine = new OpenCascadeEngine();
+  try {
+    await engine.evaluate({ root: project, revision: 1 });
+    const plan = validateDrawingPlan({
+      version: 2,
+      sheets: [
+        {
+          id: "s1",
+          title: "Assembly",
+          items: [
+            {
+              id: "v1",
+              kind: "view",
+              subject: "crate/body",
+              angle: "front",
+              x: 20,
+              y: 20,
+              width: 200,
+              height: 100,
+              scale: 5,
+              label: "",
+            },
+          ],
+        },
+        { id: "blank", title: "Nothing yet", items: [] },
+        {
+          id: "s2",
+          title: "Panel",
+          items: [
+            {
+              id: "flat",
+              kind: "view",
+              subject: "crate/panel",
+              angle: "flat",
+              x: 20,
+              y: 20,
+              width: 200,
+              height: 100,
+              scale: 5,
+              rotate: 90,
+              label: "",
+            },
+            // Stored in the turned frame: turned back, it spans the panel's
+            // 300 mm width.
+            {
+              id: "d1",
+              kind: "dimension",
+              view: "flat",
+              u1: 0,
+              v1: 0,
+              u2: 0,
+              v2: 300,
+              offset: 8,
+              label: "",
+            },
+            {
+              id: "wrong",
+              kind: "view",
+              subject: "crate/body",
+              angle: "flat",
+              x: 230,
+              y: 20,
+              width: 100,
+              height: 100,
+              scale: 5,
+              label: "",
+            },
+          ],
+        },
+      ],
+    });
+    const { drawing, warnings } = planDrawing(plan, project);
+    // The empty sheet is left out rather than printed blank.
+    assert.equal(drawing.options.title, "Assembly");
+    assert.deepEqual(
+      drawing.additionalPages.map((page) => page.options.title),
+      ["Panel"],
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /crate\/body flat, but it is not a sheet part/);
+    const { pages } = await renderDrawingFormats(engine, drawing);
+    assert.equal(pages.length, 2);
+    const second = Buffer.from(pages[1]!).toString();
+    // A flat part is captioned with its own name.
+    assert.match(second, />panel {3}1:5</);
+    assert.match(second, />300</);
+  } finally {
+    engine.dispose();
+  }
+});

@@ -572,13 +572,91 @@ nav button.active {
 #plan-editor {
   position: absolute;
   inset: 0;
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px 12px;
   padding: 52px 12px 12px;
   background: #25323a;
 }
+/* One tab per sheet; every sheet is a page of the exported PDF and DXF. */
+#plan-sheet-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+#plan-sheet-tabs button {
+  flex: none;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 10px;
+  color: #9fb4bb;
+  background: #1f2b33;
+  border: 1px solid #42545d;
+  border-radius: 5px;
+}
+#plan-sheet-tabs button[aria-selected="true"] {
+  color: #85dec9;
+  background: #29433f;
+  border-color: #4f8a7e;
+}
+#plan-sheet-tabs .plan-sheet-add {
+  min-width: 30px;
+  padding: 4px 8px;
+}
+.plan-part-picker {
+  position: relative;
+}
+#plan-part-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-height: 340px;
+  overflow: auto;
+  padding: 4px;
+  background: #1b292d;
+  border: 1px solid #42605b;
+  border-radius: 7px;
+  box-shadow: 0 6px 18px #0008;
+}
+#plan-part-menu[hidden] {
+  display: none;
+}
+#plan-part-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+}
+#plan-part-menu button:hover,
+#plan-part-menu button:focus-visible {
+  background: #29433f;
+}
+#plan-part-menu small {
+  color: #8aa0a8;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+#plan-part-menu p {
+  margin: 6px 8px;
+  color: #9fb4bb;
+  font-size: 12px;
+  line-height: 1.45;
+}
 #plan-sheet-wrap {
-  flex: 1;
+  grid-column: 1;
   min-width: 0;
   /* The sheet is panned and zoomed through the viewBox, so it never scrolls. */
   overflow: hidden;
@@ -609,8 +687,8 @@ nav button.active {
   stroke: #09a68d;
 }
 #plan-properties {
-  width: 220px;
-  flex: none;
+  grid-column: 2;
+  grid-row: 1 / -1;
   overflow: auto;
   padding: 12px;
   border: 1px solid #42605b;

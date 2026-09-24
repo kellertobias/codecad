@@ -78,7 +78,16 @@ switching a part off takes its children with it, and the choice applies to the
 live preview and to the built PDF and DXF alike. Scroll to zoom the sheet around
 the cursor, drag its empty background (or hold the middle button) to pan, and use
 −, + and ⛶, or the `-`, `+` and `0` keys, for the same from the toolbar.
-**Dimension** (⌁) snaps to corners and edges; its two points are
+A plan can hold several sheets: the tabs above the page switch between them,
+**+** adds one, and a sheet's title and **Delete sheet** are shown when nothing
+on it is selected. Every sheet that has something on it becomes a page of the
+same PDF and DXF. **Place part** (◫) lists the parts the **2D geometry** tab
+shows (the sheet parts of a `ManufacturingDxf` with `showInDrawings: true`) and
+places one as it is cut, from the same outline, drill and cut geometry; it can be
+turned, scaled and dimensioned like any other view.
+**Dimension** (⌁) takes three clicks: the first point, the second point, then
+where the dimension line goes, with a live preview until it is placed. The two
+points snap to corners and edges and are
 stored in the view's model coordinates, so the value is exact, follows the view
 when it moves, and updates when the design changes. Drag a dimension to slide
 its line, press Delete to remove the selection, Esc to cancel a tool, and the
