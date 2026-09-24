@@ -82,9 +82,10 @@ test("the rounded contour reaches the cut list and the cut DXF", async () => {
     );
     type Vertex = { x: number; y: number; bulge: number };
     const contour = (id: string): Vertex[] => {
-      const text = new TextDecoder().decode(
-        [...files].find(([name]) => name.includes(id))![1],
-      );
+      // Only the drawn geometry; block definitions carry base points too.
+      const text = new TextDecoder()
+        .decode([...files].find(([name]) => name.includes(id))![1])
+        .split("\nENTITIES\n")[1]!;
       return [
         ...text.matchAll(
           /^10\n(-?[\d.e-]+)\n20\n(-?[\d.e-]+)(?:\n42\n(-?[\d.e-]+))?$/gm,

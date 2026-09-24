@@ -516,132 +516,163 @@ export function bulgeThrough(a: Point2, on: Point2, b: Point2): number {
   const cross = dx * (on.y - a.y) - dy * (on.x - a.x);
   return (-2 * cross) / (chord * chord);
 }
+/** Linetypes the layers draw with. `ByBlock`, `ByLayer` and `Continuous`
+ * must exist in every file; each pattern's dashes sum to its length. */
+const DXF_LINETYPES: readonly {
+  name: string;
+  description: string;
+  dashes: readonly number[];
+}[] = [
+  { name: "ByBlock", description: "", dashes: [] },
+  { name: "ByLayer", description: "", dashes: [] },
+  { name: "Continuous", description: "Solid", dashes: [] },
+  {
+    name: "CENTER",
+    description: "Bend center / tangent",
+    dashes: [3, -1, 0.5, -1],
+  },
+  { name: "HIDDEN", description: "Hidden edges", dashes: [1, -1] },
+];
+/** Lineweights, in 1/100 mm, that group code 370 accepts. */
+const DXF_LINEWEIGHTS = [
+  0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106,
+  120, 140, 158, 200, 211,
+];
+/** Symbol-table names may not hold these characters; AutoCAD refuses the
+ * whole file when a layer does. */
+function dxfName(name: string): string {
+  return name.replace(/[<>/\\":;?*|=`,\r\n]/g, "_") || "0";
+}
+/** An AutoCAD 2004 (AC1018) DXF. Since R2000, AutoCAD and every strict reader
+ * reject a file unless each object carries a handle, its owner and its
+ * subclass markers, and unless all nine symbol tables, the model and paper
+ * space blocks and the root dictionary exist. */
 export function encodeDxf(entities: DxfEntity[]): Uint8Array {
-  const out: (string | number)[] = [
-    0,
-    "SECTION",
-    2,
-    "HEADER",
-    9,
-    "$ACADVER",
-    1,
-    "AC1018",
-    9,
-    "$INSUNITS",
-    70,
-    4,
-    0,
-    "ENDSEC",
-    0,
-    "SECTION",
-    2,
-    "TABLES",
-    0,
-    "TABLE",
-    2,
+  let seed = 1;
+  const handle = () => (seed++).toString(16).toUpperCase();
+  const out: (string | number)[] = [];
+  const table = (
+    name: string,
+    recordClass: string,
+    records: (string | number)[][],
+    handleCode = 5,
+  ): string[] => {
+    const own = handle(),
+      handles = records.map(() => handle());
+    out.push(0, "TABLE", 2, name, 5, own, 330, 0, 100, "AcDbSymbolTable");
+    out.push(70, records.length);
+    if (name === "DIMSTYLE") out.push(100, "AcDbDimStyleTable", 71, 0);
+    for (const [i, codes] of records.entries()) {
+      out.push(0, name, handleCode, handles[i]!, 330, own);
+      out.push(100, "AcDbSymbolTableRecord", 100, recordClass, ...codes);
+    }
+    out.push(0, "ENDTAB");
+    return handles;
+  };
+  out.push(0, "SECTION", 2, "TABLES");
+  table("VPORT", "AcDbViewportTableRecord", []);
+  table(
     "LTYPE",
-    70,
-    3,
-    0,
-    "LTYPE",
-    2,
-    "CONTINUOUS",
-    70,
-    0,
-    3,
-    "Solid",
-    72,
-    65,
-    73,
-    0,
-    40,
-    0,
-    0,
-    "LTYPE",
-    2,
-    "CENTER",
-    70,
-    0,
-    3,
-    "Bend center / tangent",
-    72,
-    65,
-    73,
-    4,
-    40,
-    5.5,
-    49,
-    3,
-    74,
-    0,
-    49,
-    -1,
-    74,
-    0,
-    49,
-    0.5,
-    74,
-    0,
-    49,
-    -1,
-    74,
-    0,
-    0,
-    "LTYPE",
-    2,
-    "HIDDEN",
-    70,
-    0,
-    3,
-    "Hidden edges",
-    72,
-    65,
-    73,
-    2,
-    40,
-    2,
-    49,
-    1,
-    74,
-    0,
-    49,
-    -1,
-    74,
-    0,
-    0,
-    "ENDTAB",
-    0,
-    "TABLE",
-    2,
-    "LAYER",
-    70,
-    new Set(entities.map((e) => e.layer)).size,
-  ];
-  for (const layer of new Set(entities.map((e) => e.layer)))
-    out.push(
-      0,
-      "LAYER",
+    "AcDbLinetypeTableRecord",
+    DXF_LINETYPES.map((t) => [
       2,
-      layer,
+      t.name,
       70,
       0,
-      62,
-      7,
-      6,
-      /HIDDEN/.test(layer)
-        ? "HIDDEN"
-        : /BEND|TANGENT/.test(layer)
-          ? "CENTER"
-          : "CONTINUOUS",
-    );
-  out.push(0, "ENDTAB", 0, "ENDSEC", 0, "SECTION", 2, "ENTITIES");
+      3,
+      t.description,
+      72,
+      65,
+      73,
+      t.dashes.length,
+      40,
+      t.dashes.reduce((sum, dash) => sum + Math.abs(dash), 0),
+      ...t.dashes.flatMap((dash) => [49, dash, 74, 0]),
+    ]),
+  );
+  table(
+    "LAYER",
+    "AcDbLayerTableRecord",
+    [...new Set(["0", ...entities.map((e) => dxfName(e.layer))])].map(
+      (layer) => [
+        2,
+        layer,
+        70,
+        0,
+        62,
+        7,
+        6,
+        /HIDDEN/.test(layer)
+          ? "HIDDEN"
+          : /BEND|TANGENT/.test(layer)
+            ? "CENTER"
+            : "Continuous",
+        370,
+        -3,
+      ],
+    ),
+  );
+  table("STYLE", "AcDbTextStyleTableRecord", [
+    [
+      2,
+      "Standard",
+      70,
+      0,
+      40,
+      0,
+      41,
+      1,
+      50,
+      0,
+      71,
+      0,
+      42,
+      2.5,
+      3,
+      "txt",
+      4,
+      "",
+    ],
+  ]);
+  table("VIEW", "AcDbViewTableRecord", []);
+  table("UCS", "AcDbUCSTableRecord", []);
+  table("APPID", "AcDbRegAppTableRecord", [[2, "ACAD", 70, 0]]);
+  table("DIMSTYLE", "AcDbDimStyleTableRecord", [[2, "Standard", 70, 0]], 105);
+  const [modelSpace, paperSpace] = table(
+    "BLOCK_RECORD",
+    "AcDbBlockTableRecord",
+    [
+      [2, "*Model_Space", 340, 0],
+      [2, "*Paper_Space", 340, 0],
+    ],
+  ) as [string, string];
+  out.push(0, "ENDSEC", 0, "SECTION", 2, "BLOCKS");
+  for (const [name, owner] of [
+    ["*Model_Space", modelSpace],
+    ["*Paper_Space", paperSpace],
+  ] as const) {
+    out.push(0, "BLOCK", 5, handle(), 330, owner, 100, "AcDbEntity");
+    if (owner === paperSpace) out.push(67, 1);
+    out.push(8, "0", 100, "AcDbBlockBegin", 2, name, 70, 0);
+    out.push(10, 0, 20, 0, 30, 0, 3, name, 1, "");
+    out.push(0, "ENDBLK", 5, handle(), 330, owner, 100, "AcDbEntity");
+    if (owner === paperSpace) out.push(67, 1);
+    out.push(8, "0", 100, "AcDbBlockEnd");
+  }
+  out.push(0, "ENDSEC", 0, "SECTION", 2, "ENTITIES");
   for (const e of entities) {
+    const type =
+      e.kind === "text"
+        ? "TEXT"
+        : e.kind === "circle"
+          ? "CIRCLE"
+          : "LWPOLYLINE";
+    out.push(0, type, 5, handle(), 330, modelSpace, 100, "AcDbEntity");
+    out.push(8, dxfName(e.layer));
     if (e.kind === "text")
       out.push(
-        0,
-        "TEXT",
-        8,
-        e.layer,
+        100,
+        "AcDbText",
         10,
         e.x,
         20,
@@ -661,6 +692,8 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
           ),
         50,
         -(e.rotation ?? 0),
+        7,
+        "Standard",
         72,
         e.align === "middle" ? 1 : 0,
         11,
@@ -669,45 +702,74 @@ export function encodeDxf(entities: DxfEntity[]): Uint8Array {
         e.y,
         31,
         0,
+        100,
+        "AcDbText",
+        73,
+        0,
       );
     else if (e.kind === "circle")
-      out.push(0, "CIRCLE", 8, e.layer, 10, e.x, 20, e.y, 30, 0, 40, e.radius);
+      out.push(100, "AcDbCircle", 10, e.x, 20, e.y, 30, 0, 40, e.radius);
     else {
-      out.push(
-        0,
-        "LWPOLYLINE",
-        8,
-        e.layer,
-        90,
-        e.points.length,
-        70,
-        e.closed ? 1 : 0,
-      );
+      // Colour and lineweight belong to the common entity data, before the
+      // polyline's own subclass.
       if (e.style?.stroke)
         out.push(420, Number.parseInt(e.style.stroke.slice(1), 16));
       if (e.style?.lineWidth !== undefined) {
-        const weights = [
-          0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100,
-          106, 120, 140, 158, 200, 211,
-        ];
         const requested = e.style.lineWidth * 100;
         out.push(
           370,
-          weights.reduce((best, weight) =>
+          DXF_LINEWEIGHTS.reduce((best, weight) =>
             Math.abs(weight - requested) < Math.abs(best - requested)
               ? weight
               : best,
           ),
         );
       }
+      out.push(100, "AcDbPolyline", 90, e.points.length, 70, e.closed ? 1 : 0);
       for (const p of e.points) {
         out.push(10, p.x, 20, p.y);
         if (p.bulge) out.push(42, p.bulge);
       }
     }
   }
-  out.push(0, "ENDSEC", 0, "EOF");
-  return new TextEncoder().encode(out.join("\n") + "\n");
+  const root = handle(),
+    groups = handle();
+  out.push(0, "ENDSEC", 0, "SECTION", 2, "OBJECTS");
+  out.push(0, "DICTIONARY", 5, root, 330, 0, 100, "AcDbDictionary");
+  out.push(281, 1, 3, "ACAD_GROUP", 350, groups);
+  out.push(0, "DICTIONARY", 5, groups, 330, root, 100, "AcDbDictionary");
+  out.push(281, 1, 0, "ENDSEC", 0, "EOF");
+  const header = [
+    0,
+    "SECTION",
+    2,
+    "HEADER",
+    9,
+    "$ACADVER",
+    1,
+    "AC1018",
+    9,
+    "$DWGCODEPAGE",
+    3,
+    "ANSI_1252",
+    9,
+    "$HANDSEED",
+    5,
+    handle(),
+    9,
+    "$INSUNITS",
+    70,
+    4,
+    0,
+    "ENDSEC",
+    0,
+    "SECTION",
+    2,
+    "CLASSES",
+    0,
+    "ENDSEC",
+  ];
+  return new TextEncoder().encode([...header, ...out].join("\n") + "\n");
 }
 /** The blank as the saw or router sees it. A profile that opted into arc
  * fitting is read back through the kernel so its curves stay exact; a plain
