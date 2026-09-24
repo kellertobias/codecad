@@ -14,7 +14,7 @@ import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
 import { DrawingPlanEditor } from "./drawing-plan-editor.js";
 import { initiallyExpandedPaths } from "./component-tree.js";
-import { inspectorDetails } from "./inspector.js";
+import { formatMass, inspectorDetails } from "./inspector.js";
 import { applyWoodAppearance } from "./wood-material.js";
 import {
   faceRegionGeometry,
@@ -56,6 +56,7 @@ type MeshData = {
     diameter: number;
   }[];
   volume: number;
+  density?: number;
 };
 type MotionFrame = { t: number; matrices: Record<string, number[]> };
 type StudioAnimation = {
@@ -71,9 +72,9 @@ type Model = {
     string,
     { key: string; visible: number[]; hidden: number[] }
   >;
-  parameters: ParameterState | null;
   /** Sheet parts shown in 2D geometry, placeable on the drawing sheet. */
   flatParts?: { path: string; label: string; lines: number[] }[];
+  parameters: ParameterState | null;
   components: {
     path: string;
     id: string;
@@ -698,10 +699,12 @@ function select(path: string) {
   renderAnimationChoices();
   updateMeshHighlights();
   const part = model?.meshes.find((m) => m.componentPath === path);
+  const mass = model?.components.find((c) => c.path === path)?.inspection.mass;
+  const weight = mass === undefined ? "" : " · " + formatMass(mass);
   $("selection").textContent = part
-    ? path + " · " + (part.volume / 1000).toFixed(1) + " cm³"
+    ? path + " · " + (part.volume / 1000).toFixed(1) + " cm³" + weight
     : path
-      ? path + " · assembly"
+      ? path + " · assembly" + weight
       : "Select a part to inspect it";
   for (const component of model?.components ?? [])
     if (path.startsWith(component.path + "/")) expanded.add(component.path);
@@ -832,6 +835,16 @@ function renderParts() {
     label.textContent = d.id;
     row.title = `${d.path}\n${d.label} · ${d.type}`;
     row.append(toggle, visible, label);
+    // The weight a part or assembly carries, once its stock states a density.
+    if (d.inspection.mass !== undefined) {
+      const weight = document.createElement("span");
+      weight.className = "part-weight";
+      weight.textContent = formatMass(d.inspection.mass);
+      weight.title = d.inspection.massPartial
+        ? "Weight of the parts whose material states a density"
+        : "Weight from the material density";
+      row.append(weight);
+    }
     const solo = document.createElement("button");
     solo.className = "show-only";
     solo.textContent = "◎";

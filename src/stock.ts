@@ -26,6 +26,8 @@ export interface MaterialOptions {
   readonly color?: `#${string}`;
   readonly opacity?: number;
   readonly reflectivity?: number;
+  /** Stock density in kg/m³, e.g. 680 for birch plywood or 7850 for steel.
+   * Parts made from the material report a weight once it is given. */
   readonly densityKgPerM3?: number;
   readonly drawingStyle?: MaterialDrawingStyle;
 }
@@ -58,6 +60,8 @@ export class Material {
         (!Number.isFinite(value) || value < 0 || value > 1)
       )
         throw new Error(`Material ${name} must be between 0 and 1`);
+    if (options.densityKgPerM3 !== undefined)
+      positive(options.densityKgPerM3, "material density");
     this.id = options.id ?? `material-${++materialId}`;
     this.name = options.name ?? this.id;
   }

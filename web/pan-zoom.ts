@@ -17,6 +17,56 @@ export class PanZoom {
     this.y = y - (y - this.y) * ratio;
     this.scale = next;
   }
+  /** Zoom to an exact level, e.g. a percentage the user typed. */
+  zoomTo(scale: number, x = 0, y = 0) {
+    this.zoom(scale / this.scale, x, y);
+  }
+}
+
+/**
+ * The zoom level a typed percentage asks for, as a factor, or undefined when
+ * the text is not one. "200", "200 %" and "1,5%" are all accepted.
+ */
+export function typedZoom(text: string) {
+  const percent = Number.parseFloat(
+    text.replace(",", ".").replace("%", " ").trim(),
+  );
+  return Number.isFinite(percent) && percent > 0 ? percent / 100 : undefined;
+}
+
+/** Zoom readout that doubles as the field for typing a percentage. */
+export function zoomField(label: string, apply: (scale: number) => void) {
+  const element = document.createElement("input");
+  element.type = "text";
+  element.className = "zoom-level";
+  element.size = 5;
+  element.inputMode = "decimal";
+  element.title = "Zoom level: type a percentage";
+  element.setAttribute("aria-label", `Zoom percentage: ${label}`);
+  let shown = 1;
+  /** The level in force, which is the clamped one, not the one typed. */
+  const show = (scale: number) => {
+    shown = scale;
+    element.value = `${Math.round(scale * 100)}%`;
+  };
+  // Both Enter and leaving the field commit; anything unreadable snaps back.
+  const commit = () => {
+    const scale = typedZoom(element.value);
+    if (scale === undefined) show(shown);
+    else apply(scale);
+  };
+  element.onfocus = () => element.select();
+  element.onchange = commit;
+  element.onkeydown = (event) => {
+    if (event.key === "Enter") commit();
+    else if (event.key === "Escape") {
+      show(shown);
+      element.blur();
+    } else return;
+    event.preventDefault();
+  };
+  show(shown);
+  return { element, show };
 }
 
 /**
@@ -59,10 +109,13 @@ export function drawingViewport(src: string, title: string) {
   img.alt = title;
   img.draggable = false;
   const state = new PanZoom();
-  const readout = document.createElement("span");
+  const readout = zoomField(title, (scale) => {
+    state.zoomTo(scale);
+    render();
+  });
   const render = () => {
     img.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`;
-    readout.textContent = `${Math.round(state.scale * 100)}%`;
+    readout.show(state.scale);
   };
   for (const [label, action] of [
     ["Zoom out", () => state.zoom(1 / 1.25)],
@@ -80,7 +133,7 @@ export function drawingViewport(src: string, title: string) {
   }
   const hint = document.createElement("small");
   hint.textContent = "Scroll to zoom · drag to pan · double-click to fit";
-  toolbar.append(readout, hint);
+  toolbar.append(readout.element, hint);
   viewport.addEventListener(
     "wheel",
     (event) => {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PanZoom, viewBoxFor } from "../web/pan-zoom.js";
+import { PanZoom, typedZoom, viewBoxFor } from "../web/pan-zoom.js";
 
 test("drawing zoom retains the point under the pointer and reset fits the page", () => {
   const view = new PanZoom();
@@ -53,4 +53,29 @@ test("the sheet viewBox shows the page crisply and follows pan and zoom", () => 
   close(moved.minX - near.minX, 40 / perMm);
   close(moved.minY - near.minY, -25 / perMm);
   assert.equal(moved.width, near.width);
+});
+
+test("a typed zoom level is read loosely and applied within the same bounds", () => {
+  assert.deepEqual(
+    ["200", "200%", " 150 % ", "1,5%", "75.5%"].map(typedZoom),
+    [2, 2, 1.5, 0.015, 0.755],
+  );
+  for (const text of ["", "%", "abc", "0", "-50%"])
+    assert.equal(typedZoom(text), undefined, text);
+  const view = new PanZoom();
+  view.zoomTo(2);
+  assert.equal(view.scale, 2);
+  // Typing past the ends of the range lands on the end, as the buttons do.
+  view.zoomTo(50);
+  assert.equal(view.scale, 12);
+  view.zoomTo(0.01);
+  assert.equal(view.scale, 0.25);
+  // Zooming to a level holds the point it is centred on still.
+  view.zoomTo(1);
+  view.pan(30, -20);
+  const point = { x: (10 - view.x) / view.scale, y: (5 - view.y) / view.scale };
+  view.zoomTo(3, 10, 5);
+  assert.equal(view.scale, 3);
+  assert.equal(point.x * view.scale + view.x, 10);
+  assert.equal(point.y * view.scale + view.y, 5);
 });

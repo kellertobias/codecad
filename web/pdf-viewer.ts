@@ -5,6 +5,7 @@ import {
   type PDFPageProxy,
   type RenderTask,
 } from "pdfjs-dist";
+import { zoomField } from "./pan-zoom.js";
 GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 export interface PdfReport {
@@ -53,7 +54,9 @@ export function pdfViewer(reports: PdfReport[]) {
     disposed = false,
     started = false,
     frame = 0;
-  const readout = document.createElement("span");
+  // Typed levels zoom about the middle of the view, as the buttons do.
+  const readout = zoomField("PDF pages", (level) => zoom(level / scale));
+  const fitNote = document.createElement("small");
   const pageNumber = document.createElement("input");
   pageNumber.type = "number";
   pageNumber.min = "1";
@@ -73,7 +76,10 @@ export function pdfViewer(reports: PdfReport[]) {
     return {
       x,
       y,
-      width: Math.max(0, Math.min(width, bounds.right + margin - rect.left) - x),
+      width: Math.max(
+        0,
+        Math.min(width, bounds.right + margin - rect.left) - x,
+      ),
       height: Math.max(
         0,
         Math.min(height, bounds.bottom + margin - rect.top) - y,
@@ -108,7 +114,8 @@ export function pdfViewer(reports: PdfReport[]) {
       // instead of stretching one page-sized bitmap over more screen.
       const needed = slice(rect, bounds, slotWidth, slotHeight, 60);
       if (!needed.width || !needed.height) continue;
-      if (p.rendered === scale && p.region && covers(p.region, needed)) continue;
+      if (p.rendered === scale && p.region && covers(p.region, needed))
+        continue;
       p.task?.cancel();
       const region = slice(rect, bounds, slotWidth, slotHeight, 240);
       const canvas = document.createElement("canvas");
@@ -179,7 +186,8 @@ export function pdfViewer(reports: PdfReport[]) {
       p.slot.style.width = `${p.width * scale}px`;
       p.slot.style.height = `${p.height * scale}px`;
     }
-    readout.textContent = `${Math.round(scale * 100)}%${fit ? " · Fit width" : ""}`;
+    readout.show(scale);
+    fitNote.textContent = fit ? "Fit width" : "";
     schedule();
   };
   const zoom = (
@@ -225,7 +233,7 @@ export function pdfViewer(reports: PdfReport[]) {
   };
   const hint = document.createElement("small");
   hint.textContent = "Scroll to zoom · drag or middle-drag to pan";
-  tools.append(readout, pageNumber, status, hint);
+  tools.append(readout.element, fitNote, pageNumber, status, hint);
   viewport.append(stack);
   element.append(tools, viewport);
   viewport.addEventListener("scroll", schedule);

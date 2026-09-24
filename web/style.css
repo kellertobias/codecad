@@ -666,11 +666,22 @@ nav button.active {
 #plan-sheet-wrap.panning {
   cursor: grabbing;
 }
-#plan-zoom-level {
-  min-width: 42px;
+/* Zoom readouts are fields: the level can be read or typed in the same spot. */
+.zoom-level {
+  width: 52px;
+  padding: 3px 4px;
   text-align: center;
-  color: #96a9b6;
+  color: #d6e0e7;
+  background: #1f2b33;
+  border: 1px solid #52646e;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+.zoom-level:focus-visible {
+  outline: 2px solid #4a90d9;
+  outline-offset: 1px;
 }
 #plan-sheet {
   display: block;
@@ -1142,6 +1153,16 @@ aside {
 .part-row input {
   accent-color: #65bda8;
 }
+/* The weight closes the row's free space, leaving the solo button at the end. */
+.part-weight {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #9cb0bb;
+  font-variant-numeric: tabular-nums;
+}
+.part-weight + .show-only {
+  margin-left: 6px;
+}
 .show-only {
   margin-left: auto;
   padding: 2px 5px;
@@ -1200,7 +1221,7 @@ aside {
   padding: 10px;
   border-bottom: 1px solid #33414a;
 }
-.pdf-tools input {
+.pdf-tools input[type="number"] {
   width: 55px;
 }
 .pdf-tools small {
@@ -1256,10 +1277,7 @@ aside {
   flex-wrap: wrap;
   padding: 8px 0;
 }
-.drawing-tools span {
-  min-width: 45px;
-  font-variant-numeric: tabular-nums;
-}
+
 .drawing-tools small {
   color: #9cb0bb;
 }

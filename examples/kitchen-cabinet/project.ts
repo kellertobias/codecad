@@ -33,6 +33,7 @@ const plywood = new SheetMaterial({
   name: "Birch multiplex 18 mm",
   thickness: 18,
   plies: 9,
+  densityKgPerM3: 680,
   width: 1250,
   height: 2500,
   color: "#c6a77d",

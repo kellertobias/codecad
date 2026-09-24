@@ -1,10 +1,24 @@
 import type { Inspection } from "../src/inspection.js";
 
+/** Grams read as grams up to a kilo, and as kilos above it. */
+export function formatMass(grams: number) {
+  return grams < 1000
+    ? `${grams < 100 ? grams.toFixed(1) : Math.round(grams)} g`
+    : `${(grams / 1000).toFixed(grams < 10000 ? 2 : 1)} kg`;
+}
+
 export function inspectorDetails(inspection: Inspection) {
   const mm = (value: number) => `${value.toFixed(1)} mm`;
   const dimensions = inspection.dimensions;
   const rows: [string, string][] = [
     ["Volume", `${(inspection.volume / 1000).toFixed(1)} cm³`],
+    [
+      "Weight",
+      inspection.mass === undefined
+        ? "No material density"
+        : formatMass(inspection.mass) +
+          (inspection.massPartial ? " · parts with a density only" : ""),
+    ],
   ];
   if (inspection.kind === "part") {
     rows.push(

@@ -204,8 +204,16 @@
             aria-label="Zoom out"
           >
             −</button
-          ><span id="plan-zoom-level" aria-live="off">100%</span
-          ><button
+          ><input
+            id="plan-zoom-level"
+            class="zoom-level"
+            type="text"
+            inputmode="decimal"
+            size="5"
+            value="100%"
+            title="Zoom level: type a percentage"
+            aria-label="Zoom percentage: drawing plan"
+          /><button
             id="plan-zoom-in"
             class="tool-icon"
             title="Zoom in (+)"
@@ -327,6 +335,11 @@
           </div>
           <div id="drawing-sheets" class="gallery" hidden></div>
           <div id="plan-editor">
+            <div
+              id="plan-sheet-tabs"
+              role="tablist"
+              aria-label="Drawing sheets"
+            ></div>
             <div id="plan-sheet-wrap">
               <svg
                 id="plan-sheet"
@@ -335,11 +348,6 @@
                 aria-label="A3 drawing sheet"
               ></svg>
             </div>
-            <div
-              id="plan-sheet-tabs"
-              role="tablist"
-              aria-label="Drawing sheets"
-            ></div>
             <aside id="plan-properties">
               <strong id="plan-heading">Drawing sheet</strong>
               <div id="plan-fields"></div>

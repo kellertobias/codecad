@@ -68,6 +68,8 @@ export interface MeshData {
   };
   readonly holes: readonly HoleAnchor[];
   readonly volume: number;
+  /** The material's kg/m³, when it states one; weights come from it. */
+  readonly density?: number;
 }
 export interface HoleAnchor {
   readonly center: readonly [number, number, number];
@@ -515,6 +517,9 @@ export class OpenCascadeEngine implements CadEngine {
           return anchor ? [anchor] : [];
         }),
       volume: b.unwrap(b.measureVolume(solid)),
+      ...(material?.options.densityKgPerM3 === undefined
+        ? {}
+        : { density: material.options.densityKgPerM3 }),
     };
   }
   /** Geometry samples from the folded shape to its developed blank. */

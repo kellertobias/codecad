@@ -782,6 +782,12 @@ const plywood = new SheetMaterial({
 const drawerStock = plywood.with({ id: "birch-12", thickness: 12, plies: 7 });
 ```
 
+Any material may state `densityKgPerM3` (680 for birch plywood, 7850 for
+steel, 2700 for aluminium). Studio then weighs every part made from it and
+totals the weight up the parts tree, next to each row and in the inspector.
+Stock without a density is simply left out of the total, which is then marked
+as covering the weighed parts only.
+
 `MetalStockMaterial` creates solid bars or hollow tubes from an outside XY
 cross section, extruded to a cut length along local Z. `cornerRadius` is in mm;
 `true` or `"full"` gives the maximum radius (a circle for equal dimensions,

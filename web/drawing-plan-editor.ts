@@ -9,7 +9,7 @@ import {
   type PlanItem,
   type PlanSheet,
 } from "../src/drawing-plan.js";
-import { PanZoom, viewBoxFor } from "./pan-zoom.js";
+import { PanZoom, typedZoom, viewBoxFor } from "./pan-zoom.js";
 import {
   rotatePaper,
   standardScales,
@@ -128,6 +128,23 @@ export class DrawingPlanEditor {
         action();
         this.applyZoom();
       };
+    const level = byId<HTMLInputElement>("plan-zoom-level");
+    // Both Enter and leaving the field commit; anything unreadable snaps back.
+    const commit = () => {
+      const scale = typedZoom(level.value);
+      if (scale !== undefined) this.viewport.zoomTo(scale);
+      this.applyZoom();
+    };
+    level.onfocus = () => level.select();
+    level.onchange = commit;
+    level.onkeydown = (event) => {
+      if (event.key === "Enter") commit();
+      else if (event.key === "Escape") {
+        this.applyZoom();
+        level.blur();
+      } else return;
+      event.preventDefault();
+    };
     this.wrap.addEventListener(
       "wheel",
       (event) => {
@@ -519,7 +536,8 @@ export class DrawingPlanEditor {
         `${fmt(box.minX)} ${fmt(box.minY)} ${fmt(box.width)} ${fmt(box.height)}`,
       );
     }
-    byId("plan-zoom-level").textContent = `${Math.round(scale * 100)}%`;
+    byId<HTMLInputElement>("plan-zoom-level").value =
+      `${Math.round(scale * 100)}%`;
   }
   private point(event: PointerEvent): Point {
     const svg = this.sheet.createSVGPoint();
