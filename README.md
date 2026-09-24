@@ -834,12 +834,20 @@ beside View/Projection/Measure in Studio to edit these inputs. Valid changes
 rebuild the model automatically; the adjacent explode icon toggles the
 edges/explode controls.
 
-Nesting uses a deterministic rectangular guillotine algorithm, respects margins,
-part spacing/kerf, allowed rotations and grain, and allocates more sheets as needed.
-Oversized parts produce errors. Arbitrary profiles pack by their bounding rectangles;
-there is no contour nesting optimizer or remnant inventory yet.
-`quantity` multiplies a blank in the cut list/nesting; use copies for multiple
-addressable instances in the assembly.
+Nesting lays blanks out for a panel saw: every plan is a guillotine cut
+sequence, each cut running edge to edge across the piece it divides. Several
+packing strategies are tried for every stock and the best plan is kept: the
+fewest sheets first, then the largest single off-cut on each sheet, then the
+most reusable off-cut area, then the fewest pieces and cuts. Blanks of the
+same height are laid side by side in strips, so what is left above them stays
+one wide piece rather than a comb of slivers. Margins, part spacing and kerf,
+allowed rotations and grain are respected and further sheets are allocated as
+needed; the result is deterministic. Free pieces narrower than `minimumOffcut`
+(30 mm unless the material says otherwise) count as waste rather than as
+off-cuts. Oversized parts produce errors. Arbitrary profiles pack by their
+bounding rectangles; there is no contour nesting optimizer or remnant
+inventory yet. `quantity` multiplies a blank in the cut list/nesting; use
+copies for multiple addressable instances in the assembly.
 
 DXF exports are in millimetres:
 
@@ -916,6 +924,11 @@ the [keyboard case](examples/keyboard-case/index.ts), and
   material, author, scale, units and page numbers, plus a calibrated graphic scale.
   Plans, sheet layouts and cut lists default to PDF downloads in Studio;
   each download has its own DXF dropdown option. Cut lists also offer CSV.
+  The Studio cut list groups identical blanks into one line with the pieces
+  to cut and the parts they become; a toggle lists every part instead. Each
+  sheet layout states how much of the board the blanks use and the largest
+  off-cut that comes back, and labels every blank on the sheet with its name
+  and size.
   Drawings and sheet layouts use PDF.js to display the actual PDFs in one
   continuous workspace per section, with shared zoom, page navigation, drag-pan,
   pinch zoom, and Ctrl/Command-wheel zoom. Plain scrolling moves through pages.

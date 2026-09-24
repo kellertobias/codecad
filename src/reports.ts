@@ -10,6 +10,8 @@ import { formatMm } from "./precision.js";
 
 export interface ReportDownload {
   title: string;
+  /** One line under the title, e.g. how much of a sheet the blanks use. */
+  summary?: string;
   kind: "drawing" | "nesting" | "cutList";
   preview: string;
   previews?: string[];
@@ -208,6 +210,18 @@ export function cutListPages(
   );
   return pages;
 }
+/** How well a sheet is used, for headings: the share the blanks cover and
+ * the largest piece that comes back as an off-cut. */
+export function layoutSummary(layout: SheetLayout, mmPrecision?: number) {
+  const area = layout.material.width! * layout.material.height!;
+  const largest = layout.offcuts[0];
+  return (
+    `${layout.parts.length} blank${layout.parts.length === 1 ? "" : "s"} · ${Math.round((100 * layout.usedArea) / area)}% used` +
+    (largest
+      ? ` · largest off-cut ${formatMm(largest.width, mmPrecision)} × ${formatMm(largest.height, mmPrecision)} mm`
+      : " · no off-cut worth keeping")
+  );
+}
 /** Scaled A4 layout overview plus a legible numbered part legend. DXF stays 1:1. */
 export function sheetLayoutPages(
   layout: SheetLayout,
@@ -222,7 +236,7 @@ export function sheetLayoutPages(
   text(page, `Sheet ${layout.number} · ${layout.material.name}`, 12, 16, 4);
   text(
     page,
-    `${formatMm(w, mmPrecision)} × ${formatMm(h, mmPrecision)} × ${formatMm(layout.material.thickness, mmPrecision)} mm · ${layout.parts.length} blanks`,
+    `${formatMm(w, mmPrecision)} × ${formatMm(h, mmPrecision)} × ${formatMm(layout.material.thickness, mmPrecision)} mm · ${layoutSummary(layout, mmPrecision)}`,
     12,
     24,
     3.2,
@@ -235,6 +249,43 @@ export function sheetLayoutPages(
     3,
   );
   rectangle(page, x, y, w * scale, h * scale, "STOCK_BOUNDARY");
+  /** Centres up to two lines in a piece: its number or name, and its size
+   * when the piece is big enough on paper to carry them legibly. A number
+   * alone still goes on the smallest piece, so the legend can name it. */
+  const label = (
+    piece: { x: number; y: number; width: number; height: number },
+    head: string,
+    name: string | undefined,
+    layer: string,
+  ) => {
+    const pw = piece.width * scale,
+      ph = piece.height * scale,
+      cx = x + piece.x * scale + pw / 2,
+      cy = y + piece.y * scale + ph / 2;
+    const size = ph >= 9 && pw >= 16 ? 2.6 : 3;
+    const chars = Math.floor(pw / (size * 0.62));
+    const centred = (value: string, ty: number, height: number) =>
+      text(
+        page,
+        value,
+        cx - (value.length * height * 0.62) / 2,
+        ty,
+        height,
+        layer,
+      );
+    const title =
+      name && chars > head.length + 3
+        ? `${head} · ${name.length > chars - head.length - 3 ? name.slice(0, chars - head.length - 4) + "…" : name}`
+        : head;
+    if (ph >= 9 && pw >= 16) {
+      centred(title, cy - 0.6, size);
+      centred(
+        `${formatMm(piece.width, mmPrecision)} × ${formatMm(piece.height, mmPrecision)}`,
+        cy + 3,
+        2.4,
+      );
+    } else centred(head, cy + 1, size);
+  };
   layout.parts.forEach((part, i) => {
     rectangle(
       page,
@@ -244,14 +295,7 @@ export function sheetLayoutPages(
       part.height * scale,
       "BLANKS",
     );
-    text(
-      page,
-      String(i + 1),
-      x + (part.x + part.width / 2) * scale - 1,
-      y + (part.y + part.height / 2) * scale + 1,
-      3.5,
-      "PART_NUMBERS",
-    );
+    label(part, String(i + 1), part.part.id, "PART_NUMBERS");
   });
   layout.offcuts.forEach((offcut, i) => {
     rectangle(
@@ -262,14 +306,7 @@ export function sheetLayoutPages(
       offcut.height * scale,
       "OFFCUTS",
     );
-    text(
-      page,
-      `O${i + 1}`,
-      x + (offcut.x + offcut.width / 2) * scale - 1,
-      y + (offcut.y + offcut.height / 2) * scale + 1,
-      3,
-      "OFFCUT_NUMBERS",
-    );
+    label(offcut, `O${i + 1}`, undefined, "OFFCUT_NUMBERS");
   });
   text(
     page,

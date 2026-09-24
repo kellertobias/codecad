@@ -138,31 +138,33 @@ test("guillotine nesting preserves tall off-cuts and sequences kerf-aware cuts",
     "a full-height right off-cut avoids a second sheet",
   );
   const layout = layouts[0]!;
+  // Two columns: the tall blank and, past the kerf, the large one with the
+  // 68 × 38 off-cut kept whole below it. Blanks read top-left to bottom-right.
   assert.deepEqual(
     layout.parts.map((part) => [part.x, part.y, part.width, part.height]),
     [
-      [0, 0, 60, 60],
-      [62, 0, 30, 90],
+      [0, 0, 30, 90],
+      [32, 0, 60, 60],
     ],
   );
   assert.deepEqual(
     layout.cuts.map((cut) => cut.sequence),
     [1, 2, 3, 4],
   );
+  // The first cut rips the whole sheet; every cut spans its source piece.
   assert.deepEqual(layout.cuts[0], {
     sequence: 1,
     source: "stock",
     axis: "x",
-    at: 60,
+    at: 30,
     from: 0,
     to: 100,
     kerf: 2,
   });
   assert.equal(layout.usedArea, 6300);
-  assert.ok(
-    layout.offcuts.some(
-      (offcut) => offcut.width === 60 && offcut.height === 38,
-    ),
+  assert.deepEqual(
+    layout.offcuts.map((offcut) => [offcut.width, offcut.height]),
+    [[68, 38]],
   );
   assert.equal(layout.usedArea + layout.offcutArea + layout.wasteArea, 10000);
 });
@@ -184,7 +186,9 @@ test("nesting rotates a blank when it saves a stock sheet", () => {
   });
   const layout = nest([wide, tall]);
   assert.equal(layout.length, 1);
-  assert.equal(layout[0]!.parts[0]!.rotation, 90);
+  const placed = layout[0]!.parts;
+  assert.equal(placed.find((p) => p.part === wide)!.rotation, 90);
+  assert.equal(placed.find((p) => p.part === tall)!.rotation, 0);
 });
 test("representative kitchen cabinet fits one kerf-aware sheet per stock thickness", () => {
   const layouts = nest(sheetParts(new KitchenCabinet()));

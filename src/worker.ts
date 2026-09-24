@@ -43,6 +43,7 @@ import { drawingPlanFile, validateDrawingPlan } from "./drawing-plan.js";
 import { planDrawing, planViewKey } from "./drawing-plan-render.js";
 import {
   cutListPages,
+  layoutSummary,
   sheetLayoutPages,
   pageSvg,
   pagesDxf,
@@ -318,6 +319,7 @@ export async function buildProject(
               }
               reports.push({
                 title: `${layout.material.name} · Sheet ${layout.number}`,
+                summary: layoutSummary(layout, value.options.mmPrecision),
                 kind: "nesting",
                 preview: layoutStem + ".svg",
                 formats: { pdf: layoutStem + ".pdf", dxf: layoutStem + ".dxf" },

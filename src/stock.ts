@@ -84,6 +84,9 @@ export interface SheetMaterialOptions extends MaterialOptions {
   readonly kerf?: number;
   readonly partSpacing?: number;
   readonly sheetMargin?: number;
+  /** Free pieces narrower than this in either direction are waste rather
+   * than off-cuts worth keeping. Defaults to 30 mm. */
+  readonly minimumOffcut?: number;
 }
 export type PanelCorner =
   "north-west" | "north-east" | "south-east" | "south-west";
@@ -552,7 +555,12 @@ export class SheetMaterial extends Material {
     }
     if (this.width !== undefined) positive(this.width, "sheet width");
     if (this.height !== undefined) positive(this.height, "sheet height");
-    for (const v of [options.kerf, options.partSpacing, options.sheetMargin])
+    for (const v of [
+      options.kerf,
+      options.partSpacing,
+      options.sheetMargin,
+      options.minimumOffcut,
+    ])
       if (v !== undefined && (!Number.isFinite(v) || v < 0))
         throw new Error("Stock margins and spacing must be nonnegative");
   }

@@ -10,6 +10,8 @@ GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 export interface PdfReport {
   title: string;
+  /** Shown under the title, e.g. a sheet's utilisation. */
+  summary?: string;
   url: string;
   download: HTMLElement;
 }
@@ -323,6 +325,12 @@ export function pdfViewer(reports: PdfReport[]) {
           if (disposed) return;
           const heading = document.createElement("h3");
           heading.textContent = report.title;
+          if (report.summary) {
+            const summary = document.createElement("small");
+            summary.className = "pdf-summary";
+            summary.textContent = report.summary;
+            heading.append(summary);
+          }
           heading.append(report.download);
           stack.append(heading);
           const task = getDocument({ url: report.url });

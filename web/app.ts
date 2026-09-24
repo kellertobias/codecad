@@ -15,6 +15,7 @@ import { Plane2DCanvas } from "./plane2d.js";
 import { DrawingPlanEditor } from "./drawing-plan-editor.js";
 import { initiallyExpandedPaths } from "./component-tree.js";
 import { formatMass, inspectorDetails } from "./inspector.js";
+import { groupCutRows } from "../src/cut-rows.js";
 import { applyWoodAppearance } from "./wood-material.js";
 import {
   faceRegionGeometry,
@@ -1015,6 +1016,7 @@ function renderOutputs() {
     if (report.kind === "nesting") {
       pdfReports.push({
         title: report.title,
+        ...(report.summary ? { summary: report.summary } : {}),
         url: artifactUrl(report.formats.pdf),
         download: downloadControl(report),
       });
@@ -1090,10 +1092,29 @@ function renderOutputs() {
     if ($("nesting").classList.contains("active")) viewer.start();
   }
 }
+/** Identical blanks read as one line with a quantity, as a shop expects;
+ * the toggle lists every part on its own row instead. */
+let groupBlanks = true;
 function renderCuts() {
   $("cuts").replaceChildren();
   const reports =
     model?.reports.filter((report) => report.kind === "cutList") ?? [];
+  const rows = reports.length
+    ? reports.flatMap((report) => report.rows ?? [])
+    : (model?.cutList ?? []);
+  if (rows.length > 1) {
+    const tools = document.createElement("label"),
+      toggle = document.createElement("input");
+    tools.className = "cuts-tools";
+    toggle.type = "checkbox";
+    toggle.checked = groupBlanks;
+    toggle.onchange = () => {
+      groupBlanks = toggle.checked;
+      renderCuts();
+    };
+    tools.append(toggle, " Group identical blanks");
+    $("cuts").append(tools);
+  }
   for (const report of reports) {
     const heading = document.createElement("h3");
     heading.textContent = report.title;
@@ -1141,10 +1162,16 @@ function renderCutTable(rows: Model["cutList"]) {
   // Computed sizes such as 463.99999999 read as the millimetres they mean.
   const mm = (value: number | null | undefined) =>
     value == null ? "" : String(Number(value.toFixed(2)));
-  for (const r of rows) {
+  const within = (path: string) => path.split("/").slice(1).join("/");
+  const shown = groupBlanks
+    ? groupCutRows(rows)
+    : rows.map((r) => ({ ...r, paths: [r.path] }));
+  const pieces = rows.reduce((sum, r) => sum + r.quantity, 0);
+  for (const r of shown) {
     const row = document.createElement("tr");
-    for (const value of [
-      r.path.split("/").slice(1).join("/"),
+    const names = r.paths.map(within);
+    for (const [i, value] of [
+      names.join(", "),
       r.material,
       mm(r.width),
       mm(r.height),
@@ -1152,14 +1179,33 @@ function renderCutTable(rows: Model["cutList"]) {
       mm(r.wallThickness),
       mm(r.cornerRadius),
       r.quantity,
-    ]) {
+    ].entries()) {
       const cell = document.createElement("td");
       cell.textContent = String(value);
-      cell.title = String(value);
+      cell.title = i === 0 ? names.join("\n") : String(value);
+      if (i === 0 && names.length > 1) {
+        cell.className = "cut-parts";
+        cell.textContent = "";
+        const first = document.createElement("span");
+        first.textContent = names[0]!;
+        const rest = document.createElement("small");
+        rest.textContent = ` +${names.length - 1} more`;
+        cell.append(first, rest);
+      }
       row.append(cell);
     }
     table.append(row);
   }
+  const foot = document.createElement("tr");
+  foot.className = "cut-total";
+  const label = document.createElement("td");
+  label.colSpan = 7;
+  label.textContent = `${shown.length} ${groupBlanks ? "blank size" : "part"}${shown.length === 1 ? "" : "s"}`;
+  const total = document.createElement("td");
+  total.textContent = String(pieces);
+  total.title = "Pieces to cut";
+  foot.append(label, total);
+  table.append(foot);
   $("cuts").append(table);
 }
 async function loadSource() {
