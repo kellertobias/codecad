@@ -127,9 +127,12 @@ function onCurve(
  * Faces on no earlier surface (the rounds themselves) stay unnamed. */
 export function remapRoles(
   table: RoleTable,
-  before: b.Shape3D,
+  before: b.Shape3D | readonly b.Shape3D[],
   after: b.Shape3D,
 ): RoleTable {
+  const beforeFaces = (Array.isArray(before) ? before : [before]).flatMap(
+    (shape: b.Shape3D) => b.getFaces(shape),
+  );
   const signature = (face: b.Face) => {
     const type = b.faceGeomType(face);
     const normal = b.normalAt(face) as unknown as Vec3;
@@ -138,11 +141,8 @@ export function remapRoles(
   };
   const afterFaces = b.getFaces(after);
   const live = new Set(afterFaces.map((face) => b.getHashCode(face)));
-  const beforeHashes = new Set(
-    b.getFaces(before).map((face) => b.getHashCode(face)),
-  );
-  const vanished = b
-    .getFaces(before)
+  const beforeHashes = new Set(beforeFaces.map((face) => b.getHashCode(face)));
+  const vanished = beforeFaces
     .filter((face) => !live.has(b.getHashCode(face)))
     .map((face) => ({ hash: b.getHashCode(face), ...signature(face) }));
   /** Old hash → the new faces that replace it. */
@@ -175,6 +175,41 @@ export function remapRoles(
       if (now.length) mapped.set(role, now);
     }
     next.set(origin, mapped);
+  }
+  return next;
+}
+
+/** Carries names through a boolean by its evolution record, and recovers
+ * the names the record loses: OCCT reports a face as deleted when a tool
+ * face lay on the same plane, although what is left of it is still there.
+ * Only names the record drops completely are recovered, by geometry, as
+ * `remapRoles` does. */
+export function booleanRoles(
+  table: RoleTable,
+  evolution: Parameters<typeof b.updateRoles>[2],
+  before: readonly b.Shape3D[],
+  after: b.Shape3D,
+): RoleTable {
+  const evolved = afterOperation(table, evolution);
+  const live = new Set(b.getFaces(after).map((face) => b.getHashCode(face)));
+  let geometric: RoleTable | undefined;
+  const next = new Map<string, ReadonlyMap<string, readonly number[]>>();
+  for (const [origin, roles] of table) {
+    const kept = new Map<string, readonly number[]>();
+    for (const role of roles.keys()) {
+      // The record may also name hashes of an intermediate shape.
+      const hashes = (evolved.get(origin)?.get(role) ?? []).filter((hash) =>
+        live.has(hash),
+      );
+      if (hashes.length) {
+        kept.set(role, hashes);
+        continue;
+      }
+      geometric ??= remapRoles(table, before, after);
+      const found = geometric.get(origin)?.get(role);
+      if (found?.length) kept.set(role, found);
+    }
+    next.set(origin, kept);
   }
   return next;
 }

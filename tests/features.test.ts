@@ -2,21 +2,18 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import * as b from "brepjs/quick";
 import { SketchSolver } from "../src/document/sketch-solver.js";
-import {
-  addCircle,
-  addConstraint,
-  addRectangle,
-  solveDocument,
-} from "../src/document/sketch-edit.js";
-import {
-  emptyDocument,
-  readDocument,
-  type CadDocument,
-  type ExtrudeFeature,
-  type Feature,
-  type Plane,
-  type SketchFeature,
+import type {
+  CadDocument,
+  ExtrudeFeature,
+  Feature,
+  SketchFeature,
 } from "../src/document/schema.js";
+import {
+  extrude,
+  points,
+  rectangle,
+  solvedDocument,
+} from "./support/documents.js";
 import {
   DocumentEvaluator,
   referenceEdge,
@@ -31,139 +28,10 @@ before(async () => {
 });
 after(() => solver.dispose());
 
-/** A sketch with a rectangle whose corner, width and height are
- * expressions. Its lines are called `<id>.bottom`, `.right`, `.top`,
- * `.left`. */
-function rectangle(
-  id: string,
-  plane: Plane,
-  x: string,
-  y: string,
-  width: string,
-  height: string,
-  extra: Partial<SketchFeature> = {},
-): SketchFeature {
-  let sketch: SketchFeature = {
-    id,
-    type: "sketch",
-    name: id,
-    plane,
-    entities: [],
-    constraints: [],
-    ...extra,
-  };
-  sketch = addRectangle(sketch, { x: 0, y: 0 }, { x: 10, y: 10 }).sketch;
-  // Stable names instead of random ids, so tests can refer to them.
-  const names = ["p0", "p1", "p2", "p3", "bottom", "right", "top", "left"];
-  const rename = new Map(
-    sketch.entities.map((e, i) => [e.id, `${id}.${names[i]}`]),
-  );
-  const renamed = (value: string) => rename.get(value) ?? value;
-  sketch = {
-    ...sketch,
-    entities: sketch.entities.map((e) => {
-      const next: Record<string, unknown> = { ...e, id: renamed(e.id) };
-      for (const key of ["start", "end", "center"])
-        if (typeof next[key] === "string")
-          next[key] = renamed(next[key] as string);
-      return next as unknown as SketchFeature["entities"][number];
-    }),
-    constraints: sketch.constraints.map((c) => {
-      const next: Record<string, unknown> = { ...c };
-      for (const key of ["line", "a", "b", "point", "entity"])
-        if (typeof next[key] === "string")
-          next[key] = renamed(next[key] as string);
-      return next as unknown as SketchFeature["constraints"][number];
-    }),
-  };
-  sketch = addConstraint(sketch, {
-    type: "fix",
-    point: `${id}.p0`,
-    x,
-    y,
-  }).sketch;
-  sketch = addConstraint(sketch, {
-    type: "distance",
-    a: `${id}.p0`,
-    b: `${id}.p1`,
-    value: width,
-    direction: "horizontal",
-  }).sketch;
-  sketch = addConstraint(sketch, {
-    type: "distance",
-    a: `${id}.p1`,
-    b: `${id}.p2`,
-    value: height,
-    direction: "vertical",
-  }).sketch;
-  return {
-    ...sketch,
-    constraints: sketch.constraints.map((c, i) => ({
-      ...c,
-      id: `${id}.c${i}`,
-    })),
-  };
-}
-
-/** Points to drill at, fixed by expressions. */
-function points(
-  id: string,
-  at: readonly (readonly [string, string])[],
-  extra: Partial<SketchFeature> = {},
-): SketchFeature {
-  return {
-    id,
-    type: "sketch",
-    name: id,
-    plane: "XY",
-    entities: at.map((_, i) => ({
-      id: `${id}.h${i}`,
-      type: "point" as const,
-      x: 0,
-      y: 0,
-    })),
-    constraints: at.map(([x, y], i) => ({
-      id: `${id}.f${i}`,
-      type: "fix" as const,
-      point: `${id}.h${i}`,
-      x,
-      y,
-    })),
-    ...extra,
-  };
-}
-
-const extrude = (
-  id: string,
-  sketch: string,
-  rest: Partial<ExtrudeFeature> = {},
-): ExtrudeFeature => ({
-  id,
-  type: "extrude",
-  name: id,
-  sketch,
-  operation: "new",
-  extent: "blind",
-  distance: "18",
-  ...rest,
-});
-
-function document(
+const document = (
   variables: Record<string, string>,
   features: Feature[],
-): CadDocument {
-  const doc = readDocument({
-    ...emptyDocument(),
-    variables: Object.entries(variables).map(([name, expression], i) => ({
-      id: `v${i}`,
-      name,
-      expression,
-      unit: "mm",
-    })),
-    features,
-  });
-  return solveDocument(doc, solver).document;
-}
+): CadDocument => solvedDocument(solver, variables, features);
 
 const volume = (body: Body) => b.unwrap(b.measureVolume(body.shape));
 const near = (actual: number, expected: number, tolerance = 1e-3) =>
@@ -344,6 +212,23 @@ test("a pocket on a face stays on that face when the panel changes", () => {
   evaluator.dispose();
 });
 
+test("a face keeps its name when a pocket starts on it", () => {
+  // The pocket's tool starts exactly on the top face. OCCT's record of the
+  // cut then calls the top deleted; the name is recovered from geometry.
+  const evaluator = new DocumentEvaluator();
+  const result = evaluator.evaluate(
+    document({ t: "18" }, [
+      ...pocketed("600", "100"),
+      rectangle("again", "XY", "400", "100", "20", "20", {
+        face: { body: "panel:0", origin: "panel", role: "end" },
+      }),
+    ]),
+  );
+  ok(result);
+  near(result.frames.get("again")!.origin[2], 18);
+  evaluator.dispose();
+});
+
 test("a broken face reference fails visibly instead of moving", () => {
   const evaluator = new DocumentEvaluator();
   // Sketch on the plate's right wall, then swap the plate's rectangle for
@@ -472,7 +357,33 @@ test("holes drill at a sketch's points, and patterns repeat them", () => {
   near(volume(panel), 300 * 100 * 18 - 4 * each, 1e-3);
   assert.deepEqual(
     panel.machining.map((m) => m.kind),
-    ["counterbore", "counterbore", "counterbore", "counterbore"],
+    Array.from({ length: 4 }, () => ["drill", "counterbore"]).flat(),
+  );
+  // A countersink: a 90° cone 10 mm across at the surface, 5 mm deep.
+  const sunk = evaluator.evaluate(
+    document({}, [
+      ...base,
+      {
+        id: "h",
+        type: "hole",
+        name: "h",
+        sketch: "at",
+        kind: "countersink",
+        diameter: "4",
+        headDiameter: "10",
+        depth: "15",
+      },
+    ]),
+  );
+  ok(sunk);
+  // The cone overlaps the drill where it is wider than it: a 3 mm
+  // cylinder and the cone's 2 mm tip.
+  const cone = (Math.PI * 25 * 5) / 3;
+  const overlap = Math.PI * 4 * 3 + (Math.PI * 4 * 2) / 3;
+  near(
+    volume(sunk.bodies[0]!),
+    300 * 100 * 18 - (Math.PI * 4 * 15 + cone - overlap),
+    1e-7,
   );
   evaluator.dispose();
 });

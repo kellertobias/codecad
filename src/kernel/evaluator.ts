@@ -52,7 +52,7 @@ import {
   type VariableValues,
 } from "../document/variables.js";
 import {
-  afterOperation,
+  booleanRoles,
   copyRoles,
   remapRoles,
   sweptRoles,
@@ -69,6 +69,8 @@ export interface Blank {
   readonly outline: readonly { x: number; y: number }[];
   /** Openings in the region itself, clockwise. */
   readonly openings: readonly (readonly { x: number; y: number }[])[];
+  /** Whether the outline has arcs, which `outline` only samples. */
+  readonly curved: boolean;
 }
 
 /** A cut made into a body after it was created, in model coordinates. */
@@ -100,8 +102,9 @@ interface Tool {
   readonly shape: b.Shape3D;
   /** Names of the tool's faces, under the feature's id. */
   readonly roles: ReadonlyMap<string, readonly number[]>;
-  /** For the manufacturing outputs. */
-  readonly machining?: Omit<Machining, "feature">;
+  /** For the manufacturing outputs: the cuts the tool makes, each a
+   * single primitive where it can be. */
+  readonly machining?: readonly Omit<Machining, "feature">[];
   readonly blank?: Blank;
   /** `new` tools become bodies with these ids. */
   readonly body?: string;
@@ -526,9 +529,11 @@ function combine(
   return {
     ...body,
     shape,
-    roles: afterOperation(
+    roles: booleanRoles(
       withRoles(body.roles, origin, toolRoles),
       result.value.evolution,
+      [body.shape, tool],
+      shape,
     ),
   };
 }
@@ -827,13 +832,16 @@ function extrude(feature: ExtrudeFeature, context: Context): Result {
       depth,
       outline: region.outer.polygon,
       openings: region.holes.map((hole) => hole.polygon),
+      curved: region.outer.curves.some((curve) => curve.kind !== "line"),
     };
     return feature.operation === "new"
       ? { shape, roles, blank, body: `${feature.id}:${k}` }
       : {
           shape,
           roles,
-          machining: { kind: "cut", recipe: sweepRecipe(region, start, depth) },
+          machining: [
+            { kind: "cut", recipe: sweepRecipe(region, start, depth) },
+          ],
         };
   });
   const made: Made = {
@@ -915,9 +923,10 @@ function apply(
         ...(operation === "intersect"
           ? { irregular: "it was intersected" }
           : {}),
-        machining: tool.machining
-          ? [...body.machining, { ...tool.machining, feature: origin }]
-          : body.machining,
+        machining: [
+          ...body.machining,
+          ...(tool.machining ?? []).map((cut) => ({ ...cut, feature: origin })),
+        ],
       });
       changed++;
     }
@@ -1101,47 +1110,44 @@ function hole(feature: HoleFeature, context: Context): Result {
         .clone()
         .multiply(new Matrix4().makeTranslation(0, 0, (depth - above) / 2)),
     );
-    let recipe: Recipe = drill;
-    if (feature.kind === "counterbore")
-      recipe = {
-        kind: "union",
-        left: drill,
-        right: transformRecipe(
-          { kind: "cylinder", diameter: head!, length: headDepth + above },
-          at
-            .clone()
-            .multiply(
-              new Matrix4().makeTranslation(0, 0, (headDepth - above) / 2),
-            ),
-        ),
-      };
-    else if (feature.kind === "countersink")
-      recipe = {
-        kind: "union",
-        left: drill,
-        // A cone from the surface, widest at the top: flipped so its base
-        // lies on the surface and its tip points into the material.
-        right: transformRecipe(
-          { kind: "cone", diameter: head!, length: headDepth },
-          at
-            .clone()
-            .multiply(
-              new Matrix4()
-                .makeTranslation(0, 0, headDepth)
-                .multiply(new Matrix4().makeRotationX(Math.PI)),
-            ),
-        ),
-      };
+    // The head: a wider cylinder, or a cone whose base is on the surface
+    // and whose tip points into the material (+z here).
+    const headRecipe: Recipe | undefined =
+      feature.kind === "counterbore"
+        ? transformRecipe(
+            { kind: "cylinder", diameter: head!, length: headDepth + above },
+            at
+              .clone()
+              .multiply(
+                new Matrix4().makeTranslation(0, 0, (headDepth - above) / 2),
+              ),
+          )
+        : feature.kind === "countersink"
+          ? transformRecipe(
+              { kind: "cone", diameter: head!, length: headDepth },
+              at,
+            )
+          : undefined;
+    const recipe: Recipe = headRecipe
+      ? { kind: "union", left: drill, right: headRecipe }
+      : drill;
     const shape = build(context, recipe);
     return {
       shape,
       roles: holeRoles(shape, frame, point.id),
-      machining: {
-        kind: feature.kind === "simple" ? "drill" : feature.kind,
-        recipe,
-        diameter: head ?? diameter,
-        depth,
-      },
+      machining: [
+        { kind: "drill", recipe: drill, diameter, depth },
+        ...(headRecipe
+          ? [
+              {
+                kind: feature.kind as "counterbore" | "countersink",
+                recipe: headRecipe,
+                diameter: head!,
+                depth: headDepth,
+              },
+            ]
+          : []),
+      ],
     };
   });
   const made: Made = { operation: "cut", tools, name: feature.name };
@@ -1312,6 +1318,7 @@ function moveBlank(blank: Blank, m: Matrix4): Blank {
     depth: blank.depth,
     outline: mirror(blank.outline),
     openings: blank.openings.map(mirror),
+    curved: blank.curved,
   };
 }
 
@@ -1347,10 +1354,10 @@ function repeat(
             roles,
             ...(tool.machining
               ? {
-                  machining: {
-                    ...tool.machining,
-                    recipe: transformRecipe(tool.machining.recipe, m),
-                  },
+                  machining: tool.machining.map((cut) => ({
+                    ...cut,
+                    recipe: transformRecipe(cut.recipe, m),
+                  })),
                 }
               : {}),
             ...(tool.blank ? { blank: moveBlank(tool.blank, m) } : {}),
