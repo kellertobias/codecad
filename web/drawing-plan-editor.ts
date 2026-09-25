@@ -995,7 +995,8 @@ export class DrawingPlanEditor {
       view = this.views().find(
         (item) => item.id === (measure?.view ?? hover?.view),
       );
-    if (!view) return;
+    // Nothing to snap to or measure against until the view's lines are in.
+    if (!view || this.drawing(view)) return;
     const at = (point: ModelPoint) => this.toSheet(view, point.u, point.v);
     // Markers are sized in screen pixels, so they stay put while zooming.
     const show = (pick: PlanPick) => {
@@ -1235,6 +1236,11 @@ export class DrawingPlanEditor {
     } else if (item.kind === "dimension") {
       const view = this.views().find((v) => v.id === item.view);
       if (!view) return undefined;
+      // A dimension is placed against its view's lines; until they are in,
+      // it would land somewhere else, so it waits. Asking for the lines
+      // first starts them when the dimension comes before its view.
+      this.lines(view);
+      if (this.drawing(view)) return undefined;
       this.drawDimension(g, view, item, chosen ? selectedColor : "#235767");
     } else
       g.append(
