@@ -1,168 +1,403 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { KernelClient } from "../../web/kernel/client.ts";
-import type { ShapeMesh } from "../../src/kernel/mesh.ts";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Conflict,
-  projects,
-  type Project,
-  type ProjectSummary,
-} from "./api.ts";
-import { newPanel, panelRecipe, type PanelDocument } from "./document.ts";
-import { Viewport } from "./Viewport.tsx";
+  DocumentError,
+  emptyDocument,
+  readDocument,
+  type CadDocument,
+  type Plane,
+  type SketchFeature,
+} from "../../src/document/schema.ts";
+import { evaluateVariables } from "../../src/document/variables.ts";
+import { newId, solveDocument } from "../../src/document/sketch-edit.ts";
+import type {
+  SketchSolution,
+  SketchSolver,
+} from "../../src/document/sketch-solver.ts";
+import { Conflict, projects, type ProjectSummary } from "./api.ts";
+import { useDocumentHistory } from "./history.ts";
+import { loadSolver } from "./solver.ts";
+import { VariablesPanel } from "./VariablesPanel.tsx";
+import { SketchEditor } from "./sketch/SketchEditor.tsx";
 
-type Variables = PanelDocument["variables"];
-const fields: { key: keyof Variables; label: string; min: number }[] = [
-  { key: "width", label: "Width (mm)", min: 50 },
-  { key: "depth", label: "Depth (mm)", min: 50 },
-  { key: "thickness", label: "Thickness (mm)", min: 3 },
-  { key: "holes", label: "Holes", min: 0 },
-];
+interface Open {
+  readonly id: string;
+  readonly name: string;
+  readonly revision: number;
+  /** The document as last saved, to tell whether there are changes. */
+  readonly saved: string;
+}
 
-// One kernel for the life of the page: loading it costs a 22 MB download,
-// and React may mount and unmount components more than once.
-let sharedKernel: KernelClient | undefined;
-const kernel = () => (sharedKernel ??= new KernelClient("/kernel.worker.js"));
+const newSketch = (document: CadDocument, plane: Plane): SketchFeature => {
+  let n = document.features.length + 1;
+  while (document.features.some((f) => f.name === `Sketch ${n}`)) n++;
+  return {
+    id: newId("s"),
+    type: "sketch",
+    name: `Sketch ${n}`,
+    plane,
+    entities: [],
+    constraints: [],
+  };
+};
+
+const isTyping = (target: EventTarget | null) =>
+  target instanceof HTMLInputElement ||
+  target instanceof HTMLTextAreaElement ||
+  target instanceof HTMLSelectElement;
 
 export function App() {
   const [list, setList] = useState<ProjectSummary[]>([]);
-  const [open, setOpen] = useState<Project<PanelDocument>>();
-  const [draft, setDraft] = useState<PanelDocument>();
-  const [mesh, setMesh] = useState<ShapeMesh>();
-  // Two messages, because a rebuild finishing must not hide what happened
-  // to a save.
-  const [status, setStatus] = useState("Loading kernel…");
-  const [saveMessage, setSaveMessage] = useState<string>();
+  const [open, setOpen] = useState<Open>();
+  const [problem, setProblem] = useState<string>();
+  const [message, setMessage] = useState<string>();
+  const [solver, setSolver] = useState<SketchSolver>();
+  const [active, setActive] = useState<string>();
+  const [plane, setPlane] = useState<Plane>("XY");
+  const history = useDocumentHistory<CadDocument>(emptyDocument());
+  const document = history.current;
 
+  useEffect(() => {
+    loadSolver().then(setSolver, (error) =>
+      setProblem(`The sketch solver did not load: ${String(error)}`),
+    );
+  }, []);
   const refresh = useCallback(
-    () => projects.list().then(setList, (error) => setStatus(String(error))),
+    () => projects.list().then(setList, (error) => setProblem(String(error))),
     [],
   );
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  // Rebuild whenever the draft changes. Only the latest request's result is
-  // shown, so fast typing never flashes an older model.
-  const latest = useRef(0);
-  useEffect(() => {
-    if (!draft) return;
-    const request = ++latest.current;
-    const timer = setTimeout(() => {
-      setStatus("Building…");
-      kernel()
-        .evaluate(panelRecipe(draft))
-        .then(
-          (result) => {
-            if (request !== latest.current) return;
-            setMesh(result.mesh);
-            setStatus(
-              `Built in ${(result.buildMs + result.meshMs).toFixed(0)} ms · ${(
-                result.volume / 1e6
-              ).toFixed(2)} dm³`,
-            );
+  // Every change is solved before it enters the history, so the stored
+  // document always holds solved positions.
+  const solve = useCallback(
+    (next: CadDocument) =>
+      solver ? solveDocument(next, solver).document : next,
+    [solver],
+  );
+  const change = useCallback(
+    (update: (d: CadDocument) => CadDocument, merge?: string) =>
+      history.apply((d) => solve(update(d)), merge),
+    [history, solve],
+  );
+  const solved = useMemo(
+    () =>
+      solver
+        ? solveDocument(document, solver)
+        : {
+            document,
+            variables: evaluateVariables(document.variables),
+            solutions: new Map<string, SketchSolution>(),
           },
-          (error: Error) =>
-            request === latest.current && setStatus(error.message),
-        );
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [draft]);
+    [document, solver],
+  );
+
+  const dirty = open !== undefined && JSON.stringify(document) !== open.saved;
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (dirty) event.preventDefault();
+    };
+    addEventListener("beforeunload", warn);
+    return () => removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const load = async (id: string) => {
-    const project = await projects.get<PanelDocument>(id);
-    setOpen(project);
-    setDraft(project.document);
-    setSaveMessage(undefined);
-  };
-  const create = async () => {
-    const project = await projects.create(
-      `Panel ${list.length + 1}`,
-      newPanel(),
-    );
-    await refresh();
-    setOpen(project);
-    setDraft(project.document);
-  };
-  const save = async () => {
-    if (!open || !draft) return;
+    if (dirty && !confirm("Discard the unsaved changes to this project?"))
+      return;
+    const project = await projects.get<unknown>(id);
     try {
-      const saved = await projects.save(open.id, open.revision, draft);
-      setOpen(saved);
-      setSaveMessage(`Saved revision ${saved.revision}`);
-      void refresh();
+      const loaded = solve(readDocument(project.document));
+      history.reset(loaded);
+      setOpen({
+        id,
+        name: project.name,
+        revision: project.revision,
+        saved: JSON.stringify(loaded),
+      });
+      setActive(loaded.features[0]?.id);
+      setProblem(undefined);
+      setMessage(undefined);
     } catch (error) {
-      setSaveMessage(
-        error instanceof Conflict
-          ? `Not saved: someone saved revision ${error.revision} in the meantime. Reopen the project to see it.`
+      history.reset(emptyDocument());
+      setOpen({
+        id,
+        name: project.name,
+        revision: project.revision,
+        saved: "",
+      });
+      setActive(undefined);
+      setMessage(undefined);
+      setProblem(
+        error instanceof DocumentError
+          ? `This project cannot be opened (${error.message}). Saving it replaces it with the empty document shown.`
           : String(error),
       );
     }
   };
-  const dirty =
-    open && draft && JSON.stringify(open.document) !== JSON.stringify(draft);
+  const create = async () => {
+    const start = emptyDocument();
+    const project = await projects.create(`Project ${list.length + 1}`, {
+      ...start,
+      features: [newSketch(start, "XY")],
+    });
+    await refresh();
+    await load(project.id);
+  };
+  const save = useCallback(async () => {
+    if (!open) return;
+    try {
+      const saved = await projects.save(open.id, open.revision, document);
+      setOpen({
+        ...open,
+        revision: saved.revision,
+        saved: JSON.stringify(document),
+      });
+      setMessage(`Saved revision ${saved.revision}`);
+      setProblem(undefined);
+      void refresh();
+    } catch (error) {
+      setMessage(
+        error instanceof Conflict
+          ? `Not saved: revision ${error.revision} was saved elsewhere in the meantime. Reopen the project to see it.`
+          : String(error),
+      );
+    }
+  }, [open, document, refresh]);
+
+  // Undo, redo and save from the keyboard, unless a field is being typed in
+  // (fields keep their own undo).
+  useEffect(() => {
+    const keys = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "s") {
+        event.preventDefault();
+        void save();
+      } else if (!isTyping(event.target) && (key === "z" || key === "y")) {
+        event.preventDefault();
+        if (key === "y" || event.shiftKey) history.redo();
+        else history.undo();
+      }
+    };
+    addEventListener("keydown", keys);
+    return () => removeEventListener("keydown", keys);
+  }, [history, save]);
+
+  const sketch = document.features.find((f) => f.id === active);
+  const editSketch = (next: SketchFeature, merge?: string) =>
+    change(
+      (d) => ({
+        ...d,
+        features: d.features.map((f) => (f.id === next.id ? next : f)),
+      }),
+      merge,
+    );
+  const drag = (point: string, x: number, y: number, session: string) => {
+    if (!solver || !sketch) return;
+    history.apply(
+      (d) =>
+        solveDocument(d, solver, { feature: sketch.id, point, x, y }).document,
+      `drag:${session}`,
+    );
+  };
 
   return (
     <div className="shell">
-      <aside className="projects">
-        <header>
-          <strong>Projects</strong>
-          <button onClick={create}>New</button>
-        </header>
-        <ul>
-          {list.map((project) => (
-            <li key={project.id}>
-              <button
-                className={project.id === open?.id ? "current" : undefined}
-                onClick={() => void load(project.id)}
+      <header className="topbar">
+        <strong>CodeCAD</strong>
+        {open ? <span className="project-name">{open.name}</span> : null}
+        <span className="spacer" />
+        <button
+          onClick={history.undo}
+          disabled={!history.canUndo}
+          title="Undo (Ctrl/⌘+Z)"
+        >
+          Undo
+        </button>
+        <button
+          onClick={history.redo}
+          disabled={!history.canRedo}
+          title="Redo (Shift+Ctrl/⌘+Z)"
+        >
+          Redo
+        </button>
+        <button
+          className="primary"
+          onClick={() => void save()}
+          disabled={!open || !dirty}
+          title="Save (Ctrl/⌘+S)"
+        >
+          {dirty ? "Save" : "Saved"}
+        </button>
+      </header>
+      <aside className="sidebar">
+        <section>
+          <header>
+            <h2>Projects</h2>
+            <button onClick={() => void create()}>New</button>
+          </header>
+          <ul className="list">
+            {list.map((project) => (
+              <li key={project.id}>
+                <button
+                  className={project.id === open?.id ? "current" : undefined}
+                  onClick={() => void load(project.id)}
+                >
+                  {project.name}
+                  <small>revision {project.revision}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+        {open ? (
+          <section>
+            <header>
+              <h2>Sketches</h2>
+              <select
+                aria-label="Plane for a new sketch"
+                value={plane}
+                onChange={(event) => setPlane(event.target.value as Plane)}
               >
-                {project.name}
-                <small>revision {project.revision}</small>
+                <option value="XY">XY (top)</option>
+                <option value="XZ">XZ (front)</option>
+                <option value="YZ">YZ (side)</option>
+              </select>
+              <button
+                onClick={() => {
+                  const created = newSketch(document, plane);
+                  change((d) => ({ ...d, features: [...d.features, created] }));
+                  setActive(created.id);
+                }}
+              >
+                New
               </button>
-            </li>
-          ))}
-        </ul>
+            </header>
+            <ul className="list">
+              {document.features.map((feature) => (
+                <FeatureRow
+                  key={feature.id}
+                  feature={feature}
+                  current={feature.id === active}
+                  solution={solved.solutions.get(feature.id)}
+                  open={() => setActive(feature.id)}
+                  rename={(name) =>
+                    change((d) => ({
+                      ...d,
+                      features: d.features.map((f) =>
+                        f.id === feature.id ? { ...f, name } : f,
+                      ),
+                    }))
+                  }
+                  remove={() =>
+                    change((d) => ({
+                      ...d,
+                      features: d.features.filter((f) => f.id !== feature.id),
+                    }))
+                  }
+                />
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </aside>
       <main>
-        {draft && open ? (
-          <form
-            className="variables"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void save();
-            }}
-          >
-            <h1>{open.name}</h1>
-            {fields.map((field) => (
-              <label key={field.key}>
-                {field.label}
-                <input
-                  type="number"
-                  min={field.min}
-                  value={draft.variables[field.key]}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    if (!Number.isFinite(value) || value < field.min) return;
-                    setDraft({
-                      ...draft,
-                      variables: { ...draft.variables, [field.key]: value },
-                    });
-                  }}
-                />
-              </label>
-            ))}
-            <button type="submit" disabled={!dirty}>
-              Save
-            </button>
-          </form>
-        ) : (
+        {problem ? <p className="banner error">{problem}</p> : null}
+        {message ? <p className="banner">{message}</p> : null}
+        {!open ? (
           <p className="empty">Open a project or create a new one.</p>
+        ) : !sketch ? (
+          <p className="empty">Choose a sketch, or create one.</p>
+        ) : (
+          <SketchEditor
+            sketch={sketch}
+            solution={solved.solutions.get(sketch.id)}
+            variables={solved.variables}
+            edit={editSketch}
+            drag={drag}
+          />
         )}
-        <Viewport mesh={draft ? mesh : undefined} />
-        <footer role="status">
-          {status}
-          {saveMessage ? ` · ${saveMessage}` : ""}
-        </footer>
       </main>
+      {open ? (
+        <aside className="inspector">
+          <VariablesPanel
+            document={document}
+            values={solved.variables}
+            apply={change}
+          />
+        </aside>
+      ) : null}
     </div>
+  );
+}
+
+function FeatureRow({
+  feature,
+  current,
+  solution,
+  open,
+  rename,
+  remove,
+}: {
+  feature: SketchFeature;
+  current: boolean;
+  solution: SketchSolution | undefined;
+  open: () => void;
+  rename: (name: string) => void;
+  remove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const state = !solution
+    ? ""
+    : solution.status === "failed" || solution.conflicting.length
+      ? "problem"
+      : solution.dof === 0
+        ? "constrained"
+        : "";
+  return (
+    <li>
+      {editing ? (
+        <input
+          autoFocus
+          aria-label="Sketch name"
+          defaultValue={feature.name}
+          onBlur={(event) => {
+            setEditing(false);
+            if (event.target.value.trim()) rename(event.target.value.trim());
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") setEditing(false);
+          }}
+        />
+      ) : (
+        <button
+          className={`${current ? "current" : ""} ${state}`}
+          onClick={open}
+          onDoubleClick={() => setEditing(true)}
+          title="Double-click to rename"
+        >
+          {feature.name}
+          <small>
+            {feature.plane} ·{" "}
+            {!solution
+              ? "…"
+              : state === "problem"
+                ? "needs attention"
+                : solution.dof === 0
+                  ? "fully constrained"
+                  : `${solution.dof} free`}
+          </small>
+        </button>
+      )}
+      <button
+        className="icon"
+        aria-label={`Delete ${feature.name}`}
+        onClick={remove}
+      >
+        ×
+      </button>
+    </li>
   );
 }

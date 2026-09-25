@@ -5,11 +5,20 @@
   --muted: #6b7079;
   --line: #dedbd4;
   --accent: #2f6fdb;
+  --sketch: #1f2328;
+  --constrained: #1f8a4c;
+  --construction: #8a8f98;
+  --problem: #d1242f;
+  --warning: #b36b00;
+  --region: rgb(47 111 219 / 0.08);
+  --grid: rgb(0 0 0 / 0.06);
+  --axis: rgb(0 0 0 / 0.18);
   color-scheme: light;
   font-family:
     system-ui,
     -apple-system,
     sans-serif;
+  font-size: 14px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -19,6 +28,14 @@
     --muted: #9a9ea6;
     --line: #34373d;
     --accent: #6d9eff;
+    --sketch: #e8e8ea;
+    --constrained: #4cc285;
+    --construction: #7d828b;
+    --problem: #ff6b6b;
+    --warning: #e0a040;
+    --region: rgb(109 158 255 / 0.1);
+    --grid: rgb(255 255 255 / 0.05);
+    --axis: rgb(255 255 255 / 0.18);
     color-scheme: dark;
   }
 }
@@ -30,127 +47,409 @@ body {
   background: var(--bg);
   color: var(--text);
 }
-button {
+button,
+input,
+select {
   font: inherit;
   color: inherit;
 }
+button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.danger {
+  color: var(--problem);
+}
+button.icon {
+  border: 0;
+  background: none;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  text-decoration: underline;
+}
+input,
+select {
+  padding: 3px 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+input[aria-invalid="true"] {
+  border-color: var(--problem);
+}
+h2 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+code {
+  font-size: 12px;
+}
+.error {
+  color: var(--problem);
+}
+.warning {
+  color: var(--warning);
+}
+.ok {
+  color: var(--constrained);
+}
+.hint {
+  color: var(--muted);
+}
+
 .shell {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr) 340px;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "top top top"
+    "side main inspector";
   height: 100vh;
 }
-.projects {
-  background: var(--panel);
-  border-right: 1px solid var(--line);
-  overflow: auto;
-}
-.projects header {
+.topbar {
+  grid-area: top;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
-.projects ul {
+.project-name {
+  color: var(--muted);
+}
+.spacer {
+  flex: 1;
+}
+.sidebar {
+  grid-area: side;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+.sidebar section {
+  padding: 8px;
+}
+.sidebar header,
+.variables-panel header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 8px;
+}
+.sidebar header h2 {
+  flex: 1;
+}
+.list {
   list-style: none;
   margin: 0;
-  padding: 0 8px;
+  padding: 0;
 }
-.projects li button {
+.list li {
+  display: flex;
+  align-items: center;
+}
+.list li > button:first-child,
+.list li > input {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  width: 100%;
-  padding: 8px;
   border: 0;
-  border-radius: 6px;
   background: none;
-  cursor: pointer;
   text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
 }
-.projects li button.current,
-.projects li button:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+.list li > button.current,
+.list li > button:first-child:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.projects small {
+.list small {
   color: var(--muted);
+}
+.list .constrained small {
+  color: var(--constrained);
+}
+.list .problem small {
+  color: var(--problem);
 }
 main {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  min-width: 0;
-}
-.variables {
+  grid-area: main;
   display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.variables h1 {
-  width: 100%;
-  margin: 0;
-  font-size: 16px;
-}
-.variables label {
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.variables input {
-  width: 110px;
-  padding: 6px 8px;
-  font: inherit;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.variables button,
-.projects header button {
-  padding: 6px 14px;
-  border: 0;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-}
-.variables button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.empty {
-  padding: 12px 16px;
-  margin: 0;
-  color: var(--muted);
-}
-.viewport {
-  position: relative;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
 }
-.viewport canvas {
+.banner {
+  margin: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.empty {
+  margin: 0;
+  padding: 24px;
+  color: var(--muted);
+}
+.inspector {
+  grid-area: inspector;
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.variables-panel {
+  padding: 8px;
+}
+.variables-panel header h2 {
+  flex: 1;
+}
+.variable-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.variable-list li {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.variable-main {
+  display: grid;
+  grid-template-columns: 96px auto minmax(0, 1fr) 72px auto;
+  align-items: center;
+  gap: 4px;
+}
+.variable-main .equals {
+  color: var(--muted);
+}
+.variable-main .expression {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  min-width: 0;
+}
+.variable-main .name {
+  min-width: 0;
+}
+.variable-main .value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.variable-list li.invalid .expression {
+  border-color: var(--problem);
+}
+.variable-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.variable-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.variable-details select,
+.variable-details input {
+  font-size: 12px;
+  padding: 1px 4px;
+}
+.variable-details .group {
+  width: 90px;
+}
+.variable-details .options {
+  flex: 1;
+  min-width: 120px;
+}
+
+.sketch-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.sketch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.sketch-toolbar button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.sketch-toolbar button.dimension {
+  border-style: dashed;
+}
+.sketch-toolbar .separator {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+}
+.sketch-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+  cursor: default;
+}
+.sketch-canvas:not(.tool-select) {
+  cursor: crosshair;
+}
+.sketch-canvas svg {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   display: block;
-  touch-action: none;
 }
-footer {
-  padding: 6px 16px;
+.sketch-canvas .grid {
+  stroke: var(--grid);
+}
+.sketch-canvas .axis {
+  stroke: var(--axis);
+}
+.sketch-canvas .region {
+  fill: var(--region);
+  stroke: none;
+}
+.sketch-canvas .curve {
+  fill: none;
+  stroke: var(--sketch);
+  stroke-width: 1.6;
+}
+.sketch-canvas .curve.constrained {
+  stroke: var(--constrained);
+}
+.sketch-canvas .curve.construction {
+  stroke: var(--construction);
+  stroke-dasharray: 6 4;
+  stroke-width: 1;
+}
+.sketch-canvas .curve.selected {
+  stroke: var(--accent);
+  stroke-width: 2.6;
+}
+.sketch-canvas .point {
+  fill: var(--panel);
+  stroke: var(--sketch);
+  stroke-width: 1.4;
+}
+.sketch-canvas .point.constrained {
+  stroke: var(--constrained);
+}
+.sketch-canvas .point.selected {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.sketch-canvas .snap {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.sketch-canvas .preview {
+  fill: none;
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+  stroke-width: 1.4;
+}
+.sketch-canvas .preview.slot {
+  stroke-opacity: 0.25;
+  stroke-dasharray: none;
+  stroke-linecap: round;
+}
+.sketch-canvas .glyph,
+.sketch-canvas .dimension-mark text {
   font-size: 12px;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
+  fill: var(--muted);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  cursor: pointer;
+  user-select: none;
 }
-@media (max-width: 700px) {
+.sketch-canvas .dimension-mark text {
+  fill: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.sketch-canvas .dimension-mark line {
+  stroke: var(--muted);
+  stroke-width: 0.8;
+  stroke-dasharray: 2 2;
+}
+.sketch-canvas .selected text,
+.sketch-canvas .glyph.selected {
+  fill: var(--accent);
+  font-weight: 600;
+}
+.sketch-canvas .problem text,
+.sketch-canvas .glyph.problem {
+  fill: var(--problem);
+  font-weight: 600;
+}
+.sketch-canvas .redundant text,
+.sketch-canvas .glyph.redundant {
+  fill: var(--warning);
+}
+.dimension-input {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 150px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  border-color: var(--accent);
+}
+.sketch-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+/* Editing sketches is for large screens; on a phone the panels stack. */
+@media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(420px, 1fr) auto;
+    grid-template-areas: "top" "side" "main" "inspector";
+    height: auto;
+    min-height: 100vh;
   }
-  .projects {
-    border-right: 0;
+  .sidebar,
+  .inspector {
+    border: 0;
     border-bottom: 1px solid var(--line);
-    max-height: 30vh;
   }
 }

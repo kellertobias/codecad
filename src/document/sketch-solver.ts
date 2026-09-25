@@ -267,6 +267,11 @@ function translate(
     }
     case "tangent": {
       const [a, b] = [constraint.a, constraint.b];
+      // Curves that already meet at an end point are tangent *there*: a
+      // tangency between whole curves would be degenerate at a shared
+      // point and the solver would find it redundant.
+      const joint = endpointTangency(id, a, b, entities);
+      if (joint) return [joint];
       const pair = `${kind(a)}-${kind(b)}`;
       if (pair === "line-circle")
         return [{ id, type: "tangent_lc", l_id: a, c_id: b }];
@@ -440,4 +445,45 @@ function onEntity(
     default:
       throw new Error("A point can only lie on a line, circle or arc");
   }
+}
+
+/** For two curves sharing an end point: keep their directions there
+ * parallel, aligned or opposed as they are now. */
+function endpointTangency(
+  id: string,
+  a: string,
+  b: string,
+  entities: Entities,
+): SketchPrimitive | undefined {
+  const ends = (entity: SketchEntity | undefined) =>
+    entity?.type === "line" || entity?.type === "arc"
+      ? [entity.start, entity.end]
+      : [];
+  const [ea, eb] = [entities.get(a), entities.get(b)];
+  const shared = ends(ea).find((p) => ends(eb).includes(p));
+  if (!shared || !ea || !eb) return undefined;
+  const at = point(entities, shared);
+  // Each curve's direction of travel at the shared point.
+  const direction = (entity: SketchEntity) => {
+    if (entity.type === "line") {
+      const s = point(entities, entity.start);
+      const e = point(entities, entity.end);
+      return { x: e.x - s.x, y: e.y - s.y };
+    }
+    if (entity.type !== "arc") throw new Error("Only lines and arcs");
+    const c = point(entities, entity.center);
+    // Counter-clockwise: the radius turned a quarter to the left.
+    return { x: -(at.y - c.y), y: at.x - c.x };
+  };
+  const u = direction(ea);
+  const v = direction(eb);
+  const angle = Math.atan2(u.x * v.y - u.y * v.x, u.x * v.x + u.y * v.y);
+  return {
+    id,
+    type: "angle_via_point",
+    crv1_id: a,
+    crv2_id: b,
+    p_id: shared,
+    angle: Math.abs(angle) > Math.PI / 2 ? Math.PI : 0,
+  };
 }

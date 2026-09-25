@@ -325,3 +325,37 @@ export function evaluate(
 ): number {
   return evaluateExpression(parseExpression(source), lookup);
 }
+
+/** The expression with every use of the name `from` renamed to `to`. Only
+ * whole names change: renaming `w` leaves `width` and units alone. An
+ * expression that does not parse is returned unchanged. */
+export function renameInExpression(
+  source: string,
+  from: string,
+  to: string,
+): string {
+  let expression: Expression;
+  try {
+    expression = parseExpression(source);
+  } catch {
+    return source;
+  }
+  const positions: number[] = [];
+  const visit = (node: Expression): void => {
+    if (node.kind === "name" && node.name === from) positions.push(node.at);
+    else if (node.kind === "unary") visit(node.operand);
+    else if (node.kind === "binary") {
+      visit(node.left);
+      visit(node.right);
+    } else if (node.kind === "conditional") {
+      visit(node.test);
+      visit(node.then);
+      visit(node.otherwise);
+    } else if (node.kind === "call") node.args.forEach(visit);
+  };
+  visit(expression);
+  let result = source;
+  for (const at of positions.sort((a, b) => b - a))
+    result = result.slice(0, at) + to + result.slice(at + from.length);
+  return result;
+}

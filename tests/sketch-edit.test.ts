@@ -79,6 +79,9 @@ test("a slot keeps round ends and parallel sides when solved", () => {
   const solved = solver.solve(sketch, none);
   assert.equal(solved.status, "solved");
   assert.deepEqual(solved.conflicting, []);
+  assert.deepEqual(solved.redundant, []);
+  // Position (2), direction (1), length (1) and width (1).
+  assert.equal(solved.dof, 5);
   const region = detectProfiles(solved.sketch).regions[0]!;
   assert.ok(
     Math.abs(region.area - (80 * 20 + Math.PI * 100)) < 1,

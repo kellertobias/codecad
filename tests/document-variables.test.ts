@@ -5,8 +5,12 @@ import {
   evaluate,
   parseExpression,
   referencedNames,
+  renameInExpression,
 } from "../src/document/expressions.js";
-import { evaluateVariables } from "../src/document/variables.js";
+import {
+  evaluateVariables,
+  renameVariable,
+} from "../src/document/variables.js";
 import {
   DocumentError,
   emptyDocument,
@@ -174,4 +178,47 @@ test("documents are validated and name the first problem", () => {
     () => readDocument({ ...emptyDocument(), schemaVersion: 99 }),
     /newer CodeCAD/,
   );
+});
+
+test("renaming a variable changes whole names only, everywhere", () => {
+  assert.equal(
+    renameInExpression("w + width * 2mm - max(w, 3)", "w", "wall"),
+    "wall + width * 2mm - max(wall, 3)",
+  );
+  assert.equal(renameInExpression("broken +", "w", "wall"), "broken +");
+  const document = {
+    ...emptyDocument(),
+    variables: [variable("w", "600"), variable("inner", "w - 36")],
+    features: [
+      {
+        id: "s",
+        type: "sketch" as const,
+        name: "Sketch",
+        plane: "XY" as const,
+        entities: [
+          { id: "p1", type: "point" as const, x: 0, y: 0 },
+          { id: "p2", type: "point" as const, x: 1, y: 0 },
+        ],
+        constraints: [
+          {
+            id: "d",
+            type: "distance" as const,
+            a: "p1",
+            b: "p2",
+            value: "w / 2",
+          },
+        ],
+      },
+    ],
+  };
+  const renamed = renameVariable(document, "v-w", "width");
+  assert.deepEqual(
+    renamed.variables.map((v) => [v.name, v.expression]),
+    [
+      ["width", "600"],
+      ["inner", "width - 36"],
+    ],
+  );
+  const dimension = renamed.features[0]!.constraints[0]!;
+  assert.equal("value" in dimension && dimension.value, "width / 2");
 });

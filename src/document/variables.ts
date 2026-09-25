@@ -5,11 +5,12 @@
 import {
   ExpressionError,
   evaluateExpression,
+  renameInExpression,
   parseExpression,
   referencedNames,
   type Expression,
 } from "./expressions.js";
-import type { Variable } from "./schema.js";
+import type { CadDocument, Variable } from "./schema.js";
 
 export interface VariableValues {
   /** Values by variable name, in base units (mm, deg; booleans 0 or 1). */
@@ -109,4 +110,35 @@ export function evaluateWith(
   if (!Number.isFinite(value))
     throw new ExpressionError("The result is not a finite number", 0);
   return value;
+}
+
+/** Renames a variable and every use of it, in other variables and in the
+ * sketches' dimensions. */
+export function renameVariable(
+  document: CadDocument,
+  id: string,
+  name: string,
+): CadDocument {
+  const variable = document.variables.find((v) => v.id === id);
+  if (!variable || variable.name === name) return document;
+  const rename = (source: string) =>
+    renameInExpression(source, variable.name, name);
+  return {
+    ...document,
+    variables: document.variables.map((v) => ({
+      ...v,
+      ...(v.id === id ? { name } : {}),
+      expression: rename(v.expression),
+    })),
+    features: document.features.map((feature) => ({
+      ...feature,
+      constraints: feature.constraints.map((constraint) => {
+        const renamed: Record<string, unknown> = { ...constraint };
+        for (const key of ["value", "x", "y"])
+          if (typeof renamed[key] === "string")
+            renamed[key] = rename(renamed[key] as string);
+        return renamed as unknown as typeof constraint;
+      }),
+    })),
+  };
 }
