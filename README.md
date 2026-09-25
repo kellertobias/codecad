@@ -350,6 +350,41 @@ npm run app:dev    # the editor with hot reload: http://localhost:5173/app/
 npm run app:build  # or build it once; the server then serves /app/
 ```
 
+**Variables** are listed beside the sketch.
+
+- Each variable has a name and an expression, such as `600`,
+  `width - 2 * thickness`, `18mm`, `max(300, depth / 2)` or `45deg`.
+- Its current value is shown next to it, or the reason it has none: a syntax
+  error, an unknown name, or a circular reference.
+- Variables can have a unit and a type (number, yes/no, or a choice), and can
+  be grouped.
+- Renaming a variable renames every use of it.
+
+**Sketches** are drawn on the XY, XZ or YZ plane.
+
+- **Tools:**
+  - Line (L), Rectangle (R), Circle (C), Arc (A) and Slot (S) draw geometry.
+    Points snap to existing points, lines and the grid.
+  - Lines drawn within 3° of horizontal or vertical get that constraint
+    automatically.
+  - Trim (T) cuts away the clicked piece of a line.
+- **Selecting:** click to select geometry, and Shift adds to the selection. The
+  row under the tools then offers:
+  - constraints: horizontal, vertical, parallel, perpendicular, equal,
+    tangent, coincident, on, midpoint, symmetric, fix
+  - dimensions: distance, horizontal and vertical distance, angle, radius,
+    diameter
+  - offset, construction (X) and delete.
+- **Dimensions:** a new dimension opens for typing a number or an expression,
+  and double-clicking a dimension edits it again.
+- **Dragging:** dragging a point moves it as far as the constraints allow.
+- **Status:** the status line says how many degrees of freedom are left. It
+  also lists conflicting constraints (shown in red), redundant ones (orange)
+  and dimensions whose expression fails. Closed regions are shaded, including
+  holes; these are the profiles a later extrude will use.
+- **Keys:** Ctrl/⌘+Z and Shift+Ctrl/⌘+Z undo and redo any change, to variables
+  or sketches alike, and Ctrl/⌘+S saves.
+
 The CAD kernel runs in the browser, in a Web Worker. `/kernel-probe` shows
 how long it takes to load and build a part on the current machine. The API
 is `GET/POST /api/projects` and `GET/PUT/DELETE /api/projects/<id>`. A `PUT`
