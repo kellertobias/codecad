@@ -1541,3 +1541,100 @@ h2 {
   border-radius: 3px;
   padding: 0 4px;
 }
+/* Progress: builds, generated files and loading sheets. */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #9fb4bf;
+  font-size: 12px;
+}
+.progress-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 120px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #2a3a43;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: #68cbb5;
+  transition: width 0.2s ease-out;
+}
+.progress.indeterminate .progress-fill {
+  position: absolute;
+  width: 35%;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress.indeterminate .progress-fill {
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}
+.progress-caption {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress.failed {
+  color: #f3b293;
+}
+.progress.failed .progress-track {
+  display: none;
+}
+/* The build bar runs along the top of whichever view is open. */
+.build-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 7;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.build-progress .progress-track {
+  width: 100%;
+  height: 3px;
+  border-radius: 0;
+  background: transparent;
+}
+.build-progress .progress-caption {
+  max-width: calc(100% - 32px);
+  padding: 3px 10px;
+  border: 1px solid #2f444e;
+  border-radius: 999px;
+  background: rgb(17 23 28 / 88%);
+  color: #dfe8ed;
+}
+.download-progress {
+  display: inline-flex;
+  margin-left: 8px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.download-progress .progress-track {
+  width: 72px;
+}
+.pdf-progress {
+  margin: 12px 0 20px;
+}
+.pdf-progress .progress-track {
+  width: 200px;
+}

@@ -62,7 +62,10 @@ export function progressReader(
       log += line + "\n";
     }
     // A partial line that cannot become a report is log text already.
-    if (pending && !PROGRESS_PREFIX.startsWith(pending.slice(0, 17))) {
+    if (
+      pending &&
+      !PROGRESS_PREFIX.startsWith(pending.slice(0, PROGRESS_PREFIX.length))
+    ) {
       log += pending;
       pending = "";
     }

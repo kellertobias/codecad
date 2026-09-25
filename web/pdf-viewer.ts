@@ -6,6 +6,7 @@ import {
   type RenderTask,
 } from "pdfjs-dist";
 import { zoomField } from "./pan-zoom.js";
+import { artifactName, onExport, progressBar } from "./progress.js";
 GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 export interface PdfReport {
@@ -333,9 +334,28 @@ export function pdfViewer(reports: PdfReport[]) {
           }
           heading.append(report.download);
           stack.append(heading);
+          // The PDF is generated on first request, then downloaded.
+          const bar = progressBar("pdf-progress"),
+            name = artifactName(report.url) ?? report.title;
+          bar.set(undefined, `Generating ${name}`);
+          stack.append(bar.element);
+          status.textContent = `Loading ${loading.length + 1} / ${reports.length}…`;
+          const stop = onExport(name, (progress) =>
+            bar.set(progress.fraction, progress.message),
+          );
           const task = getDocument({ url: report.url });
+          task.onProgress = ({
+            loaded,
+            total,
+          }: {
+            loaded: number;
+            total: number;
+          }) => bar.set(total ? loaded / total : undefined, `Loading ${name}`);
           loading.push(task);
-          const pdf = await task.promise;
+          const pdf = await task.promise.finally(() => {
+            stop();
+            bar.element.remove();
+          });
           if (disposed) return;
           for (let n = 1; n <= pdf.numPages; n++) {
             const page = await pdf.getPage(n);

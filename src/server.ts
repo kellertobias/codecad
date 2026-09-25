@@ -6,6 +6,7 @@ import { resolve, join, dirname, basename } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { build, context, type BuildContext } from "esbuild";
 import { editorService } from "./editor-service.js";
+import { progressReader, type Progress } from "./progress.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
 import {
   drawingPlanFile,
@@ -127,9 +128,18 @@ let generation = 0,
   child: ChildProcess | undefined,
   timer: NodeJS.Timeout | undefined;
 const snapshotParameters = new Map<string, string>();
-let state: { phase: string; generation: number; message: string; log: string } =
-  { phase: "starting", generation: 0, message: "Loading project", log: "" };
-const announced = () => JSON.stringify({ ...state, bundle: bundleVersion });
+let state: {
+  phase: string;
+  generation: number;
+  message: string;
+  log: string;
+  /** How far the running build is, from 0 to 1, while it reports it. */
+  progress?: number;
+} = { phase: "starting", generation: 0, message: "Loading project", log: "" };
+/** Files being generated on request, by name, so each download can show it. */
+const exporting: Record<string, Progress> = {};
+const announced = () =>
+  JSON.stringify({ ...state, exporting, bundle: bundleVersion });
 function broadcast() {
   for (const listener of listeners)
     listener.write("data: " + announced() + "\n\n");
@@ -147,8 +157,9 @@ function rebuild() {
   state = {
     phase: "building",
     generation: id,
-    message: "Compiling TypeScript and evaluating geometry",
+    message: "Building the model",
     log: "",
+    progress: 0,
   };
   broadcast();
   const processHandle = spawn(
@@ -174,16 +185,24 @@ function rebuild() {
       env: {
         ...process.env,
         CODECAD_LAZY_EXPORTS: "1",
+        CODECAD_PROGRESS: "1",
         CODECAD_PARAMETER_VALUES: activeParameters,
       },
     },
   );
   child = processHandle;
   let log = "";
-  const collect = (data: Buffer) => {
-    log = (log + data.toString()).slice(-20000);
+  const collect = (text: string | Buffer) => {
+    log = (log + text.toString()).slice(-20000);
   };
-  processHandle.stdout?.on("data", collect);
+  processHandle.stdout?.on(
+    "data",
+    progressReader(({ fraction, message }) => {
+      if (id !== generation || state.phase !== "building") return;
+      state = { ...state, message, progress: fraction };
+      broadcast();
+    }, collect),
+  );
   processHandle.stderr?.on("data", collect);
   const timeout = setTimeout(() => {
     processHandle.kill("SIGTERM");
@@ -254,6 +273,13 @@ async function generateArtifact(
   // One export worker per snapshot avoids overlapping writes when two
   // formats of the same report are requested at the same time.
   const previous = generating.get(directory);
+  exporting[name] = {
+    fraction: 0,
+    message: previous
+      ? `Waiting for another file · then ${name}`
+      : `Generating ${name}`,
+  };
+  broadcast();
   const running = (previous ?? Promise.resolve())
     .catch(() => {})
     .then(async () => {
@@ -281,6 +307,7 @@ async function generateArtifact(
             env: {
               ...process.env,
               CODECAD_EXPORT_ONLY: name,
+              CODECAD_PROGRESS: "1",
               CODECAD_PARAMETER_VALUES:
                 snapshotParameters.get(directory) ?? "{}",
               ...(native
@@ -290,10 +317,17 @@ async function generateArtifact(
           },
         );
         let log = "";
-        for (const stream of [child.stdout, child.stderr])
-          stream?.on("data", (chunk: Buffer) => {
-            log = (log + chunk.toString()).slice(-4000);
-          });
+        const collect = (chunk: Buffer | string) => {
+          log = (log + chunk.toString()).slice(-4000);
+        };
+        child.stdout?.on(
+          "data",
+          progressReader((progress) => {
+            exporting[name] = progress;
+            broadcast();
+          }, collect),
+        );
+        child.stderr?.on("data", collect);
         const timeout = setTimeout(() => child.kill("SIGTERM"), 120000);
         child.on("error", reject);
         child.on("close", (code) => {
@@ -311,6 +345,8 @@ async function generateArtifact(
     await running;
   } finally {
     if (generating.get(directory) === running) generating.delete(directory);
+    delete exporting[name];
+    broadcast();
   }
   await stat(path);
 }
@@ -584,8 +620,16 @@ const server = createServer(async (req, res) => {
             ? "text/csv"
             : "application/octet-stream";
       await generateArtifact(name, activeDirectory);
+      // Studio asks for the file to be made first, so it can show progress,
+      // and only then downloads it.
+      if (url.searchParams.has("prepare")) {
+        res.writeHead(204, { "Cache-Control": "no-store" }).end();
+        return;
+      }
+      const data = await readFile(join(activeDirectory, name));
       res.writeHead(200, {
         "Content-Type": mime,
+        "Content-Length": data.length,
         "Cache-Control": "no-store",
         ...(url.searchParams.has("download")
           ? {
@@ -593,7 +637,7 @@ const server = createServer(async (req, res) => {
             }
           : {}),
       });
-      res.end(await readFile(join(activeDirectory, name)));
+      res.end(data);
       return;
     }
     const resources: Record<string, [string, string]> = {

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, writeFile, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { reportProgress } from "./progress.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 /** Compile in a per-build directory; never write JS alongside the user's source. */
@@ -91,6 +92,7 @@ if (
     const directory = resolve(
       process.argv[3] ?? join(root, "output/kitchen-cabinet"),
     );
+    reportProgress(0.02, "Building the model · compiling TypeScript");
     const emitted = await compileCad(entry, directory, controller.signal);
     await run(
       process.execPath,

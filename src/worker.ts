@@ -3,6 +3,7 @@ import { resolve, join, basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { zipSync } from "fflate";
 import { sourceLinks } from "./source-links.js";
+import { reportProgress } from "./progress.js";
 import { inspectComponent } from "./inspection.js";
 import { Project, Part, descendants } from "./model.js";
 import { validateProjectInfo, type ProjectInfo } from "./project-info.js";
@@ -112,6 +113,11 @@ export async function buildProject(
   options: { lazyExports?: boolean; exportOnly?: string | undefined } = {},
 ) {
   entry = await realpath(entry);
+  // An export generates one file; the full build reports the whole model.
+  const doing = options.exportOnly
+    ? `Generating ${options.exportOnly}`
+    : "Building the model";
+  reportProgress(0.08, `${doing} · loading the project`);
   const module = await import(pathToFileURL(resolve(entry)).href);
   // An index.ts names its project before any geometry is evaluated.
   const info =
@@ -162,10 +168,15 @@ export async function buildProject(
     });
   };
   try {
-    const model = await engine.evaluate({
-      root: project,
-      revision: Date.now(),
-    });
+    // Geometry is most of the work; outputs, the sheet and unfolding follow.
+    const model = await engine.evaluate(
+      { root: project, revision: Date.now() },
+      (done, total) =>
+        reportProgress(
+          0.1 + (0.45 * done) / total,
+          `${doing} · evaluating geometry ${done + 1} / ${total}`,
+        ),
+    );
     diagnostics.push(...model.diagnostics);
     if (diagnostics.some((d) => d.severity === "error"))
       throw new Error(
@@ -239,7 +250,13 @@ export async function buildProject(
     );
     // A project that declares no outputs still gets the usual deliverables.
     const outputs = declared.length ? declared : standardOutputs(project, info);
-    for (const output of outputs) {
+    for (const [index, output] of outputs.entries()) {
+      reportProgress(
+        0.55 + (0.3 * index) / outputs.length,
+        options.exportOnly
+          ? doing
+          : `${doing} · preparing ${output.options.fileName ?? output.name}`,
+      );
       try {
         const value = (output.owner as any)[output.name](),
           requested = output.options.fileName;
@@ -427,6 +444,7 @@ export async function buildProject(
       );
       const items = plan.sheets.flatMap((sheet) => sheet.items);
       if (items.some((item) => item.kind === "view")) {
+        reportProgress(0.85, `${doing} · drawing the sheet views`);
         const { drawing, warnings } = planDrawing(plan, project, info);
         for (const message of warnings)
           diagnostics.push({
@@ -473,10 +491,13 @@ export async function buildProject(
       label: string;
       frames: ReturnType<typeof serializeMesh>[];
     }[] = [];
-    for (const part of (options.exportOnly ? [] : descendants(project)).filter(
+    const sheetMetal = (options.exportOnly ? [] : descendants(project)).filter(
       (component): component is SheetMetalPart =>
         component instanceof SheetMetalPart,
-    )) {
+    );
+    if (sheetMetal.length)
+      reportProgress(0.92, `${doing} · unfolding sheet metal`);
+    for (const part of sheetMetal) {
       try {
         unfolds.push({
           path: part.path,
@@ -522,6 +543,7 @@ export async function buildProject(
       })),
       meshes: model.meshes.map(serializeMesh),
     };
+    reportProgress(0.97, `${doing} · writing the result`);
     if (!options.exportOnly)
       await writeFile(join(directory, "model.json"), JSON.stringify(manifest));
     return manifest;

@@ -104,7 +104,11 @@ export interface EvaluatedModel {
 }
 export interface CadEngine {
   readonly capabilities: EngineCapabilities;
-  evaluate(snapshot: ModelSnapshot): Promise<EvaluatedModel>;
+  /** `onPart` hears before each part is built, for a progress display. */
+  evaluate(
+    snapshot: ModelSnapshot,
+    onPart?: (done: number, total: number) => void,
+  ): Promise<EvaluatedModel>;
   renderDrawing(drawing: TechnicalDrawing): Promise<Uint8Array>;
   exportDxf(
     dxf: ManufacturingDxf,
@@ -540,7 +544,10 @@ export class OpenCascadeEngine implements CadEngine {
     }
     return frames;
   }
-  async evaluate(snapshot: ModelSnapshot): Promise<EvaluatedModel> {
+  async evaluate(
+    snapshot: ModelSnapshot,
+    onPart?: (done: number, total: number) => void,
+  ): Promise<EvaluatedModel> {
     this.dispose();
     this.root = snapshot.root;
     const meshes: MeshData[] = [],
@@ -548,7 +555,8 @@ export class OpenCascadeEngine implements CadEngine {
     const parts = [snapshot.root, ...descendants(snapshot.root)].filter(
       (c): c is Part => c instanceof Part,
     );
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
+      onPart?.(index, parts.length);
       try {
         this.currentPath = part.path;
         let solid = await this.recipe(part.recipe);

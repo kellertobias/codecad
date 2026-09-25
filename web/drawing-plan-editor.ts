@@ -10,6 +10,7 @@ import {
   type PlanSheet,
 } from "../src/drawing-plan.js";
 import { PanZoom, typedZoom, viewBoxFor } from "./pan-zoom.js";
+import { downloadWithProgress } from "./progress.js";
 import {
   pickPair,
   tiledPaths,
@@ -1660,9 +1661,10 @@ export class DrawingPlanEditor {
       this.status("Saved · the PDF is available once the rebuild finishes.");
       return;
     }
-    const link = document.createElement("a");
-    link.href = this.artifactUrl("drawing-plan.pdf") + "&download";
-    link.download = "drawing-plan.pdf";
-    link.click();
+    await downloadWithProgress(
+      this.artifactUrl("drawing-plan.pdf") + "&download",
+      "drawing-plan.pdf",
+      byId("plan-status"),
+    );
   }
 }

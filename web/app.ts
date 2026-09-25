@@ -10,6 +10,11 @@ import {
 } from "./desktop.js";
 import { loadPanes, rememberPane, whenRemembered } from "./panes.js";
 import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
+import {
+  progressBar,
+  showDownloadProgress,
+  updateExports,
+} from "./progress.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
 import { DrawingPlanEditor } from "./drawing-plan-editor.js";
@@ -1885,6 +1890,13 @@ whenRemembered((panes) => {
     $("toggle-source").click();
 });
 await loadPanes(token);
+showDownloadProgress();
+// Every rebuild feeds the 3D preview, the 2D plan and the sheets at once, so
+// one bar across the workspace shows it on whichever view is open.
+const buildProgress = progressBar("build-progress");
+buildProgress.element.hidden = true;
+document.querySelector(".workspace")!.prepend(buildProgress.element);
+let latestPhase = "starting";
 const events = new EventSource("/api/events");
 /** The Studio build this page runs; a newer one on the server means reload. */
 let bundleShown: number | undefined;
@@ -1897,11 +1909,16 @@ events.onmessage = async (event) => {
     $("source-status").textContent =
       "Studio was updated · save or reload to pick it up";
   }
+  updateExports(state.exporting);
+  latestPhase = state.phase;
+  const building = state.phase === "building" || state.phase === "starting";
+  buildProgress.element.hidden = !building;
+  if (building) buildProgress.set(state.progress, state.message);
   $("status").textContent =
     state.phase === "ready"
       ? "● Ready"
-      : state.phase === "building"
-        ? "◌ Building…"
+      : building
+        ? `◌ Building…${state.progress === undefined ? "" : ` ${Math.round(state.progress * 100)}%`}`
         : state.phase === "partial"
           ? "● Output error"
           : "● Build error";
@@ -1914,12 +1931,17 @@ events.onmessage = async (event) => {
     shownGeneration !== state.generation
   ) {
     shownGeneration = state.generation;
+    // A large model takes a moment to download and turn into meshes.
+    buildProgress.element.hidden = false;
+    buildProgress.set(undefined, "Loading the preview");
     try {
       const response = await fetch("/api/model");
       showModel(await response.json());
       if (!dirty) await loadSource();
     } catch (error) {
       $("messages").textContent = String(error);
+    } finally {
+      if (latestPhase !== "building") buildProgress.element.hidden = true;
     }
   } else if (state.phase === "error") {
     $("messages").textContent = state.message + "\n" + state.log;
