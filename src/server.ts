@@ -9,6 +9,14 @@ import { editorService } from "./editor-service.js";
 import { progressReader, type Progress } from "./progress.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
 import {
+  allowedHostNames,
+  hostAllowed,
+  isLoopbackAddress,
+  reachableAddresses,
+} from "./network.js";
+import { openWorkspace } from "./workspace.js";
+import { handleProjects } from "./projects-api.js";
+import {
   kernelBundleOptions,
   copyKernelWasm,
 } from "../scripts/web-bundles.mjs";
@@ -23,10 +31,18 @@ const entry = resolve(
   process.argv[2] ?? join(root, "examples/kitchen-cabinet/index.ts"),
 );
 let port = Number(process.env.PORT ?? 4317);
+// 127.0.0.1 unless CODECAD_HOST opens the server to the network, e.g.
+// CODECAD_HOST=0.0.0.0 so phones on the LAN can view drawings and cut lists.
+const bindHost = process.env.CODECAD_HOST ?? "127.0.0.1";
+const hostNames = allowedHostNames(
+  bindHost,
+  (process.env.CODECAD_ALLOWED_HOSTS ?? "").split(","),
+);
 const token = randomBytes(24).toString("hex");
 const storage = process.env.CODECAD_STORAGE ?? join(root, ".codecad"),
   ui = join(storage, "ui");
 await mkdir(ui, { recursive: true });
+const workspace = openWorkspace(join(storage, "workspace.sqlite"));
 const parameterFile = join(
   storage,
   "parameters",
@@ -362,13 +378,16 @@ async function generateArtifact(
 }
 const server = createServer(async (req, res) => {
   try {
-    if (
-      req.headers.host !== `127.0.0.1:${port}` &&
-      req.headers.host !== `localhost:${port}`
-    ) {
+    if (!hostAllowed(req.headers.host, port, hostNames)) {
       res.writeHead(403).end();
       return;
     }
+    // Changes need the session token and must come from a page served by
+    // this server under the name the request was sent to. The host itself
+    // was checked above.
+    const trusted = () =>
+      req.headers["x-codecad-token"] === token &&
+      req.headers.origin === `http://${req.headers.host}`;
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
     const json = (value: unknown, status = 200) => {
       res.writeHead(status, {
@@ -420,13 +439,9 @@ const server = createServer(async (req, res) => {
       json(languageService.libraries());
       return;
     }
+    if (await handleProjects(req, res, url, workspace, trusted)) return;
     if (req.method === "POST") {
-      const origin = req.headers.origin;
-      if (
-        req.headers["x-codecad-token"] !== token ||
-        (origin !== `http://127.0.0.1:${port}` &&
-          origin !== `http://localhost:${port}`)
-      ) {
+      if (!trusted()) {
         json({ error: "Invalid editor session" }, 403);
         return;
       }
@@ -566,6 +581,16 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (url.pathname === "/api/source") {
+        // The project source is TypeScript this server compiles and runs,
+        // so only this machine may change it, even when the server is open
+        // to the network.
+        if (!isLoopbackAddress(req.socket.remoteAddress)) {
+          json(
+            { error: "Project source can only be edited on this machine" },
+            403,
+          );
+          return;
+        }
         let data = "";
         for await (const chunk of req) {
           data += chunk;
@@ -705,11 +730,13 @@ const server = createServer(async (req, res) => {
     );
   }
 });
-server.listen(port, "127.0.0.1", () => {
+server.listen(port, bindHost, () => {
   const address = server.address();
   if (address && typeof address !== "string") port = address.port;
   console.log(`CODECAD_READY:${port}`);
-  console.log(`CodeCAD: http://127.0.0.1:${port}\nProject: ${entry}`);
+  console.log(
+    `CodeCAD: ${reachableAddresses(bindHost, port).join("  ")}\nProject: ${entry}`,
+  );
   rebuild();
 });
 function close() {
@@ -720,6 +747,7 @@ function close() {
   for (const watcher of watchers) watcher.close();
   for (const listener of listeners) listener.end();
   server.close();
+  workspace.close();
   process.exit(0);
 }
 process.on("SIGINT", close);
