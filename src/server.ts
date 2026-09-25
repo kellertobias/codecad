@@ -67,8 +67,11 @@ try {
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
-/** Counts Studio's own rebuilds: the page reloads itself when it changes. */
-let bundleVersion = 0;
+/** Identifies Studio's current build: the page reloads itself when it sees
+ * a different one. Seeded from the start time so a restarted server (the
+ * dev script in scripts/dev.mjs restarts it when server.ts changes) also
+ * reloads the page. */
+let bundleVersion = Date.now();
 let bundleChanged = () => {};
 let bundle: BuildContext | undefined;
 if (process.env.CODECAD_DESKTOP) {

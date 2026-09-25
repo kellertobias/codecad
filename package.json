@@ -52,7 +52,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "format": "prettier --write src examples web tests package.json tsconfig.json README.md",
     "format:check": "prettier --check src examples web tests package.json tsconfig.json README.md",
-    "dev": "node --import tsx src/server.ts",
+    "dev": "node scripts/dev.mjs",
     "build": "node --import tsx src/native-rebuild.ts examples/kitchen-cabinet/index.ts output/kitchen-cabinet",
     "cad:build": "node --import tsx src/native-rebuild.ts",
     "package:build": "tsc --project tsconfig.package.json",
