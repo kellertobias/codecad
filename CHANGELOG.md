@@ -1,3 +1,10 @@
+## [0.14.1](https://github.com/kellertobias/codecad/compare/v0.14.0...v0.14.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* show a view's dimensions only once its lines are ready ([fd82f2b](https://github.com/kellertobias/codecad/commit/fd82f2b307564465752e04f441443c9c2aa07529))
+
 # [0.14.0](https://github.com/kellertobias/codecad/compare/v0.13.0...v0.14.0) (2026-09-25)
 
 
