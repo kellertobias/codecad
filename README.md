@@ -924,6 +924,10 @@ the [keyboard case](examples/keyboard-case/index.ts), and
   material, author, scale, units and page numbers, plus a calibrated graphic scale.
   Plans, sheet layouts and cut lists default to PDF downloads in Studio;
   each download has its own DXF dropdown option. Cut lists also offer CSV.
+  The Exports view lists the outputs in sections: drawings, cut lists, sheet
+  layouts, CAM files and 3D models. In the parts tree, two or more
+  `HardwarePart`s under one parent (dominoes, handles, screws) fold into a
+  collapsed _Hardware_ branch whose checkbox shows or hides them together.
   The Studio cut list groups identical blanks into one line with the pieces
   to cut and the parts they become; a toggle lists every part instead. Each
   sheet layout states how much of the board the blanks use and the largest

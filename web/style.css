@@ -1369,11 +1369,28 @@ td:first-child {
 #exports {
   padding: 20px;
 }
+.export-group {
+  margin-bottom: 22px;
+}
+.export-group h3 {
+  margin: 0 0 4px;
+  padding: 0 13px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8aa6b3;
+  border-bottom: 1px solid #30404a;
+}
 .export-row {
   padding: 13px;
   border-bottom: 1px solid #30404a;
   display: flex;
   justify-content: space-between;
+}
+.part-row.hardware-group > span {
+  color: #9cb0bb;
+  font-style: italic;
 }
 .export-row small {
   color: #829da9;

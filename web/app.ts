@@ -13,7 +13,11 @@ import { pdfViewer, type PdfReport } from "./pdf-viewer.js";
 import { availableViews } from "./available-views.js";
 import { Plane2DCanvas } from "./plane2d.js";
 import { DrawingPlanEditor } from "./drawing-plan-editor.js";
-import { initiallyExpandedPaths } from "./component-tree.js";
+import {
+  HARDWARE_GROUP,
+  groupHardware,
+  initiallyExpandedPaths,
+} from "./component-tree.js";
 import { formatMass, inspectorDetails } from "./inspector.js";
 import { groupCutRows } from "../src/cut-rows.js";
 import { applyWoodAppearance } from "./wood-material.js";
@@ -774,16 +778,18 @@ function renderParts() {
   const focusedPath = document.activeElement?.getAttribute("data-path");
   const filter = $<HTMLInputElement>("filter").value.toLowerCase();
   $("parts").replaceChildren();
-  const components = model?.components ?? [];
+  const components = groupHardware(model?.components ?? []);
+  type Shown = (typeof components)[number];
   const children = (path?: string) =>
     components.filter((c) => c.parent === path);
-  const matches = (c: Model["components"][number]) =>
+  const matches = (c: Shown) =>
     `${c.path} ${c.label}`.toLowerCase().includes(filter);
-  const show = (
-    d: Model["components"][number],
-    container: HTMLElement,
-    depth: number,
-  ) => {
+  // A hardware branch is not a component: it covers its parts' meshes.
+  const covers = (d: Shown, path: string) =>
+    d.type === HARDWARE_GROUP
+      ? children(d.path).some((c) => within(path, c.path))
+      : within(path, d.path);
+  const show = (d: Shown, container: HTMLElement, depth: number) => {
     if (filter && !components.some((c) => within(c.path, d.path) && matches(c)))
       return;
     const descendants = children(d.path),
@@ -815,7 +821,7 @@ function renderParts() {
       renderParts();
     };
     const meshes = [...objects]
-      .filter(([path]) => within(path, d.path))
+      .filter(([path]) => covers(d, path))
       .map(([, mesh]) => mesh);
     const visible = document.createElement("input");
     visible.type = "checkbox";
@@ -835,6 +841,12 @@ function renderParts() {
     const label = document.createElement("span");
     label.textContent = d.id;
     row.title = `${d.path}\n${d.label} · ${d.type}`;
+    const group = d.type === HARDWARE_GROUP;
+    if (group) {
+      row.classList.add("hardware-group");
+      label.textContent = `${d.id} · ${descendants.length}`;
+      row.title = d.label;
+    }
     row.append(toggle, visible, label);
     // The weight a part or assembly carries, once its stock states a density.
     if (d.inspection.mass !== undefined) {
@@ -846,21 +858,25 @@ function renderParts() {
         : "Weight from the material density";
       row.append(weight);
     }
-    const solo = document.createElement("button");
-    solo.className = "show-only";
-    solo.textContent = "◎";
-    solo.title = "Show only " + d.path;
-    solo.setAttribute("aria-label", "Show only " + d.path);
-    solo.setAttribute("aria-pressed", String(isolation.path === d.path));
-    if (isolation.path === d.path)
-      solo.title = "Restore previous visibility and view";
-    solo.onclick = (e) => {
-      e.stopPropagation();
-      document.body.classList.remove("parts-open");
-      showOnly(d.path);
-    };
-    row.append(solo);
-    row.addEventListener("click", () => select(d.path));
+    if (!group) {
+      const solo = document.createElement("button");
+      solo.className = "show-only";
+      solo.textContent = "◎";
+      solo.title = "Show only " + d.path;
+      solo.setAttribute("aria-label", "Show only " + d.path);
+      solo.setAttribute("aria-pressed", String(isolation.path === d.path));
+      if (isolation.path === d.path)
+        solo.title = "Restore previous visibility and view";
+      solo.onclick = (e) => {
+        e.stopPropagation();
+        document.body.classList.remove("parts-open");
+        showOnly(d.path);
+      };
+      row.append(solo);
+    }
+    // Choosing the branch opens it: there is no single part to inspect.
+    const choose = () => (group ? toggle.click() : select(d.path));
+    row.addEventListener("click", choose);
     item.addEventListener("keydown", (e) => {
       if (e.target !== item) return;
       e.stopPropagation();
@@ -871,7 +887,7 @@ function renderParts() {
         renderParts();
       } else if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        select(d.path);
+        choose();
       } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         const items = [
@@ -996,6 +1012,43 @@ function downloadControl(report: ReportDownload) {
   return control;
 }
 let pdfViewers: ReturnType<typeof pdfViewer>[] = [];
+/** Exports read as sections, in the order the shop uses them: what to print,
+ * what to cut, then the files for machines and other tools. */
+const EXPORT_GROUPS = [
+  "Drawings",
+  "Cut lists",
+  "Sheet layouts",
+  "CAM files",
+  "3D models",
+  "Other files",
+];
+function exportGroupTitle(kind: string) {
+  if (kind.includes("dxf") || kind === "gcode") return "CAM files";
+  if (["step", "model", "motion", "stl", "gltf", "glb"].includes(kind))
+    return "3D models";
+  if (["drawing", "pdf"].includes(kind)) return "Drawings";
+  return "Other files";
+}
+/** The section for a title, created in its fixed place when first needed. */
+function exportGroup(title: string) {
+  const id = "export-group-" + title.replace(/\W+/g, "-").toLowerCase();
+  let section = document.getElementById(id);
+  if (section) return section;
+  section = document.createElement("section");
+  section.id = id;
+  section.className = "export-group";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.append(heading);
+  const rank = EXPORT_GROUPS.indexOf(title);
+  const next = [...$("exports").children].find(
+    (other) =>
+      EXPORT_GROUPS.indexOf(other.querySelector("h3")?.textContent ?? "") >
+      rank,
+  );
+  $("exports").insertBefore(section, next ?? null);
+  return section;
+}
 function renderOutputs() {
   pdfViewers.forEach((viewer) => viewer.dispose());
   pdfViewers = [];
@@ -1039,7 +1092,11 @@ function renderOutputs() {
     row.className = "export-row";
     label.textContent = report.title;
     row.append(label, downloadControl(report));
-    $("exports").append(row);
+    exportGroup(
+      { drawing: "Drawings", cutList: "Cut lists", nesting: "Sheet layouts" }[
+        report.kind
+      ],
+    ).append(row);
   }
   for (const file of model?.files ?? []) {
     if (grouped.has(file.name)) continue;
@@ -1066,10 +1123,15 @@ function renderOutputs() {
     const size = document.createElement("small");
     size.textContent =
       file.ready === false
-        ? `Generated when requested · ${file.kind}`
-        : `${(file.size / 1024).toFixed(1)} KB · ${file.kind}`;
+        ? "Generated when requested"
+        : `${(file.size / 1024).toFixed(1)} KB`;
     row.append(link, size);
-    $("exports").append(row);
+    exportGroup(exportGroupTitle(file.kind)).append(row);
+  }
+  if (!$("exports").childElementCount) {
+    const empty = document.createElement("p");
+    empty.textContent = "No outputs configured.";
+    $("exports").append(empty);
   }
   if (!$("drawing-download-list").childElementCount)
     $("drawing-download-list").textContent = "No printable plans configured.";
