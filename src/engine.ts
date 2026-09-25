@@ -1,13 +1,5 @@
 import * as b from "brepjs/quick";
-import { readFile } from "node:fs/promises";
-import {
-  Matrix4,
-  Box3,
-  Vector3,
-  BufferGeometry,
-  Float32BufferAttribute,
-  EdgesGeometry,
-} from "three";
+import { Matrix4, Box3, Vector3 } from "three";
 import {
   Component,
   Part,
@@ -27,7 +19,24 @@ import type { ManufacturingDxf, TechnicalDrawing } from "./outputs.js";
 import { renderDrawing } from "./drawing.js";
 import { exportDxf, type ThinMaterial } from "./manufacturing.js";
 import { profileFace } from "./profile.js";
+import { meshShape } from "./kernel/mesh.js";
 import type { EdgeQuery } from "./edges.js";
+/** Reads a file a recipe refers to, such as an imported STEP model. It is
+ * Node's file system by default; a browser build that has no file system
+ * replaces it with `setRecipeFileReader`. The module name is computed so
+ * browser bundles do not try to resolve it. */
+let readRecipeFile = async (path: string): Promise<Uint8Array> => {
+  const fs = "node:fs/promises";
+  const { readFile } = (await import(/* @vite-ignore */ fs)) as {
+    readFile(path: string): Promise<Uint8Array>;
+  };
+  return readFile(path);
+};
+export function setRecipeFileReader(
+  reader: (path: string) => Promise<Uint8Array>,
+): void {
+  readRecipeFile = reader;
+}
 export interface ModelSnapshot {
   readonly root: Component;
   readonly revision: number;
@@ -356,7 +365,7 @@ export class OpenCascadeEngine implements CadEngine {
         break;
       }
       case "step": {
-        const data = await readFile(r.path);
+        const data = await readRecipeFile(r.path);
         const imported = b.unwrap(
           await b.importSTEP(new Blob([new Uint8Array(data)])),
         );
@@ -465,21 +474,7 @@ export class OpenCascadeEngine implements CadEngine {
     return bounds;
   }
   private meshData(part: Part, solid: b.Shape3D): MeshData {
-    const mesh = b.mesh(solid, {
-      tolerance: 0.025,
-      angularTolerance: 0.08,
-      cache: false,
-    });
-    const geometry = new BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new Float32BufferAttribute(mesh.vertices, 3),
-    );
-    geometry.setIndex(Array.from(mesh.triangles));
-    const features = new EdgesGeometry(geometry, 12);
-    const edges = new Float32Array(features.getAttribute("position").array);
-    geometry.dispose();
-    features.dispose();
+    const mesh = meshShape(solid);
     const material =
       part.drawingMaterial ??
       (part instanceof SheetPart ||
@@ -489,10 +484,10 @@ export class OpenCascadeEngine implements CadEngine {
         : undefined);
     return {
       componentPath: part.path,
-      positions: mesh.vertices,
+      positions: mesh.positions,
       normals: mesh.normals,
-      indices: mesh.triangles,
-      edges,
+      indices: mesh.indices,
+      edges: mesh.edges,
       matrix: part.worldMatrix().toArray(),
       color: material?.options.color ?? (material ? "#c9aa78" : "#8b9da8"),
       opacity: material?.options.opacity ?? 1,

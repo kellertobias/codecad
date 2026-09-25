@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve, join } from "node:path";
 import { build } from "esbuild";
+import { kernelBundleOptions, copyKernelWasm } from "./web-bundles.mjs";
 
 const root = resolve(import.meta.dirname, ".."),
   out = join(root, ".codecad/desktop-runtime");
@@ -113,4 +114,6 @@ await build({
   format: "esm",
   platform: "browser",
 });
+await build(kernelBundleOptions(root, ui));
+await copyKernelWasm(root, ui);
 console.log(`Desktop runtime prepared: ${out}`);

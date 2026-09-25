@@ -9,6 +9,10 @@ import { editorService } from "./editor-service.js";
 import { progressReader, type Progress } from "./progress.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
 import {
+  kernelBundleOptions,
+  copyKernelWasm,
+} from "../scripts/web-bundles.mjs";
+import {
   drawingPlanFile,
   emptyDrawingPlan,
   validateDrawingPlan,
@@ -75,6 +79,7 @@ try {
 let bundleVersion = Date.now();
 let bundleChanged = () => {};
 let bundle: BuildContext | undefined;
+let kernelBundles: BuildContext | undefined;
 if (process.env.CODECAD_DESKTOP) {
   await cp(join(root, "ui"), ui, { recursive: true });
 } else {
@@ -104,6 +109,11 @@ if (process.env.CODECAD_DESKTOP) {
   });
   await bundle.rebuild();
   await bundle.watch();
+  const kernelBundle = await context(kernelBundleOptions(root, ui));
+  await kernelBundle.rebuild();
+  await kernelBundle.watch();
+  kernelBundles = kernelBundle;
+  await copyKernelWasm(root, ui);
   await build({
     entryPoints: {
       "ts.worker": join(
@@ -650,6 +660,10 @@ const server = createServer(async (req, res) => {
         join(root, "node_modules/pdfjs-dist/build/pdf.worker.mjs"),
         "text/javascript",
       ],
+      "/kernel-probe": [join(root, "web/kernel-probe.html"), "text/html"],
+      "/kernel-probe.js": [join(ui, "kernel-probe.js"), "text/javascript"],
+      "/kernel.worker.js": [join(ui, "kernel.worker.js"), "text/javascript"],
+      "/occt-wasm.wasm": [join(ui, "occt-wasm.wasm"), "application/wasm"],
       "/style.css": [join(root, "web/style.css"), "text/css"],
       "/project-tabs.css": [join(root, "web/project-tabs.css"), "text/css"],
       "/codecad-icon.png": [join(root, "desktop/icon.png"), "image/png"],
@@ -673,7 +687,13 @@ const server = createServer(async (req, res) => {
     }
     res.writeHead(200, {
       "Content-Type": resource[1],
-      "Cache-Control": "no-store",
+      // The kernel binary is 22 MB and only changes with the occt-wasm
+      // version, so the browser may keep it; everything else is rebuilt
+      // while the server runs.
+      "Cache-Control":
+        resource[1] === "application/wasm"
+          ? "public, max-age=86400"
+          : "no-store",
     });
     res.end(await readFile(resource[0]));
   } catch (error) {
@@ -696,6 +716,7 @@ function close() {
   clearTimeout(timer);
   child?.kill();
   void bundle?.dispose();
+  void kernelBundles?.dispose();
   for (const watcher of watchers) watcher.close();
   for (const listener of listeners) listener.end();
   server.close();
