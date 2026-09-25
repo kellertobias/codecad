@@ -10,6 +10,7 @@ desktop distributions.
 | --- | --- | --- |
 | OpenCascade via `occt-wasm` 5.0.0 | LGPL-2.1-only | The compiled WebAssembly kernel is a separate, replaceable component. |
 | brepjs 19.0.4 | Apache-2.0 | Geometry abstraction layer. |
+| FreeCAD planegcs via `@salusoft89/planegcs` 1.2.0 | LGPL-2.0-or-later | 2D sketch constraint solver; the compiled WebAssembly solver is a separate, replaceable component. |
 | TypeScript / TypeScript Native 6.0.2 / 7.0.2 | Apache-2.0 | Compiler and language services. |
 | Tauri 2.11.5 and CLI | MIT or Apache-2.0 | Desktop framework. |
 | PDF.js 6.3.289 | Apache-2.0 | PDF viewer. |
@@ -27,6 +28,10 @@ modify that kernel. Desktop distributions retain it as a standalone `.wasm`
 resource in `Contents/Resources/runtime/node_modules/occt-wasm`; replacing
 that file with a compatible build is supported. The kernel can also be loaded
 from another URL through `OcctKernel.init({ wasm: "…" })` in web deployments.
+
+The same applies to the planegcs sketch solver (LGPL-2.0-or-later): CodeCAD
+uses the unmodified `planegcs.wasm` from `@salusoft89/planegcs` as a separate
+file that can be replaced with a compatible build.
 
 The complete LGPL-2.1 text is available from the Free Software Foundation at
 <https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>. Distributors must

@@ -88,6 +88,7 @@
     "typescript": "npm:@typescript/typescript6@6.0.2"
   },
   "dependencies": {
+    "@salusoft89/planegcs": "1.2.0",
     "brepjs": "19.0.4",
     "esbuild": "0.28.2",
     "fflate": "0.8.3",
