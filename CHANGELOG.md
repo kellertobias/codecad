@@ -1,3 +1,10 @@
+# [0.14.0](https://github.com/kellertobias/codecad/compare/v0.13.0...v0.14.0) (2026-09-25)
+
+
+### Features
+
+* show progress while the sheet editor draws a large view preview ([9698858](https://github.com/kellertobias/codecad/commit/969885873e951ce20431c468b9e17820c7d2329d))
+
 # [0.13.0](https://github.com/kellertobias/codecad/compare/v0.12.0...v0.13.0) (2026-09-25)
 
 
