@@ -1,3 +1,11 @@
+# [0.13.0](https://github.com/kellertobias/codecad/compare/v0.12.0...v0.13.0) (2026-09-25)
+
+
+### Features
+
+* measure edges to corners in the sheet editor and make it fast when zoomed ([2470d6e](https://github.com/kellertobias/codecad/commit/2470d6e02876d3d07eac24f366855e735d15f27c))
+* show progress for every build, sheet and download ([5c081b1](https://github.com/kellertobias/codecad/commit/5c081b14a9dcb72f04f653d365711a4ef0af17c9))
+
 # [0.12.0](https://github.com/kellertobias/codecad/compare/v0.11.0...v0.12.0) (2026-09-25)
 
 
