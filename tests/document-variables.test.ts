@@ -219,6 +219,8 @@ test("renaming a variable changes whole names only, everywhere", () => {
       ["inner", "width - 36"],
     ],
   );
-  const dimension = renamed.features[0]!.constraints[0]!;
+  const sketch = renamed.features[0]!;
+  assert.ok(sketch.type === "sketch");
+  const dimension = sketch.constraints[0]!;
   assert.equal("value" in dimension && dimension.value, "width / 2");
 });

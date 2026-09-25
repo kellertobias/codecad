@@ -159,19 +159,219 @@ export interface SketchFeature {
   readonly id: string;
   readonly type: "sketch";
   readonly name: string;
+  /** The standard plane, or, with `face`, the plane the face lies in. */
   readonly plane: Plane;
+  /** Sketch on a planar face of a body built by an earlier feature. */
+  readonly face?: FaceReference;
   readonly entities: readonly SketchEntity[];
   readonly constraints: readonly SketchConstraint[];
   readonly suppressed?: boolean;
 }
 
-export type Feature = SketchFeature;
+/** A face of a body, named the way the evaluator names faces: by the
+ * feature that made it (`origin`) and what it is to that feature (`role`,
+ * e.g. `end` or `side:<sketch entity id>`). `hint` is a snapshot of the
+ * face when it was picked; it only explains a broken reference, it never
+ * silently resolves one. */
+export interface FaceReference {
+  readonly body: string;
+  readonly origin: string;
+  readonly role: string;
+  readonly hint?: {
+    readonly normal?: readonly number[];
+    readonly centroid?: readonly number[];
+    readonly area?: number;
+    readonly surfaceType?: string;
+  };
+}
+
+/** An edge, as the edge the two named faces share. */
+export interface EdgeReference {
+  readonly a: FaceReference;
+  readonly b: FaceReference;
+  /** Where it was picked, to choose between several shared edges. */
+  readonly near?: readonly number[];
+}
+
+interface FeatureBase {
+  readonly id: string;
+  readonly name: string;
+  readonly suppressed?: boolean;
+}
+
+/** Sweeps regions of a sketch along the sketch's normal. */
+export interface ExtrudeFeature extends FeatureBase {
+  readonly type: "extrude";
+  readonly sketch: string;
+  /** Region ids from profile detection; all regions when left out. */
+  readonly regions?: readonly string[];
+  /** `new` makes one body per region; the others change existing bodies. */
+  readonly operation: "new" | "add" | "cut" | "intersect";
+  readonly extent: "blind" | "symmetric" | "throughAll" | "upTo";
+  /** Blind and symmetric: an expression in mm (the full width when
+   * symmetric). */
+  readonly distance?: string;
+  /** Up to: the face the extrude ends at. */
+  readonly upTo?: FaceReference;
+  /** Against the sketch normal. */
+  readonly reverse?: boolean;
+  /** Bodies an add, cut or intersect changes; every body it meets when
+   * left out. */
+  readonly targets?: readonly string[];
+}
+
+export interface FilletFeature extends FeatureBase {
+  readonly type: "fillet";
+  readonly edges: readonly EdgeReference[];
+  readonly radius: string;
+}
+
+export interface ChamferFeature extends FeatureBase {
+  readonly type: "chamfer";
+  readonly edges: readonly EdgeReference[];
+  readonly distance: string;
+}
+
+/** Hollows a body, opening the chosen faces. */
+export interface ShellFeature extends FeatureBase {
+  readonly type: "shell";
+  readonly faces: readonly FaceReference[];
+  readonly thickness: string;
+}
+
+/** Drills at the points of a sketch, into the material behind it. */
+export interface HoleFeature extends FeatureBase {
+  readonly type: "hole";
+  readonly sketch: string;
+  /** Point ids; every point that is not part of a curve when left out. */
+  readonly points?: readonly string[];
+  readonly kind: "simple" | "countersink" | "counterbore";
+  readonly diameter: string;
+  /** An expression, or through every body it meets when left out. */
+  readonly depth?: string;
+  /** Countersink and counterbore: the diameter at the surface. */
+  readonly headDiameter?: string;
+  /** Counterbore depth. */
+  readonly headDepth?: string;
+  /** Countersink included angle, 90° when left out. */
+  readonly angle?: string;
+  readonly targets?: readonly string[];
+}
+
+export type Axis = "X" | "Y" | "Z";
+
+/** Repeats features (the cuts and bodies they make) and bodies. */
+export interface PatternFeature extends FeatureBase {
+  readonly type: "pattern";
+  readonly kind: "linear" | "circular";
+  readonly features?: readonly string[];
+  readonly bodies?: readonly string[];
+  readonly axis: Axis;
+  /** Circular: the axis runs through this point, [x, y, z] expressions. */
+  readonly center?: readonly [string, string, string];
+  /** Copies including the original. */
+  readonly count: string;
+  /** Linear: distance between copies. */
+  readonly spacing?: string;
+  /** Circular: the angle the copies spread over, 360° when left out. */
+  readonly angle?: string;
+}
+
+export interface MirrorFeature extends FeatureBase {
+  readonly type: "mirror";
+  readonly features?: readonly string[];
+  readonly bodies?: readonly string[];
+  /** Mirror plane: a standard plane moved `offset` along its normal. */
+  readonly plane: Plane;
+  readonly offset?: string;
+}
+
+export type Feature =
+  | SketchFeature
+  | ExtrudeFeature
+  | FilletFeature
+  | ChamferFeature
+  | ShellFeature
+  | HoleFeature
+  | PatternFeature
+  | MirrorFeature;
+
+export type FeatureType = Feature["type"];
+
+/** Keys of a feature that hold expressions (besides sketch constraints and
+ * a pattern's centre). */
+const expressionKeys = [
+  "distance",
+  "radius",
+  "thickness",
+  "diameter",
+  "depth",
+  "headDiameter",
+  "headDepth",
+  "angle",
+  "count",
+  "spacing",
+  "offset",
+] as const;
+
+/** The feature with every expression passed through `map`: dimensions of a
+ * sketch, and the numeric fields of every other feature. */
+export function mapExpressions<F extends Feature>(
+  feature: F,
+  map: (expression: string) => string,
+): F {
+  if (feature.type === "sketch")
+    return {
+      ...feature,
+      constraints: feature.constraints.map((constraint) => {
+        const mapped: Record<string, unknown> = { ...constraint };
+        for (const key of ["value", "x", "y"])
+          if (typeof mapped[key] === "string")
+            mapped[key] = map(mapped[key] as string);
+        return mapped as unknown as SketchConstraint;
+      }),
+    };
+  const mapped: Record<string, unknown> = { ...feature };
+  for (const key of expressionKeys)
+    if (typeof mapped[key] === "string") mapped[key] = map(mapped[key]);
+  if (feature.type === "pattern" && feature.center)
+    mapped.center = feature.center.map(map);
+  return mapped as unknown as F;
+}
+
+/** Stock a part can be made of. */
+export interface MaterialDefinition {
+  readonly id: string;
+  readonly name: string;
+  /** Sheets and boards have a thickness; anything else is a solid block. */
+  readonly kind: "sheet" | "board" | "solid";
+  readonly thickness?: string;
+  /** Sheet size, for nesting. */
+  readonly width?: string;
+  readonly height?: string;
+  readonly grain?: "width" | "height" | "none";
+  readonly color?: string;
+  readonly density?: number;
+}
+
+/** What a body is as a part: evaluated bodies are matched by id. */
+export interface PartProperties {
+  readonly body: string;
+  readonly name?: string;
+  readonly material?: string;
+  /** `auto` (the default) treats a body as sheet stock when it was
+   * extruded exactly as deep as its sheet material is thick. */
+  readonly stock?: "auto" | "sheet" | "solid";
+  readonly quantity?: number;
+}
 
 export interface CadDocument {
   readonly schemaVersion: typeof currentSchemaVersion;
   readonly units: "mm";
   readonly variables: readonly Variable[];
   readonly features: readonly Feature[];
+  readonly materials?: readonly MaterialDefinition[];
+  readonly parts?: readonly PartProperties[];
 }
 
 export function emptyDocument(): CadDocument {
@@ -298,14 +498,94 @@ function validate(document: Record<string, unknown>): void {
   });
 
   const featureIds = new Set<string>();
+  /** Feature id → type, for the features listed so far. */
+  const featureTypes = new Map<string, string>();
+  const expression = string;
+  const face = (value: unknown, p: string) => {
+    if (!isObject(value)) return fail(p, "must be a face reference");
+    for (const key of ["body", "origin", "role"])
+      string(value[key], `${p}.${key}`);
+    optional(value.hint, `${p}.hint`, (v, q) => {
+      if (!isObject(v)) fail(q, "must be an object");
+    });
+  };
+  const checks: Checks = {
+    fail,
+    string,
+    expression,
+    boolean,
+    oneOf,
+    list,
+    optional,
+    face,
+    edge: (value, p) => {
+      if (!isObject(value)) return fail(p, "must be an edge reference");
+      face(value.a, `${p}.a`);
+      face(value.b, `${p}.b`);
+      optional(value.near, `${p}.near`, (v, q) =>
+        list(v, q).forEach((n, k) => finite(n, `${q}[${k}]`)),
+      );
+    },
+  };
+  optional(document.materials, "materials", (value, p) => {
+    const ids = new Set<string>();
+    list(value, p).forEach((material, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(material)) return fail(at, "must be an object");
+      unique(ids, material.id, `${at}.id`);
+      string(material.name, `${at}.name`);
+      oneOf(material.kind, `${at}.kind`, ["sheet", "board", "solid"]);
+      for (const key of ["thickness", "width", "height", "color"])
+        optional(material[key], `${at}.${key}`, string);
+      optional(material.grain, `${at}.grain`, (v, q) =>
+        oneOf(v, q, ["width", "height", "none"]),
+      );
+      optional(material.density, `${at}.density`, finite);
+      if (material.kind !== "solid" && material.thickness === undefined)
+        fail(`${at}.thickness`, "sheet and board stock needs a thickness");
+    });
+  });
+  optional(document.parts, "parts", (value, p) => {
+    const bodies = new Set<string>();
+    list(value, p).forEach((part, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(part)) return fail(at, "must be an object");
+      unique(bodies, part.body, `${at}.body`);
+      optional(part.name, `${at}.name`, string);
+      optional(part.material, `${at}.material`, string);
+      optional(part.stock, `${at}.stock`, (v, q) =>
+        oneOf(v, q, ["auto", "sheet", "solid"]),
+      );
+      optional(part.quantity, `${at}.quantity`, (v, q) => {
+        if (!Number.isInteger(v) || (v as number) < 1)
+          fail(q, "must be a whole number of at least 1");
+      });
+    });
+  });
   list(document.features, "features").forEach((feature, i) => {
     const path = `features[${i}]`;
     if (!isObject(feature)) return fail(path, "must be an object");
+    const earlier = new Map(featureTypes);
     unique(featureIds, feature.id, `${path}.id`);
-    oneOf(feature.type, `${path}.type`, ["sketch"]);
+    oneOf(feature.type, `${path}.type`, [
+      "sketch",
+      "extrude",
+      "fillet",
+      "chamfer",
+      "shell",
+      "hole",
+      "pattern",
+      "mirror",
+    ]);
+    featureTypes.set(feature.id as string, feature.type as string);
     string(feature.name, `${path}.name`);
-    oneOf(feature.plane, `${path}.plane`, ["XY", "XZ", "YZ"]);
     optional(feature.suppressed, `${path}.suppressed`, boolean);
+    if (feature.type !== "sketch") {
+      validateFeature(feature, path, earlier, checks);
+      return;
+    }
+    oneOf(feature.plane, `${path}.plane`, ["XY", "XZ", "YZ"]);
+    optional(feature.face, `${path}.face`, checks.face);
     const entities = new Map<string, string>();
     list(feature.entities, `${path}.entities`).forEach((entity, j) => {
       const at = `${path}.entities[${j}]`;
@@ -388,4 +668,130 @@ function validate(document: Record<string, unknown>): void {
       },
     );
   });
+}
+
+interface Checks {
+  fail(path: string, message: string): never;
+  string(value: unknown, path: string): void;
+  expression(value: unknown, path: string): void;
+  boolean(value: unknown, path: string): void;
+  oneOf(value: unknown, path: string, allowed: readonly string[]): void;
+  list(value: unknown, path: string): unknown[];
+  optional(
+    value: unknown,
+    path: string,
+    check: (v: unknown, p: string) => void,
+  ): void;
+  face(value: unknown, path: string): void;
+  edge(value: unknown, path: string): void;
+}
+
+/** Everything but sketches. `earlier` holds the features listed before this
+ * one: a feature may only use what comes before it. */
+function validateFeature(
+  feature: Record<string, unknown>,
+  path: string,
+  earlier: ReadonlyMap<string, string>,
+  c: Checks,
+): void {
+  const at = (key: string) => `${path}.${key}`;
+  const sketch = (key: string) => {
+    c.string(feature[key], at(key));
+    if (earlier.get(feature[key] as string) !== "sketch")
+      c.fail(at(key), "must name a sketch listed before this feature");
+  };
+  const strings = (key: string) =>
+    c.optional(feature[key], at(key), (v, p) =>
+      c.list(v, p).forEach((item, i) => c.string(item, `${p}[${i}]`)),
+    );
+  const features = (key: string) =>
+    c.optional(feature[key], at(key), (v, p) =>
+      c.list(v, p).forEach((item, i) => {
+        c.string(item, `${p}[${i}]`);
+        if (!earlier.has(item as string))
+          c.fail(`${p}[${i}]`, "must name a feature listed before this one");
+      }),
+    );
+  const expressions = (...keys: string[]) =>
+    keys.forEach((key) => c.optional(feature[key], at(key), c.expression));
+  switch (feature.type) {
+    case "extrude":
+      sketch("sketch");
+      strings("regions");
+      strings("targets");
+      c.oneOf(feature.operation, at("operation"), [
+        "new",
+        "add",
+        "cut",
+        "intersect",
+      ]);
+      c.oneOf(feature.extent, at("extent"), [
+        "blind",
+        "symmetric",
+        "throughAll",
+        "upTo",
+      ]);
+      expressions("distance");
+      if (
+        (feature.extent === "blind" || feature.extent === "symmetric") &&
+        feature.distance === undefined
+      )
+        c.fail(at("distance"), "a blind or symmetric extrude needs a distance");
+      if (feature.extent === "upTo") c.face(feature.upTo, at("upTo"));
+      c.optional(feature.reverse, at("reverse"), c.boolean);
+      break;
+    case "fillet":
+    case "chamfer":
+      c.list(feature.edges, at("edges")).forEach((edge, i) =>
+        c.edge(edge, `${at("edges")}[${i}]`),
+      );
+      c.expression(
+        feature[feature.type === "fillet" ? "radius" : "distance"],
+        at(feature.type === "fillet" ? "radius" : "distance"),
+      );
+      break;
+    case "shell":
+      c.list(feature.faces, at("faces")).forEach((face, i) =>
+        c.face(face, `${at("faces")}[${i}]`),
+      );
+      c.expression(feature.thickness, at("thickness"));
+      break;
+    case "hole":
+      sketch("sketch");
+      strings("points");
+      strings("targets");
+      c.oneOf(feature.kind, at("kind"), [
+        "simple",
+        "countersink",
+        "counterbore",
+      ]);
+      c.expression(feature.diameter, at("diameter"));
+      expressions("depth", "headDiameter", "headDepth", "angle");
+      if (feature.kind !== "simple" && feature.headDiameter === undefined)
+        c.fail(at("headDiameter"), `a ${feature.kind} needs a head diameter`);
+      if (feature.kind === "counterbore" && feature.headDepth === undefined)
+        c.fail(at("headDepth"), "a counterbore needs a depth");
+      break;
+    case "pattern":
+    case "mirror":
+      features("features");
+      strings("bodies");
+      if (feature.type === "pattern") {
+        c.oneOf(feature.kind, at("kind"), ["linear", "circular"]);
+        c.oneOf(feature.axis, at("axis"), ["X", "Y", "Z"]);
+        c.expression(feature.count, at("count"));
+        expressions("spacing", "angle");
+        if (feature.kind === "linear" && feature.spacing === undefined)
+          c.fail(at("spacing"), "a linear pattern needs a spacing");
+        c.optional(feature.center, at("center"), (v, p) => {
+          const center = c.list(v, p);
+          if (center.length !== 3) c.fail(p, "must list x, y and z");
+          center.forEach((value, i) => c.expression(value, `${p}[${i}]`));
+        });
+      } else {
+        c.oneOf(feature.plane, at("plane"), ["XY", "XZ", "YZ"]);
+        expressions("offset");
+      }
+      break;
+  }
 }

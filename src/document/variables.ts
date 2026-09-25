@@ -10,7 +10,7 @@ import {
   referencedNames,
   type Expression,
 } from "./expressions.js";
-import type { CadDocument, Variable } from "./schema.js";
+import { mapExpressions, type CadDocument, type Variable } from "./schema.js";
 
 export interface VariableValues {
   /** Values by variable name, in base units (mm, deg; booleans 0 or 1). */
@@ -112,8 +112,8 @@ export function evaluateWith(
   return value;
 }
 
-/** Renames a variable and every use of it, in other variables and in the
- * sketches' dimensions. */
+/** Renames a variable and every use of it, in other variables, in the
+ * features and in the materials. */
 export function renameVariable(
   document: CadDocument,
   id: string,
@@ -130,15 +130,19 @@ export function renameVariable(
       ...(v.id === id ? { name } : {}),
       expression: rename(v.expression),
     })),
-    features: document.features.map((feature) => ({
-      ...feature,
-      constraints: feature.constraints.map((constraint) => {
-        const renamed: Record<string, unknown> = { ...constraint };
-        for (const key of ["value", "x", "y"])
-          if (typeof renamed[key] === "string")
-            renamed[key] = rename(renamed[key] as string);
-        return renamed as unknown as typeof constraint;
-      }),
-    })),
+    features: document.features.map((feature) =>
+      mapExpressions(feature, rename),
+    ),
+    ...(document.materials
+      ? {
+          materials: document.materials.map((material) => {
+            const renamed: Record<string, unknown> = { ...material };
+            for (const key of ["thickness", "width", "height"])
+              if (typeof renamed[key] === "string")
+                renamed[key] = rename(renamed[key] as string);
+            return renamed as unknown as typeof material;
+          }),
+        }
+      : {}),
   };
 }

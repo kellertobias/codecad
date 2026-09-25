@@ -189,6 +189,7 @@ test("changing a variable re-solves every sketch that uses it", () => {
     solver,
   );
   for (const sketch of widened.document.features) {
+    assert.ok(sketch.type === "sketch");
     const xs = sketch.entities.flatMap((e) =>
       e.type === "point" ? [e.x] : [],
     );

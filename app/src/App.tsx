@@ -184,7 +184,9 @@ export function App() {
     return () => removeEventListener("keydown", keys);
   }, [history, save]);
 
-  const sketch = document.features.find((f) => f.id === active);
+  const sketch = document.features.find(
+    (f): f is SketchFeature => f.id === active && f.type === "sketch",
+  );
   const editSketch = (next: SketchFeature, merge?: string) =>
     change(
       (d) => ({
@@ -275,29 +277,35 @@ export function App() {
               </button>
             </header>
             <ul className="list">
-              {document.features.map((feature) => (
-                <FeatureRow
-                  key={feature.id}
-                  feature={feature}
-                  current={feature.id === active}
-                  solution={solved.solutions.get(feature.id)}
-                  open={() => setActive(feature.id)}
-                  rename={(name) =>
-                    change((d) => ({
-                      ...d,
-                      features: d.features.map((f) =>
-                        f.id === feature.id ? { ...f, name } : f,
-                      ),
-                    }))
-                  }
-                  remove={() =>
-                    change((d) => ({
-                      ...d,
-                      features: d.features.filter((f) => f.id !== feature.id),
-                    }))
-                  }
-                />
-              ))}
+              {document.features.flatMap((feature) =>
+                feature.type !== "sketch"
+                  ? []
+                  : [
+                      <FeatureRow
+                        key={feature.id}
+                        feature={feature}
+                        current={feature.id === active}
+                        solution={solved.solutions.get(feature.id)}
+                        open={() => setActive(feature.id)}
+                        rename={(name) =>
+                          change((d) => ({
+                            ...d,
+                            features: d.features.map((f) =>
+                              f.id === feature.id ? { ...f, name } : f,
+                            ),
+                          }))
+                        }
+                        remove={() =>
+                          change((d) => ({
+                            ...d,
+                            features: d.features.filter(
+                              (f) => f.id !== feature.id,
+                            ),
+                          }))
+                        }
+                      />,
+                    ],
+              )}
             </ul>
           </section>
         ) : null}
