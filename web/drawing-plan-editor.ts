@@ -10,11 +10,11 @@ import {
   type PlanSheet,
 } from "../src/drawing-plan.js";
 import { PanZoom, typedZoom, viewBoxFor } from "./pan-zoom.js";
-import { downloadWithProgress } from "./progress.js";
+import { downloadWithProgress, progressBar } from "./progress.js";
 import {
   pickPair,
   tiledPaths,
-  uniqueSegments,
+  uniqueSegmentSteps,
   type PlanPick,
 } from "./plan-linework.js";
 import {
@@ -44,6 +44,29 @@ type Linework = {
   height: number;
   exact: boolean;
 };
+const emptyLinework: Linework = {
+  visible: [],
+  hidden: [],
+  cx: 0,
+  cy: 0,
+  width: 0,
+  height: 0,
+  exact: false,
+};
+/** Linework being worked out for a view, and how far along it is. */
+type LineJob = {
+  view: string;
+  steps: Generator<number, Linework>;
+  done: number;
+};
+/** Steps from 0 to 1 as the part of a longer job from `from` to `to`. */
+function* within<T>(steps: Generator<number, T>, from: number, to: number) {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    yield from + (to - from) * step.value;
+  }
+}
 const ns = "http://www.w3.org/2000/svg";
 const svgNode = (
   tag: string,
@@ -93,6 +116,12 @@ export class DrawingPlanEditor {
   private flatParts = new Map<string, FlatPart>();
   private built: Record<string, BuiltView> = {};
   private linework = new Map<string, Linework>();
+  private jobs = new Map<string, LineJob>();
+  private lineFrame = 0;
+  private readonly lineProgress = progressBar("plan-progress");
+  /** Views placed before their lines were ready, with the scale they asked
+   * for, to fit once the lines are in. */
+  private fitWhenReady = new Map<string, number>();
   private drawn = new WeakMap<Linework, SVGElement>();
   /** The element drawn for each item on the sheet, by id. */
   private readonly nodes = new Map<string, SVGElement>();
@@ -194,6 +223,8 @@ export class DrawingPlanEditor {
     for (const type of ["pointerup", "pointercancel"] as const)
       this.wrap.addEventListener(type, () => this.panUp());
     new ResizeObserver(() => this.applyZoom()).observe(this.wrap);
+    this.lineProgress.element.hidden = true;
+    this.wrap.append(this.lineProgress.element);
     this.applyZoom();
     byId("plan-save").onclick = () => void this.save();
     byId("plan-export").onclick = () => void this.download();
@@ -256,6 +287,7 @@ export class DrawingPlanEditor {
       (model.flatParts ?? []).map((part) => [part.path, part]),
     );
     this.linework.clear();
+    this.jobs.clear();
     this.modelTitle = model.title;
     if (!this.plan.sheets[0]!.title) this.plan.sheets[0]!.title = model.title;
     if (this.loaded && !this.dirty && Object.keys(this.built).length)
@@ -309,15 +341,92 @@ export class DrawingPlanEditor {
     return this.items.filter((item): item is View => item.kind === "view");
   }
   /** Hidden-line geometry from the last build, else a live wireframe. A flat
-   * part is already 2D, so its outline from the build is exact as it is. */
+   * part is already 2D, so its outline from the build is exact as it is.
+   * Most views are ready at once; a large one is worked out in slices between
+   * frames, with its progress shown, and keeps its last lines until then. */
   private lines(view: View): Linework {
     const key = view.id + "|" + viewKey(view);
     const cached = this.linework.get(key);
     if (cached) return cached;
+    if (!this.jobs.has(key)) {
+      // A view that changed drops the work for how it looked before.
+      for (const [other, job] of this.jobs)
+        if (job.view === view.id) this.jobs.delete(other);
+      const job = { view: view.id, steps: this.lineSteps(view), done: 0 };
+      this.jobs.set(key, job);
+      if (this.advance(key, job, performance.now() + 30))
+        return this.linework.get(key)!;
+      this.scheduleLines();
+    }
+    let previous: Linework | undefined;
+    for (const [other, lines] of this.linework)
+      if (other.startsWith(view.id + "|")) previous = lines;
+    return previous ?? emptyLinework;
+  }
+  /** Whether a view's lines are still being worked out. */
+  private drawing(view: View) {
+    return this.jobs.has(view.id + "|" + viewKey(view));
+  }
+  /** Runs a line job until `deadline`; true once it is done. */
+  private advance(key: string, job: LineJob, deadline: number) {
+    for (;;) {
+      const step = job.steps.next();
+      if (step.done) {
+        this.jobs.delete(key);
+        // Only the view's latest lines are kept.
+        for (const other of this.linework.keys())
+          if (other.startsWith(job.view + "|")) this.linework.delete(other);
+        this.linework.set(key, step.value);
+        return true;
+      }
+      job.done = step.value;
+      if (performance.now() >= deadline) return false;
+    }
+  }
+  /** Works on the running line jobs in short slices, keeping the page live.
+   * A timer rather than an animation frame, so a hidden page carries on. */
+  private scheduleLines() {
+    if (this.lineFrame) return;
+    this.lineFrame = window.setTimeout(() => {
+      this.lineFrame = 0;
+      const deadline = performance.now() + 12;
+      let finished = false;
+      for (const [key, job] of this.jobs) {
+        if (this.advance(key, job, deadline)) finished = true;
+        if (performance.now() >= deadline) break;
+      }
+      if (finished) {
+        // Views placed while their lines were missing get their scale now.
+        for (const view of this.views()) {
+          const scale = this.fitWhenReady.get(view.id);
+          if (scale === undefined || this.drawing(view)) continue;
+          this.fitWhenReady.delete(view.id);
+          view.scale = Math.max(scale, this.fitScale(view));
+        }
+        this.render();
+      }
+      this.showLineProgress();
+      if (this.jobs.size) this.scheduleLines();
+    });
+  }
+  private showLineProgress() {
+    const jobs = [...this.jobs.values()];
+    this.lineProgress.element.hidden = !jobs.length;
+    if (!jobs.length) return;
+    this.lineProgress.set(
+      jobs.reduce((sum, job) => sum + job.done, 0) / jobs.length,
+      jobs.length === 1
+        ? "Drawing the view preview"
+        : `Drawing ${jobs.length} view previews`,
+    );
+  }
+  /** A view's linework, yielding how far along it is from 0 to 1. */
+  private *lineSteps(view: View): Generator<number, Linework> {
     const built = this.built[view.id];
     let visible: number[] = [],
       hidden: number[] = [],
-      exact = false;
+      exact = false,
+      projected = false;
     if (view.angle === "flat") {
       const part = this.flatParts.get(view.subject);
       exact = Boolean(part);
@@ -332,11 +441,13 @@ export class DrawingPlanEditor {
       exact = true;
       ({ visible, hidden } = built);
     } else {
+      projected = true;
       const basis = viewBasis(view.angle, view.rotate ?? 0),
         horizontal = new THREE.Vector3(...basis.x),
         vertical = new THREE.Vector3(...basis.y),
         point = new THREE.Vector3();
-      for (const mesh of this.meshes) {
+      for (const [index, mesh] of this.meshes.entries()) {
+        yield (0.4 * index) / this.meshes.length;
         if (
           view.subject !== "*" &&
           !underPath(mesh.componentPath, view.subject)
@@ -365,10 +476,15 @@ export class DrawingPlanEditor {
       }
     if (!Number.isFinite(minX)) minX = maxX = minY = maxY = 0;
     // A hidden edge under a visible one would only be drawn over again.
-    const shown = uniqueSegments(visible);
+    const from = projected ? 0.4 : 0,
+      split =
+        from +
+        (1 - from) * (visible.length / (visible.length + hidden.length || 1));
+    const shown = yield* within(uniqueSegmentSteps(visible), from, split);
     visible = shown.lines;
-    hidden = uniqueSegments(hidden, shown.keys).lines;
-    const result = {
+    hidden = (yield* within(uniqueSegmentSteps(hidden, shown.keys), split, 1))
+      .lines;
+    return {
       visible,
       hidden,
       cx: (minX + maxX) / 2,
@@ -377,8 +493,6 @@ export class DrawingPlanEditor {
       height: maxY - minY,
       exact,
     };
-    this.linework.set(key, result);
-    return result;
   }
   /** The automatic caption; a flat part is named after the part. */
   private caption(view: View) {
@@ -439,8 +553,11 @@ export class DrawingPlanEditor {
       scale: 10,
       label: "",
     };
-    // Related views read best at one scale; otherwise use the largest that fits.
-    item.scale = Math.max(scale, this.fitScale(item));
+    // Related views read best at one scale; otherwise use the largest that
+    // fits, once a large view's lines are in.
+    this.lines(item);
+    if (this.drawing(item)) this.fitWhenReady.set(item.id, scale);
+    else item.scale = Math.max(scale, this.fitScale(item));
     this.items.push(item);
     this.selected = item.id;
     this.setTool("select");
@@ -1096,7 +1213,11 @@ export class DrawingPlanEditor {
             fill: "#24343b",
           },
           (item.label || this.caption(item)) +
-            (lines.exact ? "" : "  (wireframe preview · save to refine)"),
+            (this.drawing(item)
+              ? "  (drawing the preview…)"
+              : lines.exact
+                ? ""
+                : "  (wireframe preview · save to refine)"),
         ),
       );
       if (chosen)
@@ -1582,7 +1703,8 @@ export class DrawingPlanEditor {
       const fit = document.createElement("button");
       fit.textContent = "Fit scale to frame";
       fit.onclick = () => {
-        item.scale = this.fitScale(item);
+        if (this.drawing(item)) this.fitWhenReady.set(item.id, 0);
+        else item.scale = this.fitScale(item);
         this.change();
       };
       panel.append(fit);

@@ -1638,3 +1638,17 @@ h2 {
 .pdf-progress .progress-track {
   width: 200px;
 }
+/* The Sheet editor's own bar, while a large view's preview is worked out. */
+.plan-progress {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 5px 12px;
+  border: 1px solid #2f444e;
+  border-radius: 999px;
+  background: rgb(17 23 28 / 88%);
+  color: #dfe8ed;
+  pointer-events: none;
+}

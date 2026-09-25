@@ -14,9 +14,23 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
  * nothing but work for every repaint.
  */
 export function uniqueSegments(lines: readonly number[], skip?: Set<string>) {
+  const steps = uniqueSegmentSteps(lines, skip);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+/**
+ * `uniqueSegments` in steps: it yields how far through the segments it is,
+ * from 0 to 1, every few thousand, so a long run can pause for the page.
+ */
+export function* uniqueSegmentSteps(
+  lines: readonly number[],
+  skip?: Set<string>,
+): Generator<number, { lines: number[]; keys: Set<string> }> {
   const seen = new Set<string>(),
     kept: number[] = [];
   for (let i = 0; i + 3 < lines.length; i += 4) {
+    if (i % 8192 === 8188) yield i / lines.length;
     const ax = round(lines[i]!),
       ay = round(lines[i + 1]!),
       bx = round(lines[i + 2]!),

@@ -5,6 +5,7 @@ import {
   pickPair,
   tiledPaths,
   uniqueSegments,
+  uniqueSegmentSteps,
 } from "../web/plan-linework.js";
 
 test("sheet linework drops repeated and zero-length segments", () => {
@@ -85,4 +86,19 @@ test("two edges measure their gap when parallel and their length when one", () =
   assert.match(String(pickPair(bottom, slanted)), /not parallel/);
   const onEdge = { kind: "point" as const, at: { u: 4, v: 0 } };
   assert.match(String(pickPair(bottom, onEdge)), /touch/);
+});
+
+test("sheet linework deduplicates in steps that report how far along they are", () => {
+  const lines: number[] = [];
+  for (let i = 0; i < 5000; i++) lines.push(i, 0, i + 1, 0, i + 1, 0, i, 0);
+  const steps = uniqueSegmentSteps(lines),
+    reported: number[] = [];
+  let step = steps.next();
+  for (; !step.done; step = steps.next()) reported.push(step.value);
+  assert.ok(reported.length > 1);
+  assert.ok(
+    reported.every((f, i) => f > 0 && f < 1 && f > (reported[i - 1] ?? 0)),
+  );
+  assert.deepEqual(step.value.lines, uniqueSegments(lines).lines);
+  assert.equal(step.value.lines.length, 5000 * 4);
 });
