@@ -112,6 +112,46 @@ Notes for implementation:
 - Map sketch entities and constraints one to one onto planegcs primitive ids,
   so reported conflicts point straight at the offending constraint.
 
-## UI shell (D6)
+## UI shell (D6): Vite + React, with imperative three.js
 
-Pending.
+`app/` is a Vite + React 19 shell next to the existing Studio. It exercises
+every new piece together:
+
+- it lists, creates and opens projects stored through `/api/projects`
+- it edits a document's variables and rebuilds the model in the kernel worker
+  as you type
+- it shows the model in a three.js viewport
+- it saves with revision checking: a save that lost a race reports the
+  conflict instead of overwriting.
+
+It works at desktop size and at 375 px on a phone.
+
+Development and serving:
+
+- `npm run app:dev` serves the shell from Vite with hot reload. It forwards
+  the API, the kernel worker and the WASM to the CodeCAD server started with
+  `npm run dev`.
+- `npm run app:build` builds the shell into `app/dist`, which the CodeCAD
+  server then serves at `/app/`.
+- The shell is 780 KB, or 208 KB gzipped, most of it three.js. The kernel
+  worker and WASM load separately.
+
+Verdict: adopt it. Components suit the panels the editor needs (feature tree,
+property panes, variable table, dialogs), and the builds are fast (about
+0.1–0.3 s). The spike surfaced three rules for the real editor:
+
+- **Long-lived resources live outside React state.** In development, React
+  runs effects twice. A kernel worker created in `useMemo` and terminated in
+  an effect's cleanup was reused after it had been stopped, and every build
+  waited forever. The kernel is now a page-wide singleton, and
+  `KernelClient.terminate()` makes waiting requests fail instead of hang.
+- **The canvas is sized by a wrapper.** Sized directly by the layout, the
+  canvas's drawing buffer fed back into the grid and grew until it squeezed
+  the other panes (seen at phone width).
+- **Measure before framing.** Camera fitting reads the canvas size at the
+  moment it frames the model. A resize observer may not have run yet, and a
+  portrait phone then shows the model cropped.
+
+Next: move the Studio's viewer features (measurement, isolation, surface
+visibility, the sheet editor) into this shell piece by piece. The code-first
+Studio stays available until the new editor covers its features.

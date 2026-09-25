@@ -337,6 +337,40 @@ The default build writes to `output/kitchen-cabinet/`. Live-build artifacts are
 stored under `.codecad/`. Project source runs as trusted local Node.js code,
 with your account's filesystem access. Use projects you trust.
 
+### Browser editor (in development)
+
+A browser editor for projects built without code is taking shape in `app/`
+(see [the roadmap](docs/full-cad-roadmap.md)). Its projects are stored in
+`.codecad/workspace.sqlite`. Every save keeps a new revision, and a save based
+on an outdated revision is refused instead of overwriting the other change.
+
+```sh
+npm run dev        # the CodeCAD server, as above
+npm run app:dev    # the editor with hot reload: http://localhost:5173/app/
+npm run app:build  # or build it once; the server then serves /app/
+```
+
+The CAD kernel runs in the browser, in a Web Worker. `/kernel-probe` shows
+how long it takes to load and build a part on the current machine. The API
+is `GET/POST /api/projects` and `GET/PUT/DELETE /api/projects/<id>`. A `PUT`
+names the revision it was `basedOn` and gets `409` if another save came first.
+
+### Network access
+
+The server listens on 127.0.0.1 only. To reach it from other devices, such as
+a phone in the workshop, start it with `CODECAD_HOST=0.0.0.0 npm run dev`. It
+then prints its LAN address.
+
+- **Host check:** requests must still be addressed to this machine by name or
+  address. List any other names, for example a reverse proxy's, in
+  `CODECAD_ALLOWED_HOSTS=cad.home.arpa,other.name`.
+- **Changes:** they need the page's session token, and must come from a page
+  served under the same address.
+- **Project source:** the TypeScript that the server compiles and runs can only
+  be changed from this machine.
+- **Users:** there are no user accounts yet. Only open the server on networks
+  you trust.
+
 ## Authoring
 
 ### Material drawing styles

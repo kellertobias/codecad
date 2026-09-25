@@ -368,6 +368,47 @@ function exportArtifact(
     });
   });
 }
+/** The browser editor, built by `npm run app:build` into app/dist. Paths
+ * that are not files fall back to its index page, which routes itself. */
+const appRoot = join(root, "app/dist");
+const appTypes: Record<string, string> = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".json": "application/json",
+  ".wasm": "application/wasm",
+};
+async function serveApp(pathname: string, res: ServerResponse) {
+  const relative = decodeURIComponent(pathname.slice("/app/".length));
+  const requested = resolve(appRoot, relative);
+  const file =
+    requested.startsWith(appRoot + "/") &&
+    (await stat(requested).then(
+      (info) => info.isFile(),
+      () => false,
+    ))
+      ? requested
+      : join(appRoot, "index.html");
+  let data: Buffer;
+  try {
+    data = await readFile(file);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("The editor is not built yet: run npm run app:build");
+    return;
+  }
+  const extension = file.slice(file.lastIndexOf("."));
+  res.writeHead(200, {
+    "Content-Type": appTypes[extension] ?? "application/octet-stream",
+    // Vite puts a content hash in asset names; the index must stay fresh.
+    "Cache-Control": file.includes("/assets/")
+      ? "public, max-age=31536000, immutable"
+      : "no-store",
+  });
+  res.end(data);
+}
 const server = createServer(async (req, res) => {
   try {
     if (!hostAllowed(req.headers.host, port, hostNames)) {
@@ -397,6 +438,13 @@ const server = createServer(async (req, res) => {
       listeners.add(res);
       res.write("data: " + announced() + "\n\n");
       req.on("close", () => listeners.delete(res));
+      return;
+    }
+    // The session token that changes must carry. Pages served by this
+    // server fetch it; other sites cannot, as the Host check above and the
+    // browser's same-origin rules keep their requests out.
+    if (url.pathname === "/api/session" && req.method === "GET") {
+      json({ token });
       return;
     }
     if (url.pathname === "/api/source" && req.method === "GET") {
@@ -665,6 +713,10 @@ const server = createServer(async (req, res) => {
           : {}),
       });
       res.end(data);
+      return;
+    }
+    if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
+      await serveApp(url.pathname, res);
       return;
     }
     const resources: Record<string, [string, string]> = {

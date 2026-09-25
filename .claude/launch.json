@@ -10,6 +10,15 @@
       ],
       "port": 4317,
       "autoPort": true
+    },
+    {
+      "name": "editor",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "app:dev"
+      ],
+      "port": 5173
     }
   ]
 }

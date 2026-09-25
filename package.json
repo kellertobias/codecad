@@ -47,11 +47,11 @@
     "access": "public"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p app",
     "check:compat": "tsc6 --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "format": "prettier --write src examples web tests package.json tsconfig.json README.md",
-    "format:check": "prettier --check src examples web tests package.json tsconfig.json README.md",
+    "format": "prettier --write src examples web app tests package.json tsconfig.json README.md",
+    "format:check": "prettier --check src examples web app tests package.json tsconfig.json README.md",
     "dev": "node scripts/dev.mjs",
     "build": "node --import tsx src/native-rebuild.ts examples/kitchen-cabinet/index.ts output/kitchen-cabinet",
     "cad:build": "node --import tsx src/native-rebuild.ts",
@@ -63,7 +63,9 @@
     "examples": "npm run build",
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "app:dev": "vite --config app/vite.config.ts",
+    "app:build": "vite build --config app/vite.config.ts"
   },
   "engines": {
     "node": ">=22"
@@ -79,13 +81,19 @@
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "26.5.1",
     "@types/pdfkit": "0.17.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/svg-to-pdfkit": "0.1.4",
     "@types/three": "0.186.0",
     "@typescript/native": "npm:typescript@7.0.2",
+    "@vitejs/plugin-react": "6.1.1",
     "prettier": "3.9.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "semantic-release": "25.0.9",
     "tsx": "4.23.13",
-    "typescript": "npm:@typescript/typescript6@6.0.2"
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "vite": "8.3.1"
   },
   "dependencies": {
     "@salusoft89/planegcs": "1.2.0",
