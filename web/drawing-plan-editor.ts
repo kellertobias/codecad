@@ -11,6 +11,12 @@ import {
 } from "../src/drawing-plan.js";
 import { PanZoom, typedZoom, viewBoxFor } from "./pan-zoom.js";
 import {
+  pickPair,
+  tiledPaths,
+  uniqueSegments,
+  type PlanPick,
+} from "./plan-linework.js";
+import {
   rotatePaper,
   standardScales,
   viewAngles,
@@ -64,11 +70,17 @@ const scaleChoices = standardScales.map((scale) => fmt(1 / scale));
 const scaleName = (denominator: number) =>
   denominator >= 1 ? `1:${fmt(denominator)}` : `${fmt(1 / denominator)}:1`;
 const titleBlock = { width: 170, height: 40, margin: 10 };
-const measureHints = [
-  "Click the first point in a view. Corners and edges snap; Esc cancels.",
-  "Click the second point in the same view.",
-  "Click where the dimension line goes.",
-];
+const measureHints = {
+  first:
+    "Click a corner or an edge in a view. Hold Shift for a point along an edge; Esc cancels.",
+  afterPoint:
+    "Click a second corner, or an edge for the perpendicular distance to it.",
+  afterLine:
+    "Click a corner for its distance from this edge, a parallel edge, or the same edge for its length.",
+  place: "Click where the dimension line goes.",
+};
+/** How close, in screen pixels, the pointer must come to snap. */
+const reach = { corner: 10, edge: 7 };
 
 export class DrawingPlanEditor {
   private plan: DrawingPlan = emptyDrawingPlan();
@@ -80,11 +92,21 @@ export class DrawingPlanEditor {
   private flatParts = new Map<string, FlatPart>();
   private built: Record<string, BuiltView> = {};
   private linework = new Map<string, Linework>();
+  private drawn = new WeakMap<Linework, SVGElement>();
+  /** The element drawn for each item on the sheet, by id. */
+  private readonly nodes = new Map<string, SVGElement>();
+  private zoomFrame = 0;
   private selected = "";
   private tool: "select" | "measure" | "text" = "select";
-  /** Dimension in progress: two measured points, then where its line goes. */
-  private measure: { view: string; a: ModelPoint; b?: ModelPoint } | undefined;
-  private snap: (Point & { snapped: boolean }) | undefined;
+  /**
+   * Dimension in progress: the first pick, then the two points it runs
+   * between once the second is picked, then where its line goes.
+   */
+  private measure:
+    | { view: string; first: PlanPick; a?: ModelPoint; b?: ModelPoint }
+    | undefined;
+  /** What the pointer is over while measuring, in sheet millimetres. */
+  private hover: { view: string; p: Point; pick?: PlanPick } | undefined;
   private drag:
     | { x: number; y: number; item: PlanItem; resize: boolean; moved: boolean }
     | undefined;
@@ -181,7 +203,7 @@ export class DrawingPlanEditor {
       this.pointerMove(event),
     );
     this.sheet.addEventListener("pointerleave", () => {
-      this.snap = undefined;
+      this.hover = undefined;
       this.renderOverlay();
     });
     for (const type of ["pointerup", "pointercancel"] as const)
@@ -190,6 +212,10 @@ export class DrawingPlanEditor {
         this.drag = undefined;
       });
     window.addEventListener("keydown", (event) => this.keyDown(event));
+    // Shift switches an edge between the whole line and a point along it.
+    window.addEventListener("keyup", (event) => {
+      if (event.key === "Shift" && this.active) this.refreshHover(false);
+    });
     window.addEventListener("beforeunload", (event) => {
       if (this.dirty) {
         event.preventDefault();
@@ -262,7 +288,7 @@ export class DrawingPlanEditor {
   private setTool(tool: "select" | "measure" | "text") {
     this.tool = tool;
     this.measure = undefined;
-    this.snap = undefined;
+    this.hover = undefined;
     byId("plan-measure").setAttribute(
       "aria-pressed",
       String(tool === "measure"),
@@ -271,7 +297,7 @@ export class DrawingPlanEditor {
     this.sheet.style.cursor = tool === "select" ? "" : "crosshair";
     this.status(
       tool === "measure"
-        ? measureHints[0]!
+        ? measureHints.first
         : tool === "text"
           ? "Click the sheet to place a note. Esc cancels."
           : "Drag items to move them. Delete removes the selection.",
@@ -337,6 +363,10 @@ export class DrawingPlanEditor {
         maxY = Math.max(maxY, lines[i + 1]!);
       }
     if (!Number.isFinite(minX)) minX = maxX = minY = maxY = 0;
+    // A hidden edge under a visible one would only be drawn over again.
+    const shown = uniqueSegments(visible);
+    visible = shown.lines;
+    hidden = uniqueSegments(hidden, shown.keys).lines;
     const result = {
       visible,
       hidden,
@@ -526,6 +556,14 @@ export class DrawingPlanEditor {
    * re-rasterised at the display's resolution instead of being stretched.
    */
   private applyZoom() {
+    // Wheel and drag events can outpace the display; one update per frame.
+    if (this.zoomFrame) return;
+    this.zoomFrame = requestAnimationFrame(() => {
+      this.zoomFrame = 0;
+      this.updateViewBox();
+    });
+  }
+  private updateViewBox() {
     const { x, y, scale } = this.viewport;
     const width = this.wrap.clientWidth,
       height = this.wrap.clientHeight;
@@ -557,14 +595,23 @@ export class DrawingPlanEditor {
           p.y <= item.y + item.height,
       );
   }
-  /** Prefer corners, then the nearest point on an edge, then the free point. */
-  private snapPoint(view: View, p: Point): Point & { snapped: boolean } {
+  /** Paper millimetres per screen pixel at the current zoom. */
+  private get pixel() {
+    return 1 / (this.sheet.getScreenCTM()?.a || 1);
+  }
+  /**
+   * A corner when one is close, else the edge under the pointer as a whole
+   * line, or with `alongEdge` the point on it; otherwise the free point.
+   * Reach is in screen pixels, so it feels the same at every zoom level.
+   */
+  private pickAt(view: View, p: Point, alongEdge: boolean): PlanPick {
     const lines = this.lines(view),
       target = this.toModel(view, p),
-      cornerReach = 2.5 * view.scale,
-      edgeReach = 1.5 * view.scale;
+      cornerReach = reach.corner * this.pixel * view.scale,
+      edgeReach = reach.edge * this.pixel * view.scale;
     let corner: { u: number; v: number; d: number } | undefined,
-      edge: { u: number; v: number; d: number } | undefined;
+      edge:
+        { a: ModelPoint; b: ModelPoint; at: ModelPoint; d: number } | undefined;
     for (const set of [lines.visible, lines.hidden])
       for (let i = 0; i + 3 < set.length; i += 4) {
         const ax = set[i]!,
@@ -590,12 +637,27 @@ export class DrawingPlanEditor {
         const u = ax + dx * t,
           v = ay + dy * t,
           d = Math.hypot(u - target.u, v - target.v);
-        if (d <= edgeReach && (!edge || d < edge.d)) edge = { u, v, d };
+        if (d <= edgeReach && (!edge || d < edge.d))
+          edge = {
+            a: { u: ax, v: ay },
+            b: { u: bx, v: by },
+            at: { u: fmt(u), v: fmt(v) },
+            d,
+          };
       }
-    const hit = corner ?? edge;
-    return hit
-      ? { ...this.toSheet(view, hit.u, hit.v), snapped: true }
-      : { ...p, snapped: false };
+    if (corner) return { kind: "point", at: { u: corner.u, v: corner.v } };
+    if (edge)
+      return alongEdge
+        ? { kind: "point", at: edge.at }
+        : { kind: "line", a: edge.a, b: edge.b, at: edge.at };
+    return { kind: "point", at: target, free: true };
+  }
+  private refreshHover(alongEdge: boolean) {
+    if (this.tool !== "measure" || !this.hover || this.measure?.b) return;
+    const view = this.views().find((item) => item.id === this.hover!.view);
+    if (!view) return;
+    this.hover.pick = this.pickAt(view, this.hover.p, alongEdge);
+    this.renderOverlay();
   }
   private itemAt(event: PointerEvent) {
     const element = event.target as Element;
@@ -631,7 +693,7 @@ export class DrawingPlanEditor {
       }
       const measure = this.measure;
       // Third click: the points are fixed, this one only places the line.
-      if (measure?.b) {
+      if (measure?.a && measure.b) {
         const item: Dimension = {
           id: uid(),
           kind: "dimension",
@@ -649,13 +711,25 @@ export class DrawingPlanEditor {
         this.change();
         return;
       }
-      const point = this.toModel(view, this.snapPoint(view, p));
-      if (!measure) this.measure = { view: view.id, a: point };
-      else if (Math.hypot(point.u - measure.a.u, point.v - measure.a.v) < 1e-6)
-        return;
-      else measure.b = point;
-      this.status(measureHints[this.measure!.b ? 2 : 1]!);
-      this.snap = undefined;
+      const pick = this.pickAt(view, p, event.shiftKey);
+      if (!measure) {
+        this.measure = { view: view.id, first: pick };
+        this.status(
+          pick.kind === "line"
+            ? measureHints.afterLine
+            : measureHints.afterPoint,
+        );
+      } else {
+        const pair = pickPair(measure.first, pick);
+        if (typeof pair === "string") {
+          this.status(pair);
+          return;
+        }
+        measure.a = { u: fmt(pair.a.u), v: fmt(pair.a.v) };
+        measure.b = { u: fmt(pair.b.u), v: fmt(pair.b.v) };
+        this.status(measureHints.place);
+      }
+      this.hover = { view: view.id, p };
       this.renderOverlay();
       return;
     }
@@ -676,12 +750,14 @@ export class DrawingPlanEditor {
     const p = this.point(event);
     if (this.tool === "measure") {
       const view = this.measureView(p);
-      // Placing the line follows the cursor freely; only points snap.
-      this.snap = !view
-        ? undefined
-        : this.measure?.b
-          ? { ...p, snapped: false }
-          : this.snapPoint(view, p);
+      // Placing the line follows the cursor freely; only the targets snap.
+      this.hover = view && {
+        view: view.id,
+        p,
+        ...(!this.measure?.b && {
+          pick: this.pickAt(view, p, event.shiftKey),
+        }),
+      };
       this.renderOverlay();
       return;
     }
@@ -712,7 +788,7 @@ export class DrawingPlanEditor {
     this.drag.moved = true;
     this.dirty = true;
     this.status("Unsaved changes · Save plan to update the PDF and DXF");
-    this.renderSheet();
+    this.redraw(item);
   }
   /** Once a dimension is started, it stays in the view it started in. */
   private measureView(p: Point) {
@@ -737,6 +813,10 @@ export class DrawingPlanEditor {
       )
     )
       return;
+    if (event.key === "Shift") {
+      this.refreshHover(true);
+      return;
+    }
     if (event.key === "Escape") {
       if (this.tool !== "select") this.setTool("select");
       else if (this.selected) {
@@ -789,29 +869,51 @@ export class DrawingPlanEditor {
   }
   private renderOverlay() {
     this.overlay.replaceChildren();
-    const color = "#09a68d";
-    const marker = (p: Point, snapped: boolean) =>
+    if (this.tool !== "measure") return;
+    const color = "#09a68d",
+      px = this.pixel,
+      measure = this.measure,
+      hover = this.hover,
+      view = this.views().find(
+        (item) => item.id === (measure?.view ?? hover?.view),
+      );
+    if (!view) return;
+    const at = (point: ModelPoint) => this.toSheet(view, point.u, point.v);
+    // Markers are sized in screen pixels, so they stay put while zooming.
+    const show = (pick: PlanPick) => {
+      if (pick.kind === "line") {
+        const a = at(pick.a),
+          b = at(pick.b);
+        this.overlay.append(
+          svgNode("line", {
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            stroke: color,
+            "stroke-opacity": 0.75,
+            "stroke-width": 3 * px,
+            "stroke-linecap": "round",
+          }),
+        );
+        return;
+      }
+      const p = at(pick.at);
       this.overlay.append(
         svgNode("circle", {
           cx: p.x,
           cy: p.y,
-          r: snapped ? 1.6 : 1,
-          fill: snapped ? "#09a68d55" : "none",
+          r: (pick.free ? 3.5 : 5) * px,
+          fill: pick.free ? "none" : "#09a68d55",
           stroke: color,
-          "stroke-width": 0.4,
+          "stroke-width": 1.5 * px,
         }),
       );
-    const measure = this.measure,
-      view = this.views().find((item) => item.id === measure?.view);
-    if (!measure || !view) {
-      if (this.tool === "measure" && this.snap)
-        marker(this.snap, this.snap.snapped);
-      return;
-    }
-    const first = this.toSheet(view, measure.a.u, measure.a.v);
-    marker(first, true);
-    if (measure.b) {
-      marker(this.toSheet(view, measure.b.u, measure.b.v), true);
+    };
+    if (measure?.a && measure.b) {
+      show(measure.first);
+      show({ kind: "point", at: measure.a });
+      show({ kind: "point", at: measure.b });
       // The finished dimension, its line under the cursor until placed.
       this.drawDimension(
         this.overlay,
@@ -821,8 +923,8 @@ export class DrawingPlanEditor {
           v1: measure.a.v,
           u2: measure.b.u,
           v2: measure.b.v,
-          offset: this.snap
-            ? this.offsetAt(view, measure.a, measure.b, this.snap)
+          offset: hover
+            ? this.offsetAt(view, measure.a, measure.b, hover.p)
             : 8,
           label: "",
         },
@@ -830,57 +932,56 @@ export class DrawingPlanEditor {
       );
       return;
     }
-    if (!this.snap) return;
-    marker(this.snap, this.snap.snapped);
+    if (measure) show(measure.first);
+    if (!hover?.pick) return;
+    show(hover.pick);
+    if (!measure) return;
+    const pair = pickPair(measure.first, hover.pick);
+    if (typeof pair === "string") return;
+    const a = at(pair.a),
+      b = at(pair.b);
     this.overlay.append(
       svgNode("line", {
-        x1: first.x,
-        y1: first.y,
-        x2: this.snap.x,
-        y2: this.snap.y,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
         stroke: color,
-        "stroke-width": 0.35,
-        "stroke-dasharray": "1.5 1",
+        "stroke-width": 1.2 * px,
+        "stroke-dasharray": `${6 * px} ${4 * px}`,
       }),
       svgNode(
         "text",
         {
-          x: this.snap.x + 3,
-          y: this.snap.y - 3,
-          "font-size": 3.5,
+          x: hover.p.x + 10 * px,
+          y: hover.p.y - 10 * px,
+          "font-size": 12 * px,
           fill: "#067a68",
         },
-        `${fmt(Math.hypot(this.snap.x - first.x, this.snap.y - first.y) * view.scale)} mm`,
+        `${fmt(Math.hypot(pair.b.u - pair.a.u, pair.b.v - pair.a.v))} mm`,
       ),
     );
   }
   private renderSheet() {
     const { width, height } = planSheet;
-    const shadow = svgNode("filter", {
-      id: "plan-sheet-shadow",
-      x: "-10%",
-      y: "-10%",
-      width: "120%",
-      height: "120%",
-    });
-    shadow.append(
-      svgNode("feDropShadow", {
-        dx: 0,
-        dy: 2,
-        stdDeviation: 3,
-        "flood-opacity": 0.45,
+    // Stacked translucent rects rather than a blur filter: a filter is
+    // re-rendered over the whole page at screen resolution on every repaint,
+    // which grows with the zoom until panning a zoomed-in sheet crawls.
+    const shadow = [3, 2, 1].map((spread) =>
+      svgNode("rect", {
+        x: -spread,
+        y: 2 - spread,
+        width: width + spread * 2,
+        height: height + spread * 2,
+        rx: spread,
+        fill: "#000",
+        "fill-opacity": 0.12,
+        "pointer-events": "none",
       }),
     );
     this.sheet.replaceChildren(
-      shadow,
-      svgNode("rect", {
-        x: 0,
-        y: 0,
-        width,
-        height,
-        fill: "white",
-        filter: "url(#plan-sheet-shadow)",
-      }),
+      ...shadow,
+      svgNode("rect", { x: 0, y: 0, width, height, fill: "white" }),
       svgNode("rect", {
         x: 10,
         y: 10,
@@ -917,109 +1018,157 @@ export class DrawingPlanEditor {
       ),
     );
     this.sheet.append(block);
-    const selectedColor = "#09a68d";
+    this.nodes.clear();
     for (const item of this.items) {
-      const chosen = this.selected === item.id;
-      const g = svgNode("g", {
-        "data-plan-id": item.id,
-        class: "plan-item" + (chosen ? " plan-selected" : ""),
-      });
-      if (item.kind === "view") {
-        const clipId = "clip_" + item.id;
-        const clip = svgNode("clipPath", { id: clipId });
-        clip.append(
-          svgNode("rect", {
-            x: item.x,
-            y: item.y,
-            width: item.width,
-            height: item.height,
-          }),
-        );
-        this.sheet.append(clip);
-        g.append(
-          svgNode("rect", {
-            x: item.x,
-            y: item.y,
-            width: item.width,
-            height: item.height,
-            fill: chosen ? "#f2fbf9" : "#ffffff00",
-            stroke: chosen ? selectedColor : "#b9c6cb",
-            "stroke-width": chosen ? 0.4 : 0.25,
-            "stroke-dasharray": chosen ? "" : "2 1.5",
-            "data-plan-frame": "",
-          }),
-        );
-        const lines = this.lines(item);
-        for (const [set, dashed] of [
-          [lines.hidden, true],
-          [lines.visible, false],
-        ] as const) {
-          if (!set.length) continue;
-          let d = "";
-          for (let i = 0; i + 3 < set.length; i += 4) {
-            const a = this.toSheet(item, set[i]!, set[i + 1]!),
-              b = this.toSheet(item, set[i + 2]!, set[i + 3]!);
-            d += `M${fmt(a.x)},${fmt(a.y)}L${fmt(b.x)},${fmt(b.y)}`;
-          }
-          g.append(
-            svgNode("path", {
-              d,
-              "clip-path": `url(#${clipId})`,
-              stroke: dashed ? "#6b7d84" : "#24343b",
-              "stroke-width": dashed ? 0.18 : lines.exact ? 0.35 : 0.2,
-              "stroke-dasharray": dashed ? "2 1" : "",
-              "stroke-linecap": "round",
-              fill: "none",
-            }),
-          );
-        }
-        g.append(
-          svgNode(
-            "text",
-            {
-              x: item.x,
-              y: item.y + item.height + 5,
-              "font-size": 3.5,
-              fill: "#24343b",
-            },
-            (item.label || this.caption(item)) +
-              (lines.exact ? "" : "  (wireframe preview · save to refine)"),
-          ),
-        );
-        if (chosen)
-          g.append(
-            svgNode("rect", {
-              x: item.x + item.width - 2.5,
-              y: item.y + item.height - 2.5,
-              width: 5,
-              height: 5,
-              fill: selectedColor,
-              "data-plan-resize": "",
-              style: "cursor: nwse-resize",
-            }),
-          );
-      } else if (item.kind === "dimension") {
-        const view = this.views().find((v) => v.id === item.view);
-        if (!view) continue;
-        this.drawDimension(g, view, item, chosen ? selectedColor : "#235767");
-      } else
-        g.append(
-          svgNode(
-            "text",
-            {
-              x: item.x,
-              y: item.y,
-              "font-size": item.size,
-              fill: chosen ? selectedColor : "#24343b",
-              style: "cursor: move",
-            },
-            item.text,
-          ),
-        );
-      this.sheet.append(g);
+      const node = this.itemNode(item);
+      if (!node) continue;
+      this.nodes.set(item.id, node);
+      this.sheet.append(node);
     }
     this.sheet.append(this.overlay);
     this.renderOverlay();
+  }
+  /**
+   * Redraws one item and the dimensions hanging off it in place, so dragging
+   * does not rebuild the whole sheet on every move.
+   */
+  private redraw(item: PlanItem) {
+    for (const entry of this.items) {
+      if (
+        entry !== item &&
+        !(entry.kind === "dimension" && entry.view === item.id)
+      )
+        continue;
+      const old = this.nodes.get(entry.id),
+        node = this.itemNode(entry);
+      if (!old || !node) {
+        this.renderSheet();
+        return;
+      }
+      old.replaceWith(node);
+      this.nodes.set(entry.id, node);
+    }
+  }
+  private itemNode(item: PlanItem): SVGElement | undefined {
+    const selectedColor = "#09a68d";
+    const chosen = this.selected === item.id;
+    const g = svgNode("g", {
+      "data-plan-id": item.id,
+      class: "plan-item" + (chosen ? " plan-selected" : ""),
+    });
+    if (item.kind === "view") {
+      const clipId = "clip_" + item.id;
+      const clip = svgNode("clipPath", { id: clipId });
+      clip.append(
+        svgNode("rect", {
+          x: item.x,
+          y: item.y,
+          width: item.width,
+          height: item.height,
+        }),
+      );
+      g.append(clip);
+      g.append(
+        svgNode("rect", {
+          x: item.x,
+          y: item.y,
+          width: item.width,
+          height: item.height,
+          fill: chosen ? "#f2fbf9" : "#ffffff00",
+          stroke: chosen ? selectedColor : "#b9c6cb",
+          "stroke-width": chosen ? 0.4 : 0.25,
+          "stroke-dasharray": chosen ? "" : "2 1.5",
+          "data-plan-frame": "",
+        }),
+      );
+      const lines = this.lines(item);
+      const clipped = svgNode("g", { "clip-path": `url(#${clipId})` });
+      clipped.append(this.drawnLines(item, lines));
+      g.append(clipped);
+      g.append(
+        svgNode(
+          "text",
+          {
+            x: item.x,
+            y: item.y + item.height + 5,
+            "font-size": 3.5,
+            fill: "#24343b",
+          },
+          (item.label || this.caption(item)) +
+            (lines.exact ? "" : "  (wireframe preview · save to refine)"),
+        ),
+      );
+      if (chosen)
+        g.append(
+          svgNode("rect", {
+            x: item.x + item.width - 2.5,
+            y: item.y + item.height - 2.5,
+            width: 5,
+            height: 5,
+            fill: selectedColor,
+            "data-plan-resize": "",
+            style: "cursor: nwse-resize",
+          }),
+        );
+    } else if (item.kind === "dimension") {
+      const view = this.views().find((v) => v.id === item.view);
+      if (!view) return undefined;
+      this.drawDimension(g, view, item, chosen ? selectedColor : "#235767");
+    } else
+      g.append(
+        svgNode(
+          "text",
+          {
+            x: item.x,
+            y: item.y,
+            "font-size": item.size,
+            fill: chosen ? selectedColor : "#24343b",
+            style: "cursor: move",
+          },
+          item.text,
+        ),
+      );
+    return g;
+  }
+  /**
+   * A view's linework as path elements, built once per geometry and placed on
+   * the sheet by a transform. Moving, resizing or rescaling a view then only
+   * changes attributes, and the paths stay in model millimetres, tiled so a
+   * zoomed-in sheet repaints just the tiles on screen.
+   */
+  private drawnLines(view: View, lines: Linework) {
+    let group = this.drawn.get(lines);
+    if (!group) {
+      group = svgNode("g", { fill: "none", "stroke-linecap": "round" });
+      const tile = Math.max(lines.width, lines.height, 1) / 12;
+      for (const [set, layer] of [
+        [lines.hidden, "hidden"],
+        [lines.visible, "visible"],
+      ] as const) {
+        if (!set.length) continue;
+        const paths = svgNode("g", { "data-lines": layer });
+        for (const d of tiledPaths(set, tile))
+          paths.append(svgNode("path", { d }));
+        group.append(paths);
+      }
+      this.drawn.set(lines, group);
+    }
+    // Stroke widths are paper millimetres, so they grow with the model scale.
+    const s = view.scale;
+    group.setAttribute(
+      "transform",
+      `matrix(${1 / s},0,0,${-1 / s},${view.x + view.width / 2 - lines.cx / s},${view.y + view.height / 2 + lines.cy / s})`,
+    );
+    for (const layer of group.children) {
+      const dashed = layer.getAttribute("data-lines") === "hidden";
+      layer.setAttribute("stroke", dashed ? "#6b7d84" : "#24343b");
+      layer.setAttribute(
+        "stroke-width",
+        String((dashed ? 0.18 : lines.exact ? 0.35 : 0.2) * s),
+      );
+      if (dashed) layer.setAttribute("stroke-dasharray", `${2 * s} ${s}`);
+    }
+    return group;
   }
   /** A dimension as drawn on the sheet; also previews one being placed. */
   private drawDimension(
@@ -1296,7 +1445,7 @@ export class DrawingPlanEditor {
       hint(
         this.items.length
           ? "Select an item to edit it. Save plan writes the recipe beside the project and adds every sheet to the build as a page of the PDF and DXF."
-          : "Use ▣ to add a view of the model, ◫ to place a part from 2D geometry, ⌁ to dimension it and T for notes. + above the sheet adds another sheet.",
+          : "Use ▣ to add a view of the model, ◫ to place a part from 2D geometry, the ruler to measure and dimension it and T for notes. + above the sheet adds another sheet.",
       );
       if (this.plan.sheets.length > 1) {
         const remove = document.createElement("button");

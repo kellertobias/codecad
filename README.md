@@ -85,11 +85,14 @@ same PDF and DXF. **Place part** (◫) lists the parts the **2D geometry** tab
 shows (the sheet parts of a `ManufacturingDxf` with `showInDrawings: true`) and
 places one as it is cut, from the same outline, drill and cut geometry; it can be
 turned, scaled and dimensioned like any other view.
-**Dimension** (⌁) takes three clicks: the first point, the second point, then
-where the dimension line goes, with a live preview until it is placed. The two
-points snap to corners and edges and are
-stored in the view's model coordinates, so the value is exact, follows the view
-when it moves, and updates when the design changes. Drag a dimension to slide
+**Measure** (the ruler, the same tool as in the 3D view) takes three clicks:
+two targets, then where the dimension line goes, with the live distance and a
+preview until it is placed. A target is a corner or a whole edge: two corners
+give their distance, an edge and a corner the perpendicular distance from the
+edge's line to the corner, two parallel edges the gap between them, and the
+same edge twice its length. Hold Shift to pick a point along an edge instead.
+The measured points are stored in the view's model coordinates, so the value is
+exact, follows the view when it moves, and updates when the design changes. Drag a dimension to slide
 its line, press Delete to remove the selection, Esc to cancel a tool, and the
 arrow keys to nudge (Shift for 10 mm). **Save plan** (Cmd/Ctrl+S while the editor
 is open) writes a `<project>.drawings.json` recipe beside the project source and

@@ -1930,10 +1930,14 @@ events.onerror = () => {
   $("status").textContent = "○ Reconnecting…";
 };
 let last = performance.now();
+const modelTab = $("model");
 function animate(now: number) {
   requestAnimationFrame(animate);
   const dt = (now - last) / 1000;
   last = now;
+  // The 3D scene is hidden behind every other tab; drawing it there only
+  // takes frames away from the 2D views that are on screen.
+  if (!modelTab.classList.contains("active")) return;
   const animation = selectedAnimation();
   if (playing && (animation?.frames.length ?? model?.frames.length)) {
     time = (time + dt / (animation?.duration ?? model!.duration)) % 2;
