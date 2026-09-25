@@ -16,6 +16,7 @@ import {
 } from "./network.js";
 import { openWorkspace } from "./workspace.js";
 import { handleProjects } from "./projects-api.js";
+import { JobQueue } from "./jobs.js";
 import {
   kernelBundleOptions,
   copyKernelWasm,
@@ -162,10 +163,21 @@ let state: {
   /** How far the running build is, from 0 to 1, while it reports it. */
   progress?: number;
 } = { phase: "starting", generation: 0, message: "Loading project", log: "" };
-/** Files being generated on request, by name, so each download can show it. */
-const exporting: Record<string, Progress> = {};
+/** Slow work done on request, such as exports. Every page hears about the
+ * queue's progress through the event stream. */
+const jobs = new JobQueue({ concurrency: 2, onChange: () => broadcast() });
+/** Files being generated on request, by name, so each download can show
+ * its progress. */
+const exporting = (): Record<string, Progress> =>
+  Object.fromEntries(
+    jobs.snapshot().map((job) => [job.label, job.progress as Progress]),
+  );
 const announced = () =>
-  JSON.stringify({ ...state, exporting, bundle: bundleVersion });
+  JSON.stringify({
+    ...state,
+    exporting: exporting(),
+    bundle: bundleVersion,
+  });
 function broadcast() {
   for (const listener of listeners)
     listener.write("data: " + announced() + "\n\n");
@@ -284,97 +296,77 @@ if (!process.env.CODECAD_DESKTOP)
 function hash(text: string) {
   return createHash("sha256").update(text).digest("hex");
 }
-const generating = new Map<string, Promise<void>>();
 async function generateArtifact(
   name: string,
   directory: string,
 ): Promise<void> {
   const path = join(directory, name);
-  try {
-    await stat(path);
-    return;
-  } catch {
-    /* Not generated yet. */
-  }
-  // One export worker per snapshot avoids overlapping writes when two
-  // formats of the same report are requested at the same time.
-  const previous = generating.get(directory);
-  exporting[name] = {
-    fraction: 0,
-    message: previous
-      ? `Waiting for another file · then ${name}`
-      : `Generating ${name}`,
-  };
-  broadcast();
-  const running = (previous ?? Promise.resolve())
-    .catch(() => {})
-    .then(async () => {
-      try {
-        await stat(path);
-        return;
-      } catch {
-        /* Another request may have completed it. */
-      }
-      await new Promise<void>((resolve, reject) => {
-        const native = process.env.CODECAD_COMPILER !== "esbuild";
-        const child = spawn(
-          process.execPath,
-          [
-            "--enable-source-maps",
-            "--import",
-            native ? join(root, "src/native-loader.mjs") : "tsx",
-            join(root, "src/worker.ts"),
-            entry,
-            directory,
-          ],
-          {
-            cwd: root,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: {
-              ...process.env,
-              CODECAD_EXPORT_ONLY: name,
-              CODECAD_PROGRESS: "1",
-              CODECAD_PARAMETER_VALUES:
-                snapshotParameters.get(directory) ?? "{}",
-              ...(native
-                ? { CODECAD_NATIVE_OUTPUT: join(directory, ".native/js") }
-                : {}),
-            },
-          },
-        );
-        let log = "";
-        const collect = (chunk: Buffer | string) => {
-          log = (log + chunk.toString()).slice(-4000);
-        };
-        child.stdout?.on(
-          "data",
-          progressReader((progress) => {
-            exporting[name] = progress;
-            broadcast();
-          }, collect),
-        );
-        child.stderr?.on("data", collect);
-        const timeout = setTimeout(() => child.kill("SIGTERM"), 120000);
-        child.on("error", reject);
-        child.on("close", (code) => {
-          clearTimeout(timeout);
-          if (code === 0) resolve();
-          else
-            reject(
-              new Error(`Export failed (${code ?? "terminated"}): ${log}`),
-            );
-        });
-      });
-    });
-  generating.set(directory, running);
-  try {
-    await running;
-  } finally {
-    if (generating.get(directory) === running) generating.delete(directory);
-    delete exporting[name];
-    broadcast();
-  }
+  const exists = () =>
+    stat(path).then(
+      () => true,
+      () => false,
+    );
+  if (await exists()) return;
+  // One lane per build directory: overlapping export workers would write
+  // into the same snapshot when two formats of one report are requested.
+  await jobs.run({
+    key: `${directory}\0${name}`,
+    lane: directory,
+    label: name,
+    work: async (report) => {
+      // Another request may have made it while this one waited.
+      if (await exists()) return;
+      await exportArtifact(name, directory, report);
+    },
+  });
   await stat(path);
+}
+/** Runs a worker that writes one lazy output of a build directory. */
+function exportArtifact(
+  name: string,
+  directory: string,
+  report: (progress: Progress) => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const native = process.env.CODECAD_COMPILER !== "esbuild";
+    const child = spawn(
+      process.execPath,
+      [
+        "--enable-source-maps",
+        "--import",
+        native ? join(root, "src/native-loader.mjs") : "tsx",
+        join(root, "src/worker.ts"),
+        entry,
+        directory,
+      ],
+      {
+        cwd: root,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CODECAD_EXPORT_ONLY: name,
+          CODECAD_PROGRESS: "1",
+          CODECAD_PARAMETER_VALUES: snapshotParameters.get(directory) ?? "{}",
+          ...(native
+            ? { CODECAD_NATIVE_OUTPUT: join(directory, ".native/js") }
+            : {}),
+        },
+      },
+    );
+    let log = "";
+    const collect = (chunk: Buffer | string) => {
+      log = (log + chunk.toString()).slice(-4000);
+    };
+    child.stdout?.on("data", progressReader(report, collect));
+    child.stderr?.on("data", collect);
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 120000);
+    child.on("error", reject);
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve();
+      else reject(new Error(`Export failed (${code ?? "terminated"}): ${log}`));
+    });
+  });
 }
 const server = createServer(async (req, res) => {
   try {
