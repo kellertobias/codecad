@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/kellertobias/codecad/compare/v0.11.0...v0.12.0) (2026-09-25)
+
+
+### Features
+
+* restart the dev server when server.ts changes ([253ce6a](https://github.com/kellertobias/codecad/commit/253ce6a205c0622554464773669f73e9619c7f9f))
+
 # [0.11.0](https://github.com/kellertobias/codecad/compare/v0.10.0...v0.11.0) (2026-09-25)
 
 
