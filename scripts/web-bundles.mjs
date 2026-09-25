@@ -28,9 +28,10 @@ export function kernelBundleOptions(root, outdir) {
     platform: "browser",
     target: "es2022",
     sourcemap: true,
-    // Emscripten's loader requires Node modules on a path a browser never
-    // takes; leaving them external keeps the bundle resolvable.
-    external: ["node:*"],
+    // The Emscripten loaders of the kernel and the sketch solver require
+    // Node modules on a path a browser never takes; leaving them external
+    // keeps the bundle resolvable.
+    external: ["node:*", "module", "fs", "path", "url"],
     plugins: [browserKernel(root)],
   };
 }
