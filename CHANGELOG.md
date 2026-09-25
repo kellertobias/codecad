@@ -1,3 +1,10 @@
+# [0.10.0](https://github.com/kellertobias/codecad/compare/v0.9.0...v0.10.0) (2026-09-25)
+
+
+### Features
+
+* group the Exports view into sections and fold hardware into one branch ([3ee8afd](https://github.com/kellertobias/codecad/commit/3ee8afd209ce4b7c5d80232d0f5b2c2b0c790c82))
+
 # [0.9.0](https://github.com/kellertobias/codecad/compare/v0.8.0...v0.9.0) (2026-09-24)
 
 
