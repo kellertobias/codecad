@@ -43,3 +43,51 @@ export function meshTransferables(mesh: ShapeMesh): ArrayBuffer[] {
     (array) => array.buffer as ArrayBuffer,
   );
 }
+
+/** A solid tessellated for display and picking: its triangles grouped by
+ * the face they belong to, and its true edges grouped by edge. */
+export interface BodyMesh {
+  readonly positions: Float32Array;
+  readonly normals: Float32Array;
+  readonly indices: Uint32Array;
+  /** Per face: the first index into `indices`, how many, and the face's
+   * hash (what the kernel calls it; stable within one evaluation). */
+  readonly faces: Float64Array;
+  /** Line segments along the edges, as xyz pairs. */
+  readonly edges: Float32Array;
+  /** Per edge: the first vertex in `edges`, how many, and its hash. */
+  readonly edgeGroups: Float64Array;
+}
+
+export function meshBody(shape: b.Shape3D): BodyMesh {
+  const mesh = b.mesh(shape, {
+    tolerance: 0.05,
+    angularTolerance: 0.1,
+    cache: false,
+  });
+  const lines = b.meshEdges(shape, { tolerance: 0.05, cache: false });
+  return {
+    positions: mesh.vertices,
+    normals: mesh.normals,
+    indices: mesh.triangles,
+    faces: Float64Array.from(
+      mesh.faceGroups.flatMap((g) => [g.start, g.count, g.faceId]),
+    ),
+    edges: lines.lines,
+    edgeGroups: Float64Array.from(
+      lines.edgeGroups.flatMap((g) => [g.start, g.count, g.edgeId]),
+    ),
+  };
+}
+
+/** The buffers of a body mesh, for `postMessage`'s transfer list. */
+export function bodyMeshTransferables(mesh: BodyMesh): ArrayBuffer[] {
+  return [
+    mesh.positions,
+    mesh.normals,
+    mesh.indices,
+    mesh.faces,
+    mesh.edges,
+    mesh.edgeGroups,
+  ].map((array) => array.buffer as ArrayBuffer);
+}

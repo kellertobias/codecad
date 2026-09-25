@@ -1,16 +1,25 @@
 import type { Recipe } from "../../src/model.js";
-import type { KernelResponse } from "./protocol.js";
+import type { CadDocument } from "../../src/document/schema.js";
+import type { KernelRequest, KernelResponse } from "./protocol.js";
 
-type Result = Extract<KernelResponse, { type: "mesh" }>;
+type Answer<T extends KernelResponse["type"]> = Extract<
+  KernelResponse,
+  { type: T }
+>;
+type Request = KernelRequest extends infer R
+  ? R extends KernelRequest
+    ? Omit<R, "id">
+    : never
+  : never;
 
-/** The page's handle on the kernel worker: evaluates recipes and resolves
- * with their meshes. */
+/** The page's handle on the kernel worker: sends requests and resolves
+ * with the worker's answers. */
 export class KernelClient {
-  readonly ready: Promise<Extract<KernelResponse, { type: "ready" }>>;
+  readonly ready: Promise<Answer<"ready">>;
   private readonly worker: Worker;
   private readonly pending = new Map<
     number,
-    { resolve(result: Result): void; reject(error: Error): void }
+    { resolve(result: KernelResponse): void; reject(error: Error): void }
   >();
   private next = 1;
   private stop: (error: Error) => void = () => {};
@@ -38,15 +47,42 @@ export class KernelClient {
     });
   }
 
+  evaluate(recipe: Recipe): Promise<Answer<"mesh">> {
+    return this.send({ type: "evaluate", recipe });
+  }
+
+  /** Evaluates a solved document, up to feature index `until`. */
+  evaluateDocument(
+    document: CadDocument,
+    until?: number,
+  ): Promise<Answer<"model">> {
+    return this.send({
+      type: "document",
+      document,
+      ...(until === undefined ? {} : { until }),
+    });
+  }
+
+  pickFace(body: string, face: number): Promise<Answer<"face">> {
+    return this.send({ type: "pick-face", body, face });
+  }
+
+  pickEdge(body: string, edge: number): Promise<Answer<"edge">> {
+    return this.send({ type: "pick-edge", body, edge });
+  }
+
   /** Waits for the kernel first: the worker only starts listening once its
    * WASM has loaded, and a message sent before that would be lost. */
-  async evaluate(recipe: Recipe): Promise<Result> {
+  private async send<T>(request: Request): Promise<T> {
     if (this.stopped) throw new Error("Kernel worker stopped");
     await this.ready;
     const id = this.next++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, type: "evaluate", recipe });
+      this.pending.set(id, {
+        resolve: resolve as (result: KernelResponse) => void,
+        reject,
+      });
+      this.worker.postMessage({ id, ...request });
     });
   }
 

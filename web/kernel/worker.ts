@@ -1,8 +1,22 @@
 // The CAD kernel in a Web Worker: one long-lived OpenCascade session that
-// builds recipes and sends back meshes without copying them.
+// evaluates documents (keeping every feature's result for the next edit)
+// and recipes, and sends back meshes without copying them.
 import * as b from "brepjs/quick";
 import { OpenCascadeEngine, setRecipeFileReader } from "../../src/engine.js";
-import { meshShape, meshTransferables } from "../../src/kernel/mesh.js";
+import {
+  bodyMeshTransferables,
+  meshBody,
+  meshShape,
+  meshTransferables,
+  type BodyMesh,
+} from "../../src/kernel/mesh.js";
+import {
+  DocumentEvaluator,
+  referenceEdge,
+  referenceFace,
+  type Evaluation,
+} from "../../src/kernel/evaluator.js";
+import { describeParts } from "../../src/kernel/parts.js";
 import type { KernelRequest, KernelResponse } from "./protocol.js";
 
 // Only the browser-bundled "brepjs/quick" (src/kernel/browser-brepjs.ts)
@@ -20,11 +34,31 @@ const post = (message: KernelResponse, transfer: Transferable[] = []) =>
 
 post({ type: "ready", initMs, ...heap() });
 
+const evaluator = new DocumentEvaluator();
+let last: Evaluation | undefined;
+/** Meshes of shapes an earlier evaluation already sent, so bodies an edit
+ * did not touch are not tessellated again. */
+const meshes = new WeakMap<b.Shape3D, { mesh: BodyMesh; volume: number }>();
+
 self.onmessage = async (event: MessageEvent<KernelRequest>) => {
   const request = event.data;
-  // A fresh engine per request, disposed afterwards, so kernel memory does
-  // not grow with every edit. Per-feature caching arrives with the document
-  // evaluator; this worker only proves the kernel runs here.
+  try {
+    if (request.type === "evaluate") await evaluate(request);
+    else if (request.type === "document") document(request);
+    else if (request.type === "pick-face") pickFace(request);
+    else pickEdge(request);
+  } catch (error) {
+    post({
+      id: request.id,
+      type: "error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
+async function evaluate(request: Extract<KernelRequest, { type: "evaluate" }>) {
+  // A fresh engine per recipe, disposed afterwards, so kernel memory does
+  // not grow with every build.
   const engine = new OpenCascadeEngine();
   try {
     const started = performance.now();
@@ -43,16 +77,113 @@ self.onmessage = async (event: MessageEvent<KernelRequest>) => {
       },
       meshTransferables(mesh),
     );
-  } catch (error) {
-    post({
-      id: request.id,
-      type: "error",
-      message: error instanceof Error ? error.message : String(error),
-    });
   } finally {
     engine.dispose();
   }
-};
+}
+
+function document(request: Extract<KernelRequest, { type: "document" }>) {
+  const evaluation = evaluator.evaluate(
+    request.document,
+    request.until === undefined ? {} : { until: request.until },
+  );
+  last = evaluation;
+  const started = performance.now();
+  const transfer: ArrayBuffer[] = [];
+  const bodies = evaluation.bodies.map((body) => {
+    let cached = meshes.get(body.shape);
+    if (!cached) {
+      cached = {
+        mesh: meshBody(body.shape),
+        volume: b.unwrap(b.measureVolume(body.shape)),
+      };
+      meshes.set(body.shape, cached);
+    }
+    // The cache keeps its arrays; the page gets copies it can own.
+    const mesh = copy(cached.mesh);
+    transfer.push(...bodyMeshTransferables(mesh));
+    return {
+      id: body.id,
+      name: body.name,
+      feature: body.feature,
+      mesh,
+      volume: cached.volume,
+    };
+  });
+  const projections = [...evaluation.projections].map(
+    ([id, lines]) => [id, lines.slice()] as const,
+  );
+  transfer.push(...projections.map(([, lines]) => lines.buffer as ArrayBuffer));
+  post(
+    {
+      id: request.id,
+      type: "model",
+      bodies,
+      status: [...evaluation.status],
+      frames: [...evaluation.frames],
+      projections,
+      parts: describeParts(request.document, evaluation.bodies),
+      ms: evaluation.ms,
+      meshMs: performance.now() - started,
+      rerunFrom: evaluation.rerunFrom,
+    },
+    transfer,
+  );
+}
+
+const copy = (mesh: BodyMesh): BodyMesh => ({
+  positions: mesh.positions.slice(),
+  normals: mesh.normals.slice(),
+  indices: mesh.indices.slice(),
+  faces: mesh.faces.slice(),
+  edges: mesh.edges.slice(),
+  edgeGroups: mesh.edgeGroups.slice(),
+});
+
+function bodyOf(id: string) {
+  const body = last?.bodies.find((candidate) => candidate.id === id);
+  if (!body) throw new Error(`The body ${id} is not in the current model`);
+  return body;
+}
+
+function pickFace(request: Extract<KernelRequest, { type: "pick-face" }>) {
+  const body = bodyOf(request.body);
+  const face = b
+    .getFaces(body.shape)
+    .find((candidate) => b.getHashCode(candidate) === request.face);
+  if (!face) throw new Error("That face is not in the current model");
+  const ref = referenceFace(body, face);
+  post({
+    id: request.id,
+    type: "face",
+    planar: b.faceGeomType(face) === "PLANE",
+    ...(ref
+      ? { ref }
+      : {
+          reason:
+            "This face has no stable name (it was made by a fillet, chamfer or shell); pick a face an extrude or cut made",
+        }),
+  });
+}
+
+function pickEdge(request: Extract<KernelRequest, { type: "pick-edge" }>) {
+  const body = bodyOf(request.body);
+  const edge = b
+    .getEdges(body.shape)
+    .find((candidate) => b.getHashCode(candidate) === request.edge);
+  if (!edge) throw new Error("That edge is not in the current model");
+  const ref = referenceEdge(body, edge);
+  post({
+    id: request.id,
+    type: "edge",
+    ...(ref
+      ? { ref }
+      : {
+          reason:
+            "This edge does not join two named faces; pick an edge between faces an extrude or cut made",
+        }),
+  });
+}
 
 function heap(): { heapBytes?: number } {
   const memory = (performance as { memory?: { usedJSHeapSize: number } })
