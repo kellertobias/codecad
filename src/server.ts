@@ -4,7 +4,7 @@ import { watch } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve, join, dirname, basename } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
-import { build } from "esbuild";
+import { build, context, type BuildContext } from "esbuild";
 import { editorService } from "./editor-service.js";
 import { resolveParameters, type ParameterSchema } from "./parameters.js";
 import {
@@ -67,10 +67,16 @@ try {
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
+/** Counts Studio's own rebuilds: the page reloads itself when it changes. */
+let bundleVersion = 0;
+let bundleChanged = () => {};
+let bundle: BuildContext | undefined;
 if (process.env.CODECAD_DESKTOP) {
   await cp(join(root, "ui"), ui, { recursive: true });
 } else {
-  await build({
+  // A watch context rebuilds app.js whenever a file it bundles changes, so
+  // Studio changes show up without restarting the server.
+  bundle = await context({
     entryPoints: [join(root, "web/app.ts")],
     bundle: true,
     format: "esm",
@@ -79,7 +85,21 @@ if (process.env.CODECAD_DESKTOP) {
     outfile: join(ui, "app.js"),
     sourcemap: true,
     loader: { ".ttf": "dataurl" },
+    plugins: [
+      {
+        name: "studio-reload",
+        setup(build) {
+          let first = true;
+          build.onEnd((result) => {
+            if (first) first = false;
+            else if (!result.errors.length) bundleChanged();
+          });
+        },
+      },
+    ],
   });
+  await bundle.rebuild();
+  await bundle.watch();
   await build({
     entryPoints: {
       "ts.worker": join(
@@ -106,10 +126,15 @@ let generation = 0,
 const snapshotParameters = new Map<string, string>();
 let state: { phase: string; generation: number; message: string; log: string } =
   { phase: "starting", generation: 0, message: "Loading project", log: "" };
+const announced = () => JSON.stringify({ ...state, bundle: bundleVersion });
 function broadcast() {
   for (const listener of listeners)
-    listener.write("data: " + JSON.stringify(state) + "\n\n");
+    listener.write("data: " + announced() + "\n\n");
 }
+bundleChanged = () => {
+  bundleVersion++;
+  broadcast();
+};
 function rebuild() {
   const id = ++generation;
   if (child) child.kill("SIGTERM");
@@ -200,6 +225,14 @@ const watchers = [...new Set([dirname(entry), join(root, "src")])].map((path) =>
     if (file?.endsWith(".ts")) schedule();
   }),
 );
+// Stylesheets and the page are served straight from disk, so a change to
+// them only needs the page to reload.
+if (!process.env.CODECAD_DESKTOP)
+  watchers.push(
+    watch(join(root, "web"), (_event, file) => {
+      if (file?.endsWith(".css") || file?.endsWith(".html")) bundleChanged();
+    }),
+  );
 function hash(text: string) {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -302,7 +335,7 @@ const server = createServer(async (req, res) => {
         Connection: "keep-alive",
       });
       listeners.add(res);
-      res.write("data: " + JSON.stringify(state) + "\n\n");
+      res.write("data: " + announced() + "\n\n");
       req.on("close", () => listeners.delete(res));
       return;
     }
@@ -615,6 +648,7 @@ server.listen(port, "127.0.0.1", () => {
 function close() {
   clearTimeout(timer);
   child?.kill();
+  void bundle?.dispose();
   for (const watcher of watchers) watcher.close();
   for (const listener of listeners) listener.end();
   server.close();

@@ -262,8 +262,10 @@ Open **http://127.0.0.1:4317**. The default project is
 [the four-drawer cabinet](examples/kitchen-cabinet/index.ts).
 Edit its source in the application and press **Save & build** (Cmd/Ctrl+S), or save
 from your usual editor. Changes to project-directory and runtime TypeScript files
-trigger a fresh build. Select parts, hide panels, inspect drawings and sheet
-layouts, scrub drawer motion, or download the generated files.
+trigger a fresh build. Changes to Studio itself (`web/`) rebuild its bundle
+while the server runs, and the open page reloads to pick them up unless the
+editor holds unsaved edits. Select parts, hide panels, inspect drawings and
+sheet layouts, scrub drawer motion, or download the generated files.
 
 The Parts registry is an expandable ownership tree (also available as
 `project.registry.tree` and `project.parts.tree`). Selecting or hiding an assembly

@@ -1886,8 +1886,17 @@ whenRemembered((panes) => {
 });
 await loadPanes(token);
 const events = new EventSource("/api/events");
+/** The Studio build this page runs; a newer one on the server means reload. */
+let bundleShown: number | undefined;
 events.onmessage = async (event) => {
   const state = JSON.parse(event.data);
+  if (bundleShown === undefined) bundleShown = state.bundle;
+  else if (state.bundle !== bundleShown) {
+    // Unsaved edits would be lost, so leave those to the user.
+    if (!dirty) return location.reload();
+    $("source-status").textContent =
+      "Studio was updated · save or reload to pick it up";
+  }
   $("status").textContent =
     state.phase === "ready"
       ? "● Ready"
