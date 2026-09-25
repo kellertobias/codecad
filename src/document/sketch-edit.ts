@@ -617,3 +617,303 @@ export function solveDocument(
   });
   return { document: { ...document, features }, variables, solutions };
 }
+
+type Pt = { readonly x: number; readonly y: number };
+
+/** Where other curves cross a line, as fractions along it (0 at its start,
+ * 1 at its end), with the curve that crosses there. */
+function crossings(
+  sketch: SketchFeature,
+  line: Entity<"line">,
+): { t: number; by: string }[] {
+  const p0 = position(sketch, line.start);
+  const p1 = position(sketch, line.end);
+  const dx = p1.x - p0.x;
+  const dy = p1.y - p0.y;
+  const length2 = dx * dx + dy * dy;
+  const found: { t: number; by: string }[] = [];
+  const epsilon = 1e-9;
+  for (const other of sketch.entities) {
+    if (other.id === line.id) continue;
+    if (other.type === "line") {
+      const q0 = position(sketch, other.start);
+      const q1 = position(sketch, other.end);
+      const ex = q1.x - q0.x;
+      const ey = q1.y - q0.y;
+      const denominator = dx * ey - dy * ex;
+      if (Math.abs(denominator) < epsilon) continue;
+      const t = ((q0.x - p0.x) * ey - (q0.y - p0.y) * ex) / denominator;
+      const s = ((q0.x - p0.x) * dy - (q0.y - p0.y) * dx) / denominator;
+      if (s >= -epsilon && s <= 1 + epsilon) found.push({ t, by: other.id });
+    } else if (other.type === "circle" || other.type === "arc") {
+      const c = position(sketch, other.center);
+      const r =
+        other.type === "circle"
+          ? other.radius
+          : Math.hypot(
+              position(sketch, other.start).x - c.x,
+              position(sketch, other.start).y - c.y,
+            );
+      // |p0 + t d - c|² = r²
+      const fx = p0.x - c.x;
+      const fy = p0.y - c.y;
+      const b = 2 * (fx * dx + fy * dy);
+      const cc = fx * fx + fy * fy - r * r;
+      const disc = b * b - 4 * length2 * cc;
+      if (disc < 0 || !length2) continue;
+      for (const sign of [-1, 1]) {
+        const t = (-b + sign * Math.sqrt(disc)) / (2 * length2);
+        const at = { x: p0.x + t * dx, y: p0.y + t * dy };
+        if (other.type === "arc" && !onArc(sketch, other, at)) continue;
+        found.push({ t, by: other.id });
+      }
+    }
+  }
+  return found.filter((f) => f.t > 1e-6 && f.t < 1 - 1e-6);
+}
+
+function onArc(sketch: SketchFeature, arc: Entity<"arc">, p: Pt): boolean {
+  const c = position(sketch, arc.center);
+  const angle = (q: Pt) => Math.atan2(q.y - c.y, q.x - c.x);
+  const from = angle(position(sketch, arc.start));
+  const span =
+    (angle(position(sketch, arc.end)) - from + 4 * Math.PI) % (2 * Math.PI);
+  return (angle(p) - from + 4 * Math.PI) % (2 * Math.PI) <= span + 1e-9;
+}
+
+/** Removes the piece of a line between the crossings around `at`: the
+ * stretch that was clicked. A line nothing crosses is removed whole. The
+ * pieces that remain keep the line's orientation constraints, and their
+ * new ends stay on the curves that cut them. */
+export function trim(
+  sketch: SketchFeature,
+  lineId: string,
+  at: Pt,
+): SketchFeature {
+  const line = sketch.entities.find((e) => e.id === lineId);
+  if (line?.type !== "line") return sketch;
+  const cuts = crossings(sketch, line);
+  if (!cuts.length) return remove(sketch, new Set([lineId]));
+  const p0 = position(sketch, line.start);
+  const p1 = position(sketch, line.end);
+  const dx = p1.x - p0.x;
+  const dy = p1.y - p0.y;
+  const clicked =
+    ((at.x - p0.x) * dx + (at.y - p0.y) * dy) / (dx * dx + dy * dy);
+  const before = cuts.filter((c) => c.t < clicked).sort((a, b) => b.t - a.t)[0];
+  const after = cuts.filter((c) => c.t > clicked).sort((a, b) => a.t - b.t)[0];
+  const pointAt = (t: number) => ({ x: p0.x + t * dx, y: p0.y + t * dy });
+
+  let next = sketch;
+  const added: SketchEntity[] = [];
+  const scratch = () => ({ ...next, entities: [...next.entities, ...added] });
+  const newPoint = (t: number) => point(scratch(), pointAt(t), added);
+  const orientation = sketch.constraints.filter(
+    (c) =>
+      (c.type === "horizontal" || c.type === "vertical") && c.line === lineId,
+  );
+  const pins: NewConstraint[] = [];
+  let start = line.start;
+  let end = line.end;
+  let copy: Entity<"line"> | undefined;
+  if (before && after) {
+    // Cut out the middle: this line keeps its start, a new one takes the
+    // far end.
+    const a = newPoint(before.t);
+    const b = newPoint(after.t);
+    end = a;
+    copy = { id: newId("l", scratch()), type: "line", start: b, end: line.end };
+    added.push(copy);
+    pins.push(
+      { type: "onEntity", point: a, entity: before.by },
+      { type: "onEntity", point: b, entity: after.by },
+    );
+  } else if (after) {
+    start = newPoint(after.t);
+    pins.push({ type: "onEntity", point: start, entity: after.by });
+  } else if (before) {
+    end = newPoint(before.t);
+    pins.push({ type: "onEntity", point: end, entity: before.by });
+  }
+  // New points go first: every entity must come after the points it uses,
+  // and the trimmed line, earlier in the list, now uses them.
+  next = {
+    ...next,
+    entities: [
+      ...added.filter((e) => e.type === "point"),
+      ...next.entities.map((e) => (e.id === lineId ? { ...e, start, end } : e)),
+      ...added.filter((e) => e.type !== "point"),
+    ],
+  };
+  if (copy)
+    for (const c of orientation)
+      next = addConstraint(next, {
+        ...c,
+        line: copy.id,
+      } as NewConstraint).sketch;
+  for (const pin of pins) next = addConstraint(next, pin).sketch;
+  // Ends the trimmed line let go of, when nothing else uses them.
+  const cut = new Set(
+    [line.start, line.end].filter(
+      (p) => p !== start && p !== end && p !== copy?.end,
+    ),
+  );
+  const used = (id: string) =>
+    next.entities.some(
+      (e) =>
+        (e.type === "line" && (e.start === id || e.end === id)) ||
+        (e.type === "arc" &&
+          (e.start === id || e.end === id || e.center === id)) ||
+        (e.type === "circle" && e.center === id),
+    );
+  const orphans = new Set([...cut].filter((id) => !used(id)));
+  return orphans.size ? remove(next, orphans) : next;
+}
+
+/** Whether `selection` can be offset: one line, one circle, or lines that
+ * form one closed loop. */
+export function canOffset(
+  sketch: SketchFeature,
+  selection: readonly string[],
+): boolean {
+  return (
+    loopOf(sketch, selection) !== undefined ||
+    single(sketch, selection) !== undefined
+  );
+}
+
+function single(sketch: SketchFeature, selection: readonly string[]) {
+  if (selection.length !== 1) return undefined;
+  const entity = sketch.entities.find((e) => e.id === selection[0]);
+  return entity?.type === "line" || entity?.type === "circle"
+    ? entity
+    : undefined;
+}
+
+/** The selected lines in loop order, each with the point it starts from,
+ * when they form one closed loop. */
+function loopOf(
+  sketch: SketchFeature,
+  selection: readonly string[],
+): { line: Entity<"line">; from: string; to: string }[] | undefined {
+  const lines = selection
+    .map((id) => sketch.entities.find((e) => e.id === id))
+    .filter((e): e is Entity<"line"> => e?.type === "line");
+  if (lines.length < 3 || lines.length !== selection.length) return undefined;
+  const ordered: { line: Entity<"line">; from: string; to: string }[] = [];
+  let current = lines[0]!;
+  let from = current.start;
+  const left = new Set(lines.slice(1));
+  for (;;) {
+    const to = current.start === from ? current.end : current.start;
+    ordered.push({ line: current, from, to });
+    const next = [...left].find((l) => l.start === to || l.end === to);
+    if (!next) break;
+    left.delete(next);
+    current = next;
+    from = to;
+  }
+  const closed =
+    !left.size && ordered[ordered.length - 1]!.to === ordered[0]!.from;
+  return closed ? ordered : undefined;
+}
+
+/** A copy of the selection `distance` away, constrained to stay that far:
+ * outwards for a loop of lines and a circle (inwards when negative), to the
+ * left of a single line. `value` is the expression the distance
+ * constraints get, so an offset can follow a variable. */
+export function offset(
+  sketch: SketchFeature,
+  selection: readonly string[],
+  distance: number,
+  value: string,
+): Edit | undefined {
+  const loop = loopOf(sketch, selection);
+  const one = single(sketch, selection);
+  if (one?.type === "circle") {
+    const radius = one.radius + distance;
+    if (radius <= 0) return undefined;
+    return addCircle(sketch, { id: one.center }, radius);
+  }
+  if (one?.type === "line") {
+    const a = position(sketch, one.start);
+    const b = position(sketch, one.end);
+    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = (-(b.y - a.y) / length) * distance;
+    const ny = ((b.x - a.x) / length) * distance;
+    const made = addLine(
+      sketch,
+      { x: a.x + nx, y: a.y + ny },
+      { x: b.x + nx, y: b.y + ny },
+    );
+    const copy = made.created[made.created.length - 1]!;
+    let next = addConstraint(made.sketch, {
+      type: "parallel",
+      a: one.id,
+      b: copy,
+    }).sketch;
+    next = addConstraint(next, {
+      type: "distance",
+      a: one.id,
+      b: copy,
+      value,
+    }).sketch;
+    return { sketch: next, created: made.created };
+  }
+  if (!loop) return undefined;
+  const corners = loop.map((edge) => position(sketch, edge.from));
+  // Counter-clockwise loops grow outwards to their right.
+  let twice = 0;
+  corners.forEach((p, i) => {
+    const q = corners[(i + 1) % corners.length]!;
+    twice += p.x * q.y - q.x * p.y;
+  });
+  const outward = twice > 0 ? -1 : 1;
+  // Each edge moved sideways; new corners where neighbouring edges meet.
+  const shifted = loop.map((_, i) => {
+    const a = corners[i]!;
+    const b = corners[(i + 1) % corners.length]!;
+    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = (-(b.y - a.y) / length) * distance * outward;
+    const ny = ((b.x - a.x) / length) * distance * outward;
+    return { a: { x: a.x + nx, y: a.y + ny }, b: { x: b.x + nx, y: b.y + ny } };
+  });
+  const newCorners = shifted.map((edge, i) => {
+    const previous = shifted[(i - 1 + shifted.length) % shifted.length]!;
+    return intersect(previous.a, previous.b, edge.a, edge.b) ?? edge.a;
+  });
+  const added: SketchEntity[] = [];
+  const scratch = () => ({
+    ...sketch,
+    entities: [...sketch.entities, ...added],
+  });
+  const ids = newCorners.map((p) => point(scratch(), p, added));
+  const lineIds = ids.map((id, i) => {
+    const line: Entity<"line"> = {
+      id: newId("l", scratch()),
+      type: "line",
+      start: id,
+      end: ids[(i + 1) % ids.length]!,
+    };
+    added.push(line);
+    return line.id;
+  });
+  const constraints: NewConstraint[] = loop.flatMap((edge, i) => [
+    { type: "parallel" as const, a: edge.line.id, b: lineIds[i]! },
+    { type: "distance" as const, a: edge.line.id, b: lineIds[i]!, value },
+  ]);
+  return {
+    sketch: withEntities(sketch, added, constraints),
+    created: added.map((e) => e.id),
+  };
+}
+
+/** Where the infinite lines through a–b and c–d meet. */
+function intersect(a: Pt, b: Pt, c: Pt, d: Pt): Pt | undefined {
+  const r = { x: b.x - a.x, y: b.y - a.y };
+  const s = { x: d.x - c.x, y: d.y - c.y };
+  const denominator = r.x * s.y - r.y * s.x;
+  if (Math.abs(denominator) < 1e-12) return undefined;
+  const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / denominator;
+  return { x: a.x + t * r.x, y: a.y + t * r.y };
+}

@@ -4,6 +4,7 @@
 // the app applies to the document, re-solves and keeps in its history.
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,7 +18,10 @@ import type {
   SketchFeature,
 } from "../../../src/document/schema.ts";
 import type { SketchSolution } from "../../../src/document/sketch-solver.ts";
-import type { VariableValues } from "../../../src/document/variables.ts";
+import {
+  evaluateWith,
+  type VariableValues,
+} from "../../../src/document/variables.ts";
 import { detectProfiles } from "../../../src/document/profiles.ts";
 import {
   addArc,
@@ -27,6 +31,9 @@ import {
   addRectangle,
   addSlot,
   applicableConstraints,
+  canOffset,
+  offset,
+  trim,
   applicableDimensions,
   newId,
   remove,
@@ -54,7 +61,8 @@ import {
   layoutGlyphs,
 } from "./annotations.ts";
 
-type Tool = "select" | "line" | "rectangle" | "circle" | "arc" | "slot";
+type Tool =
+  "select" | "line" | "rectangle" | "circle" | "arc" | "slot" | "trim";
 const tools: { tool: Tool; label: string; key: string; clicks: string }[] = [
   { tool: "select", label: "Select", key: "Escape", clicks: "" },
   { tool: "line", label: "Line", key: "l", clicks: "Click points; Esc ends" },
@@ -81,6 +89,12 @@ const tools: { tool: Tool; label: string; key: string; clicks: string }[] = [
     label: "Slot",
     key: "s",
     clicks: "Click both ends, then the width",
+  },
+  {
+    tool: "trim",
+    label: "Trim",
+    key: "t",
+    clicks: "Click the piece of a line to cut away",
   },
 ];
 
@@ -116,20 +130,28 @@ export function SketchEditor({
   const [clicks, setClicks] = useState<Snap[]>([]);
   const [hover, setHover] = useState<Snap>();
   const [editing, setEditing] = useState<Editing>();
+  /** Distance for the next offset: a number or an expression. */
+  const [offsetBy, setOffsetBy] = useState("10");
   const gesture = useRef<
     | { kind: "pan"; start: Vec; view: View; moved: boolean }
     | { kind: "drag"; point: string; session: string; moved: boolean }
   >(undefined);
 
-  useEffect(() => {
+  const measure = () => {
+    const element = wrapper.current;
+    // Laid out but not yet sized (a stacked layout on a phone): wait.
+    if (element?.clientWidth && element.clientHeight)
+      setSize((size) =>
+        size.width === element.clientWidth &&
+        size.height === element.clientHeight
+          ? size
+          : { width: element.clientWidth, height: element.clientHeight },
+      );
+  };
+  useLayoutEffect(() => {
     const element = wrapper.current!;
-    const measure = () => {
-      // Laid out but not yet sized (a stacked layout on a phone): wait.
-      if (element.clientWidth && element.clientHeight)
-        setSize({ width: element.clientWidth, height: element.clientHeight });
-    };
-    // Measure now as well: resize observers only report on rendered frames,
-    // which a hidden page does not get.
+    // Measure now as well (after layout, before paint): resize observers
+    // only report on rendered frames, which a hidden page does not get.
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
@@ -255,6 +277,7 @@ export function SketchEditor({
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     wrapper.current!.focus();
+    measure();
     // Pin the view before anything is drawn or moved, so new geometry does
     // not make it jump to a new fit.
     if (!view) setView(current);
@@ -292,6 +315,11 @@ export function SketchEditor({
     }
     if (event.button === 2) {
       setClicks([]);
+      return;
+    }
+    if (event.button === 0 && tool === "trim") {
+      const target = hitTest(sketch, current, world);
+      if (target?.type === "line") edit(trim(sketch, target.id, world));
       return;
     }
     if (event.button === 0) place(snap(sketch, current, world));
@@ -414,7 +442,20 @@ export function SketchEditor({
             {t.label}
           </button>
         ))}
-        <span className="separator" />
+        <span className="spacer" />
+        <button onClick={() => setView(undefined)}>Fit</button>
+      </div>
+      <div
+        className="sketch-context"
+        role="toolbar"
+        aria-label="Actions for the selection"
+      >
+        {selection.length ? null : (
+          <span className="hint">
+            Select geometry to constrain or dimension it; Shift adds to the
+            selection.
+          </span>
+        )}
         {options.map((option) => (
           <button
             key={option.label}
@@ -432,6 +473,40 @@ export function SketchEditor({
             {option.label}
           </button>
         ))}
+        {canOffset(sketch, selection) ? (
+          <span className="offset">
+            <input
+              aria-label="Offset distance"
+              title="Distance, or an expression such as t; negative offsets inwards"
+              value={offsetBy}
+              onChange={(event) => setOffsetBy(event.target.value)}
+            />
+            <button
+              onClick={() => {
+                let distance: number;
+                try {
+                  distance = evaluateWith(offsetBy, variables);
+                } catch {
+                  return;
+                }
+                // The constraints hold the size; the sign only picks the side.
+                const value = offsetBy.trim().replace(/^-\s*/, "");
+                const made = offset(sketch, selection, distance, value);
+                if (!made) return;
+                edit(made.sketch);
+                setSelection(
+                  made.created.filter((id) =>
+                    made.sketch.entities.some(
+                      (e) => e.id === id && e.type !== "point",
+                    ),
+                  ),
+                );
+              }}
+            >
+              Offset
+            </button>
+          </span>
+        ) : null}
         {selectedCurves ? (
           <button
             title="Construction geometry guides the sketch but makes no profile (X)"
@@ -451,8 +526,6 @@ export function SketchEditor({
             Delete
           </button>
         ) : null}
-        <span className="spacer" />
-        <button onClick={() => setView(undefined)}>Fit</button>
       </div>
       <div
         ref={wrapper}

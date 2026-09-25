@@ -300,6 +300,29 @@ main {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
+.sketch-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+}
+.sketch-context button.dimension {
+  border-style: dashed;
+}
+.sketch-context .offset {
+  display: inline-flex;
+  gap: 2px;
+}
+.sketch-context .offset input {
+  width: 64px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
 .sketch-toolbar button.active {
   background: var(--accent);
   border-color: var(--accent);
@@ -307,6 +330,15 @@ main {
 }
 .sketch-toolbar button.dimension {
   border-style: dashed;
+}
+.sketch-toolbar .offset {
+  display: inline-flex;
+  gap: 2px;
+}
+.sketch-toolbar .offset input {
+  width: 64px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
 }
 .sketch-toolbar .separator {
   width: 1px;
