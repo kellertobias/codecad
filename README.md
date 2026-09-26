@@ -412,6 +412,24 @@ shows "broken reference" instead, and you pick the face again.
   draw in it, move features up or down (a feature cannot move before what it
   uses), suppress them, or roll back to one. Only the features after an edit
   are rebuilt.
+- **Joint:** click two touching parts. The editor works out how they meet: at
+  a corner, as a T, edge to edge, face to face, or crossing. It then offers only
+  the joints that fit that:
+  - finger joints
+  - dominos (4×20 to 10×50)
+  - dowels
+  - screws, countersunk from the outside
+  - dados and rabbets
+  - miters
+  - half-laps.
+
+  The joint is worked out again every time the model is built, so it follows
+  the panels when their dimensions change.
+
+- **Mate** moves a part by laying one of its faces against a face of another
+  part. The faces can be centred, or have an edge lined up with another edge,
+  flush at its start, middle or end. **Move** shifts or turns parts, or places
+  moved copies of them.
 - **Measure** gives the distance or angle between two points, edges or faces.
 - **Parts:** each body is a part with a name, a quantity, a material and a
   stock kind. Add the sheet materials you have under **Materials**. A body
@@ -419,7 +437,10 @@ shows "broken reference" instead, and you pick the face again.
   being told, and so is a rectangular panel drawn edge-on whose other side has
   that thickness. Sheet parts go through the cut list, nesting and DXF output:
   holes become circles on drill layers, and pockets become contours at their
-  depth.
+  depth. Dominos and holes drilled into an edge are separate edge setups: a
+  note on the face drawing, and a drawing of that edge. The parts panel lists
+  the dominos, dowels and screws the joints need, and downloads the bill of
+  materials as CSV.
 
 The CAD kernel runs in the browser, in a Web Worker. `/kernel-probe` shows
 how long it takes to load and build a part on the current machine. The API
@@ -1104,7 +1125,7 @@ measured or supplier STEP geometry and mounting dimensions for your hardware.
 - `src/drawing.ts`, `exporters.ts`: projections, PDF, glTF and clearance results.
 - `src/server.ts`, `worker.ts`: local server and isolated rebuild/export process.
 - `src/document/`: the browser editor's document: schema, expressions, variables, sketch solving, profiles, feature-list edits.
-- `src/kernel/`: the document evaluator (features into bodies, stable face names) and bodies as parts.
+- `src/kernel/`: the document evaluator (features into bodies, stable face names), joints between panels, bodies as parts and the bill of materials.
 - `app/`: the browser editor.
 - `web/`: editor, Three.js viewer, registry, output browser, and the kernel worker.
 - `tests/`: numerical geometry, construction semantics and export integration checks.
