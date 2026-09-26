@@ -22,7 +22,7 @@ export function pinItem(
     (p) => p.item === item.id && p.version === version.version,
   );
   const materials = document.materials ?? [];
-  const added = (version.document.materials ?? []).filter(
+  const added = (version.document?.materials ?? []).filter(
     (m) => !materials.some((own) => own.id === m.id),
   );
   return {
@@ -36,7 +36,9 @@ export function pinItem(
             item: item.id,
             version: version.version,
             name: item.name,
-            document: version.document,
+            ...(version.code
+              ? { code: version.code }
+              : { document: version.document }),
             exposed: version.exposed,
           },
         ],

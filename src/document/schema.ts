@@ -6,6 +6,7 @@
 // Documents carry `schemaVersion`. When the format changes, bump
 // `currentSchemaVersion` and add a step to `migrations`, so every stored
 // document can still be opened.
+import { checkCodePart, type CodePart } from "./code-part.js";
 
 export const currentSchemaVersion = 1;
 
@@ -618,14 +619,17 @@ export interface PartInterfaceDefinition {
 
 /** A copy of one version of a library item, kept in the project so it
  * builds the same until it is updated on purpose. */
-export interface PinnedItem {
+export type PinnedItem = {
   readonly item: string;
   readonly version: number;
   readonly name: string;
-  readonly document: CadDocument;
-  /** Variables of the item an instance may set. */
+  /** Variables (or a code part's parameters) an instance may set. */
   readonly exposed: readonly string[];
-}
+} & (
+  | { readonly document: CadDocument; readonly code?: undefined }
+  /** A code part: its code, run in the editor; see code-part.ts. */
+  | { readonly code: CodePart; readonly document?: undefined }
+);
 
 export interface CadDocument {
   readonly schemaVersion: typeof currentSchemaVersion;
@@ -928,6 +932,14 @@ function validate(document: Record<string, unknown>): void {
       list(pinned.exposed, `${at}.exposed`).forEach((name, j) =>
         string(name, `${at}.exposed[${j}]`),
       );
+      if (pinned.code !== undefined) {
+        try {
+          checkCodePart(pinned.code, `${at}.code`);
+        } catch (error) {
+          fail(at, error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
       let inner: CadDocument;
       try {
         inner = readDocument(pinned.document);

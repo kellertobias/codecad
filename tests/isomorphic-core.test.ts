@@ -28,6 +28,9 @@ test("the CAD core bundles for the browser without Node built-ins", async () => 
       "src/document/variables.ts",
       "src/document/sketch-solver.ts",
       "src/document/profiles.ts",
+      "src/document/code-part.ts",
+      "src/kernel/code-parts.ts",
+      "src/code-part/sdk.ts",
     ].map((file) => resolve(root, file)),
     outdir: "unused",
     write: false,
@@ -43,4 +46,24 @@ test("the CAD core bundles for the browser without Node built-ins", async () => 
             .map((imported) => `${file} imports ${imported.path}`),
   );
   assert.deepEqual(offenders, []);
+});
+
+// The sandbox starts the part API as a classic worker from a blob (module
+// workers do not start in an origin-less document), so its bundle must be
+// a plain script: no imports, no exports.
+test("the code-part sandbox bundles as a plain script", async () => {
+  const kernel = kernelBundleOptions(root, "unused");
+  const entry = (kernel.entryPoints as Record<string, string>)["code-sandbox"];
+  assert.ok(entry, "the kernel bundles include the code sandbox");
+  const result = await build({
+    ...kernel,
+    entryPoints: [entry],
+    outdir: "unused",
+    write: false,
+    sourcemap: false,
+    logLevel: "silent",
+  });
+  const text = result.outputFiles[0]!.text;
+  assert.doesNotMatch(text, /^\s*(import|export)\b/m);
+  assert.doesNotMatch(text, /import\.meta/);
 });

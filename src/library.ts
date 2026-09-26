@@ -22,6 +22,8 @@ export interface LibraryItemSummary {
   readonly tags: readonly string[];
   readonly latest: number;
   readonly thumbnail?: string;
+  /** Whether the latest version is a code part. */
+  readonly kind: "document" | "code";
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -41,7 +43,9 @@ export class LibraryItemNotFound extends Error {
 }
 
 export interface NewVersion {
-  readonly document: unknown;
+  /** A document, or `code` for a code part. */
+  readonly document?: unknown;
+  readonly code?: unknown;
   readonly exposed: unknown;
   readonly note?: string;
   readonly thumbnail?: string;
@@ -97,6 +101,12 @@ export function openLibrary(file: string, owner = "local"): Library {
       PRIMARY KEY (item_id, version)
     );
   `);
+  // Code parts keep their code beside (instead of) a document.
+  const columns = db.prepare(`PRAGMA table_info(library_versions)`).all() as {
+    name: string;
+  }[];
+  if (!columns.some((c) => c.name === "code"))
+    db.exec(`ALTER TABLE library_versions ADD COLUMN code TEXT`);
   type Row = {
     id: string;
     name: string;
@@ -106,6 +116,7 @@ export function openLibrary(file: string, owner = "local"): Library {
     latest: number;
     created_at: string;
     updated_at: string;
+    latest_kind?: string | null;
   };
   const summary = (row: Row): LibraryItemSummary => ({
     id: row.id,
@@ -114,15 +125,20 @@ export function openLibrary(file: string, owner = "local"): Library {
     tags: JSON.parse(row.tags) as string[],
     latest: row.latest,
     ...(row.thumbnail ? { thumbnail: row.thumbnail } : {}),
+    kind: row.latest_kind === "code" ? "code" : "document",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
   const q = {
     list: db.prepare(
-      `SELECT * FROM library_items WHERE owner_id = ? ORDER BY updated_at DESC, name`,
+      `SELECT i.*, CASE WHEN v.code IS NULL THEN 'document' ELSE 'code' END AS latest_kind
+       FROM library_items i JOIN library_versions v ON v.item_id = i.id AND v.version = i.latest
+       WHERE i.owner_id = ? ORDER BY i.updated_at DESC, i.name`,
     ),
     item: db.prepare(
-      `SELECT * FROM library_items WHERE owner_id = ? AND id = ?`,
+      `SELECT i.*, CASE WHEN v.code IS NULL THEN 'document' ELSE 'code' END AS latest_kind
+       FROM library_items i JOIN library_versions v ON v.item_id = i.id AND v.version = i.latest
+       WHERE i.owner_id = ? AND i.id = ?`,
     ),
     versions: db.prepare(
       `SELECT version, created_at, note FROM library_versions
@@ -136,8 +152,8 @@ export function openLibrary(file: string, owner = "local"): Library {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     insertVersion: db.prepare(
-      `INSERT INTO library_versions (item_id, version, owner_id, document, exposed, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO library_versions (item_id, version, owner_id, document, exposed, note, created_at, code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     advance: db.prepare(
       `UPDATE library_items SET latest = ?, updated_at = ?, thumbnail = COALESCE(?, thumbnail)
@@ -216,6 +232,7 @@ export function openLibrary(file: string, owner = "local"): Library {
             exposed: string;
             note: string | null;
             created_at: string;
+            code: string | null;
           }
         | undefined;
       if (!found) throw new LibraryItemNotFound(`${id} version ${version}`);
@@ -223,12 +240,14 @@ export function openLibrary(file: string, owner = "local"): Library {
         version: found.version,
         createdAt: found.created_at,
         ...(found.note ? { note: found.note } : {}),
-        document: JSON.parse(found.document),
+        ...(found.code
+          ? { code: JSON.parse(found.code) }
+          : { document: JSON.parse(found.document) }),
         exposed: JSON.parse(found.exposed),
       };
     },
     create(details, first) {
-      const checked = checkVersion(first.document, first.exposed);
+      const checked = checkVersion(first.document, first.exposed, first.code);
       const id = randomUUID();
       const now = new Date().toISOString();
       transaction(() => {
@@ -247,16 +266,17 @@ export function openLibrary(file: string, owner = "local"): Library {
           id,
           1,
           owner,
-          JSON.stringify(checked.document),
+          JSON.stringify(checked.document ?? null),
           JSON.stringify(checked.exposed),
           first.note ?? null,
           now,
+          checked.code ? JSON.stringify(checked.code) : null,
         );
       });
       return library.get(id);
     },
     addVersion(id, next) {
-      const checked = checkVersion(next.document, next.exposed);
+      const checked = checkVersion(next.document, next.exposed, next.code);
       const version = row(id).latest + 1;
       const now = new Date().toISOString();
       transaction(() => {
@@ -264,10 +284,11 @@ export function openLibrary(file: string, owner = "local"): Library {
           id,
           version,
           owner,
-          JSON.stringify(checked.document),
+          JSON.stringify(checked.document ?? null),
           JSON.stringify(checked.exposed),
           next.note ?? null,
           now,
+          checked.code ? JSON.stringify(checked.code) : null,
         );
         q.advance.run(version, now, thumbnail(next.thumbnail), owner, id);
       });
@@ -328,10 +349,11 @@ export function openLibrary(file: string, owner = "local"): Library {
             id,
             v.version,
             owner,
-            JSON.stringify(v.document),
+            JSON.stringify(v.document ?? null),
             JSON.stringify(v.exposed),
             v.note ?? null,
             v.createdAt,
+            v.code ? JSON.stringify(v.code) : null,
           );
       });
       return library.get(id);

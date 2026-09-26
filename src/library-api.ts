@@ -1,7 +1,7 @@
 // HTTP routes for the part library:
 //
 //   GET    /api/library                      list
-//   POST   /api/library                      create  { name, description?, tags?, document, exposed, thumbnail? }
+//   POST   /api/library                      create  { name, description?, tags?, document | code, exposed, thumbnail? }
 //   GET    /api/library/:id                  the item and its versions
 //   PUT    /api/library/:id                  rename, describe, tag
 //   DELETE /api/library/:id                  delete
@@ -48,6 +48,7 @@ export async function handleLibrary(
   });
   const version = (body: Record<string, unknown>) => ({
     document: body.document,
+    ...(body.code !== undefined ? { code: body.code } : {}),
     exposed: body.exposed ?? [],
     ...(typeof body.note === "string" ? { note: body.note } : {}),
     ...(typeof body.thumbnail === "string"

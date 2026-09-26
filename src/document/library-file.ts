@@ -3,16 +3,21 @@
 // made from imported hardware will carry their STEP files in `files`,
 // base64-encoded, keyed by the path the document names them by.
 import { readDocument, type CadDocument } from "./schema.js";
+import { checkCodePart, type CodePart } from "./code-part.js";
 
 export const libraryFileFormat = "codecad-library-item";
 
-export interface LibraryVersionData {
+export type LibraryVersionData = {
   readonly version: number;
   readonly createdAt: string;
   readonly note?: string;
-  readonly document: CadDocument;
   readonly exposed: readonly string[];
-}
+} & VersionContent;
+
+/** A version holds a document made in the editor, or a code part. */
+export type VersionContent =
+  | { readonly document: CadDocument; readonly code?: undefined }
+  | { readonly code: CodePart; readonly document?: undefined };
 
 export interface LibraryFile {
   readonly format: typeof libraryFileFormat;
@@ -30,11 +35,32 @@ export interface LibraryFile {
 export class LibraryError extends Error {}
 
 /** Checks what a library version holds: a valid document without library
- * items of its own, and exposed names that are its variables. */
+ * items of its own, or a code part; and exposed names that are its
+ * variables (or the code part's parameters). */
 export function checkVersion(
   document: unknown,
   exposed: unknown,
-): { document: CadDocument; exposed: string[] } {
+  code?: unknown,
+): VersionContent & { exposed: string[] } {
+  if (!Array.isArray(exposed) || exposed.some((n) => typeof n !== "string"))
+    throw new LibraryError("exposed must list variable names");
+  if (code !== undefined && code !== null) {
+    let checked: CodePart;
+    try {
+      checked = checkCodePart(code);
+    } catch (error) {
+      throw new LibraryError(
+        `The code part is not valid: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const names = new Set(checked.parameters.map((p) => p.name));
+    const unknown = (exposed as string[]).filter((n) => !names.has(n));
+    if (unknown.length)
+      throw new LibraryError(
+        `The code part has no parameter ${unknown.join(", ")}`,
+      );
+    return { code: checked, exposed: [...new Set(exposed as string[])] };
+  }
   let checked: CadDocument;
   try {
     checked = readDocument(document);
@@ -45,8 +71,6 @@ export function checkVersion(
   }
   if (checked.features.some((f) => f.type === "instance"))
     throw new LibraryError("A library item cannot contain library items yet");
-  if (!Array.isArray(exposed) || exposed.some((n) => typeof n !== "string"))
-    throw new LibraryError("exposed must list variable names");
   const names = new Set(checked.variables.map((v) => v.name));
   const unknown = (exposed as string[]).filter((n) => !names.has(n));
   if (unknown.length)
@@ -78,7 +102,7 @@ export function readLibraryFile(value: unknown): LibraryFile {
           ? v.createdAt
           : new Date().toISOString(),
       ...(typeof v.note === "string" ? { note: v.note } : {}),
-      ...checkVersion(v.document, v.exposed),
+      ...checkVersion(v.document, v.exposed, v.code),
     };
   });
   return {

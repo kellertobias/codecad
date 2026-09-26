@@ -21,6 +21,8 @@ export function kernelBundleOptions(root, outdir) {
     entryPoints: {
       "kernel.worker": join(root, "web/kernel/worker.ts"),
       "kernel-probe": join(root, "web/kernel-probe.ts"),
+      // Runs code parts' code in the editor's sandbox; no kernel in it.
+      "code-sandbox": join(root, "src/code-part/sandbox-worker.ts"),
     },
     outdir,
     bundle: true,
