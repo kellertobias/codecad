@@ -252,7 +252,7 @@ test("code that returns something other than solids is refused", async () => {
       checkCodeOutput({
         bodies: [{ name: "x", recipe: { kind: "step", path: "/etc/passwd" } }],
       }),
-    /not a shape a code part can make/,
+    /part's .step files/,
   );
   assert.throws(
     () =>
@@ -266,4 +266,136 @@ test("code that returns something other than solids is refused", async () => {
       }),
     /more than 0/,
   );
+});
+
+test("a code part rounds and bevels edges, and still exports as a sheet part", async () => {
+  const source = `
+import { definePart, Shapes, fillet, chamfer } from "codecad/part";
+export default definePart({
+  parameters: { r: { default: 5 } },
+  build({ r }) {
+    let top = new Shapes.Box({ width: 600, depth: 300, height: 18 });
+    top = fillet(top, r, ["top", "back"]);
+    top = chamfer(top, 2, ["top", "front"]);
+    return { bodies: [{ name: "Top", shape: top }] };
+  },
+});`;
+  const output = await runCode(source);
+  const result = readCodeResult(
+    JSON.parse(JSON.stringify(await buildCodeResult(output, "a".repeat(28)))),
+  );
+  const store = new CodeResults();
+  store.add(result);
+  const [body] = store.get(result.key)!.bodies;
+  // A quarter-circle strip less along the back, a small triangle at the front.
+  const expected =
+    600 * 300 * 18 - 600 * (5 * 5 - (Math.PI * 25) / 4) - 600 * 2;
+  assert.ok(
+    Math.abs(b.unwrap(b.measureVolume(body!.shape)) - expected) < 1,
+    `volume ${b.unwrap(b.measureVolume(body!.shape))}`,
+  );
+  assert.ok(body!.blank);
+  assert.match(body!.irregular!, /rounds/);
+  // Edge selections are checked data too.
+  assert.throws(
+    () =>
+      checkCodeOutput({
+        bodies: [
+          {
+            name: "x",
+            recipe: {
+              kind: "fillet",
+              source: { kind: "box", width: 1, depth: 1, height: 1 },
+              edges: {
+                directions: [{ x: 2, y: 0, z: 0 }],
+                labels: ["?"],
+                tolerance: 45,
+              },
+              radius: 1,
+            },
+          },
+        ],
+      }),
+    /length 1/,
+  );
+  store.dispose();
+});
+
+test("a code part places an imported STEP file, kept once in the library file", async () => {
+  const step = new Uint8Array(
+    await (
+      b.unwrap((b as any).exportSTEP(b.cylinder(10, 40))) as Blob
+    ).arrayBuffer(),
+  );
+  const files = { "knob.step": Buffer.from(step).toString("base64") };
+  const source = `
+import { definePart, Shapes, union } from "codecad/part";
+export default definePart({
+  parameters: {},
+  build() {
+    const plate = new Shapes.Box({ width: 60, depth: 60, height: 5 });
+    const knob = new Shapes.ImportedStep({ path: "knob.step" }).move({ x: 30, y: 30, z: 5 });
+    return { bodies: [{ name: "Plate", shape: plate }, { name: "Knob", shape: knob }] };
+  },
+});`;
+  const output = await runCode(source);
+  const result = await buildCodeResult(output, "b".repeat(28), files);
+  const store = new CodeResults();
+  store.add(readCodeResult(JSON.parse(JSON.stringify(result))));
+  const knob = store.get(result.key)!.bodies[1]!;
+  assert.ok(
+    Math.abs(b.unwrap(b.measureVolume(knob.shape)) - Math.PI * 100 * 40) < 1,
+  );
+  assert.ok(Math.abs(b.getBounds(knob.shape).zMin - 5) < 1e-6);
+  store.dispose();
+
+  // Only the part's own files, never paths, and never in stored results.
+  await assert.rejects(
+    buildCodeResult(output, "b".repeat(28), {}),
+    /does not have/,
+  );
+  assert.throws(
+    () =>
+      checkCodeOutput({
+        bodies: [
+          { name: "x", recipe: { kind: "step", path: "../../etc/x.step" } },
+        ],
+      }),
+    /part's .step files/,
+  );
+  assert.throws(
+    () =>
+      readCodeResult({
+        ...result,
+        bodies: [
+          {
+            ...result.bodies[0],
+            machining: [
+              {
+                kind: "drill",
+                recipe: { kind: "step", path: "a.step" },
+                diameter: 1,
+                depth: 1,
+              },
+            ],
+          },
+        ],
+      }),
+    /may not import files/,
+  );
+
+  // Two versions with the same file: the library file carries it once,
+  // and reads back whole.
+  const library = openLibrary(":memory:");
+  const code = { ...(await codePart(source)), files };
+  const item = library.create({ name: "Knob plate" }, { code, exposed: [] });
+  library.addVersion(item.id, { code, exposed: [] });
+  const file = JSON.parse(JSON.stringify(library.exportFile(item.id)));
+  assert.equal(Object.keys(file.files).length, 1);
+  assert.match(file.versions[0].code.files["knob.step"], /^@/);
+  const other = openLibrary(":memory:");
+  const copy = other.importFile(file);
+  assert.deepEqual(other.version(copy.id, 2).code!.files, files);
+  library.close();
+  other.close();
 });

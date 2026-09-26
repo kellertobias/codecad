@@ -67,6 +67,8 @@ export type KernelRequest =
       readonly type: "code-build";
       readonly output: unknown;
       readonly key: string;
+      /** The part's STEP files, base64 by name. */
+      readonly files?: Readonly<Record<string, string>>;
     }
   /** Results of code parts the documents to evaluate use. */
   | {

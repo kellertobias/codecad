@@ -92,6 +92,30 @@ export function readLibraryFile(value: unknown): LibraryFile {
     throw new LibraryError("The file names no item");
   if (!Array.isArray(file.versions) || !file.versions.length)
     throw new LibraryError("The file has no versions");
+  const shared =
+    file.files && typeof file.files === "object"
+      ? (file.files as Record<string, unknown>)
+      : {};
+  /** A code version's files point into the file's shared `files` by
+   * "@<key>", so versions with the same STEP file carry it once. */
+  const withFiles = (code: unknown): unknown => {
+    const files = (code as { files?: Record<string, unknown> } | null)?.files;
+    if (!files || typeof files !== "object") return code;
+    return {
+      ...(code as object),
+      files: Object.fromEntries(
+        Object.entries(files).map(([name, value]) => {
+          if (typeof value === "string" && value.startsWith("@")) {
+            const data = shared[value.slice(1)];
+            if (typeof data !== "string")
+              throw new LibraryError(`The file misses ${name}`);
+            return [name, data];
+          }
+          return [name, value];
+        }),
+      ),
+    };
+  };
   const versions = file.versions.map((v, i) => {
     if (!Number.isInteger(v?.version) || v.version < 1)
       throw new LibraryError(`Version ${i + 1} has no version number`);
@@ -102,7 +126,7 @@ export function readLibraryFile(value: unknown): LibraryFile {
           ? v.createdAt
           : new Date().toISOString(),
       ...(typeof v.note === "string" ? { note: v.note } : {}),
-      ...checkVersion(v.document, v.exposed, v.code),
+      ...checkVersion(v.document, v.exposed, withFiles(v.code)),
     };
   });
   return {
@@ -121,7 +145,7 @@ export function readLibraryFile(value: unknown): LibraryFile {
         : {}),
     },
     versions: versions.sort((a, c) => a.version - c.version),
-    files:
-      file.files && typeof file.files === "object" ? { ...file.files } : {},
+    // Read into the versions above; nothing else refers to them.
+    files: {},
   };
 }

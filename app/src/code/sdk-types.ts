@@ -45,6 +45,12 @@ declare module "codecad/part" {
       move(placement: Placement): this;
       mirror(options: { axis: "x" | "y" | "z"; origin?: number }): this;
     }
+    /** A STEP file added to the part (Files), placed like any shape. */
+    class ImportedStep implements Shape {
+      constructor(o: { path: string });
+      move(placement: Placement): this;
+      mirror(options: { axis: "x" | "y" | "z"; origin?: number }): this;
+    }
     class Polygon implements Profile {
       constructor(o: { points: readonly Point2[] });
       extrude(height: number): Shape;
@@ -78,6 +84,12 @@ declare module "codecad/part" {
   export function definePart<P extends Record<string, ParameterSpec>>(definition: PartDefinition<P>): PartDefinition<P>;
   /** A plane facing \`normal\` (away from the part); the underside by default. */
   export function plane(options?: { origin?: Vec3; normal?: Vec3; x?: Vec3 }): PlaneFrame;
+  /** A face by the way it faces, or a direction. */
+  export type FaceSide = "top" | "bottom" | "left" | "right" | "front" | "back" | Vec3;
+  /** Rounds the edges between the named faces: ["top"] is every edge of the top face. */
+  export function fillet(shape: Shape, radius: number, faces: readonly FaceSide[], options?: { tolerance?: number }): Shape;
+  /** Bevels the edges between the named faces. */
+  export function chamfer(shape: Shape, distance: number, faces: readonly FaceSide[], options?: { tolerance?: number }): Shape;
   export function union(first: Shape, ...rest: Shape[]): Shape;
   export function cut(base: Shape, ...tools: Shape[]): Shape;
   export function intersect(first: Shape, ...rest: Shape[]): Shape;

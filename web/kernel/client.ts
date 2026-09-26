@@ -85,8 +85,17 @@ export class KernelClient {
 
   /** Builds a code part's output (recipes from the sandbox) into exact
    * geometry, to upload and to use. */
-  buildCode(output: unknown, key: string): Promise<Answer<"code-build">> {
-    return this.send({ type: "code-build", output, key });
+  buildCode(
+    output: unknown,
+    key: string,
+    files?: Readonly<Record<string, string>>,
+  ): Promise<Answer<"code-build">> {
+    return this.send({
+      type: "code-build",
+      output,
+      key,
+      ...(files ? { files } : {}),
+    });
   }
 
   /** Hands the worker stored results of code parts. */

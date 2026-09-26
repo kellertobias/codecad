@@ -69,7 +69,11 @@ self.onmessage = async (event: MessageEvent<KernelRequest>) => {
       post({
         id: request.id,
         type: "code-build",
-        result: await buildCodeResult(request.output, request.key),
+        result: await buildCodeResult(
+          request.output,
+          request.key,
+          request.files ?? {},
+        ),
       });
     else if (request.type === "code-results") {
       for (const result of request.results) codeResults.add(result);

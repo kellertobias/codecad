@@ -113,6 +113,69 @@ export function intersect(first: Shape, ...rest: Shape[]): Shape {
   return rest.reduce((all, next) => pair("intersect", all, next), first);
 }
 
+/** A face of a shape, by the way it faces: a name, or a direction. */
+export type FaceSide =
+  "top" | "bottom" | "left" | "right" | "front" | "back" | Vec3;
+
+const sides: Record<string, Vec3> = {
+  right: [1, 0, 0],
+  left: [-1, 0, 0],
+  back: [0, 1, 0],
+  front: [0, -1, 0],
+  top: [0, 0, 1],
+  bottom: [0, 0, -1],
+};
+
+/** The edges where faces facing these ways meet: ["top"] is every edge of
+ * the top face, ["top", "front"] the one between top and front. Normals
+ * within `tolerance` degrees count. */
+function edgeSelection(faces: readonly FaceSide[], tolerance = 45) {
+  if (!faces.length || faces.length > 3)
+    throw new Error("Name one to three faces whose edges to take");
+  return {
+    directions: faces.map((face) => {
+      const v = typeof face === "string" ? sides[face] : face;
+      if (!v) throw new Error(`There is no ${String(face)} face`);
+      const [x, y, z] = unit(v);
+      return { x, y, z };
+    }),
+    labels: faces.map((face) =>
+      typeof face === "string" ? face : `[${face.join(", ")}]`,
+    ),
+    tolerance,
+  };
+}
+
+/** Rounds the edges between the named faces. */
+export function fillet(
+  shape: Shape,
+  radius: number,
+  faces: readonly FaceSide[],
+  options: { tolerance?: number } = {},
+): Shape {
+  return new SolidShape({
+    kind: "fillet",
+    source: shape.recipe,
+    edges: edgeSelection(faces, options.tolerance),
+    radius,
+  });
+}
+
+/** Bevels the edges between the named faces. */
+export function chamfer(
+  shape: Shape,
+  distance: number,
+  faces: readonly FaceSide[],
+  options: { tolerance?: number } = {},
+): Shape {
+  return new SolidShape({
+    kind: "chamfer",
+    source: shape.recipe,
+    edges: edgeSelection(faces, options.tolerance),
+    distance,
+  });
+}
+
 /** Runs a definition for some values; what the sandbox hands back. */
 export function runPart(
   definition: unknown,

@@ -43,6 +43,7 @@ export function LibraryView({
     item?: string;
     name: string;
     source: string;
+    files?: Readonly<Record<string, string>>;
   }>();
   const shown = items.filter((item) =>
     `${item.name} ${item.tags.join(" ")} ${item.description}`

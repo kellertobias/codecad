@@ -56,8 +56,13 @@ function previewDocument(
   };
 }
 
-const codePartOf = (source: string, output: CodeOutput): CodePart => ({
+const codePartOf = (
+  source: string,
+  output: CodeOutput,
+  files: Readonly<Record<string, string>>,
+): CodePart => ({
   source,
+  ...(Object.keys(files).length ? { files } : {}),
   parameters: output.parameters,
   interfaces: output.interfaces.map(({ id, name, kind }) => ({
     id,
@@ -73,14 +78,15 @@ async function make(
   source: string,
   given: Record<string, number>,
   store: boolean,
+  files: Readonly<Record<string, string>>,
 ) {
   const started = performance.now();
   const probe = await runCodePart(source, given);
   const values = parameterValues(probe.parameters, given);
-  const code = codePartOf(source, probe);
+  const code = codePartOf(source, probe, files);
   const ran = performance.now() - started;
-  const key = codeResultKey(source, values);
-  const { result } = await kernel().buildCode(probe, key);
+  const key = codeResultKey(source, values, files);
+  const { result } = await kernel().buildCode(probe, key, files);
   await kernel().useCodeResults([result]);
   if (store) await codeResults.put(result, true);
   const { svg } = await kernel().drawing(
@@ -102,7 +108,12 @@ export function CodePartEditor({
   close,
   saved,
 }: {
-  initial: { item?: string; name: string; source: string };
+  initial: {
+    item?: string;
+    name: string;
+    source: string;
+    files?: Readonly<Record<string, string>>;
+  };
   items: readonly LibraryItemSummary[];
   close(): void;
   saved(message: string): void;
@@ -111,6 +122,10 @@ export function CodePartEditor({
   const [source, setSource] = useState(initial.source);
   const [target, setTarget] = useState(initial.item ?? "new");
   const [values, setValues] = useState<Record<string, number>>({});
+  /** STEP files the code imports, base64 by name. */
+  const [files, setFiles] = useState<Record<string, string>>({
+    ...(initial.files ?? {}),
+  });
   const [last, setLast] = useState<{
     output: CodeOutput;
     svg: string;
@@ -124,7 +139,7 @@ export function CodePartEditor({
     setBusy("run");
     setProblem(undefined);
     try {
-      const made = await make(name, source, values, false);
+      const made = await make(name, source, values, false, files);
       setLast(made);
       // Values for parameters the code no longer has are dropped.
       setValues((v) =>
@@ -153,7 +168,7 @@ export function CodePartEditor({
     setProblem(undefined);
     try {
       // Made with the defaults, stored, and drawn for the thumbnail.
-      const made = await make(name, source, {}, true);
+      const made = await make(name, source, {}, true, files);
       const body = {
         code: made.code,
         exposed: made.code.parameters.map((p) => p.name),
@@ -256,6 +271,52 @@ export function CodePartEditor({
               a sandbox without network, and is stopped after 10 s.
             </p>
           )}
+          <h2>Files</h2>
+          <p className="hint">
+            STEP models the code can place:{" "}
+            <code>
+              new Shapes.ImportedStep({"{"} path: "hinge.step" {"}"})
+            </code>
+          </p>
+          <ul className="code-files">
+            {Object.keys(files).map((file) => (
+              <li key={file}>
+                <span>{file}</span>
+                <button
+                  className="icon"
+                  aria-label={`Remove ${file}`}
+                  onClick={() =>
+                    setFiles((all) => {
+                      const next = { ...all };
+                      delete next[file];
+                      return next;
+                    })
+                  }
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <label className="button">
+            Add STEP file…
+            <input
+              type="file"
+              accept=".step,.stp"
+              hidden
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                let text = "";
+                for (let i = 0; i < bytes.length; i += 0x8000)
+                  text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+                const safe = file.name.replace(/[^A-Za-z0-9._-]+/g, "-");
+                setFiles((all) => ({ ...all, [safe]: btoa(text) }));
+              }}
+            />
+          </label>
           {parameters.length ? <h2>Parameters</h2> : null}
           {parameters.map((p) => (
             <label key={p.name} className="field">

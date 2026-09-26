@@ -37,9 +37,27 @@ export interface CodePart {
   /** The interfaces the code made with its defaults, for choosing one to
    * mate by before anything is generated. */
   readonly interfaces: readonly CodeInterfaceInfo[];
+  /** STEP files the code imports (`new Shapes.ImportedStep({ path })`),
+   * base64 by file name. */
+  readonly files?: Readonly<Record<string, string>>;
 }
 
-/** Where a code part connects: points in a plane of the part. The plane's
+/** A file name a code part's recipes may import. */
+export const isCodeFileName = (name: string) =>
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.(step|stp)$/i.test(name);
+
+/** The file names a recipe imports. */
+export function recipeFileNames(recipe: Recipe, into = new Set<string>()) {
+  if (recipe.kind === "step") into.add(recipe.path);
+  else if ("source" in recipe) recipeFileNames(recipe.source, into);
+  else if ("left" in recipe) {
+    recipeFileNames(recipe.left, into);
+    recipeFileNames(recipe.right, into);
+  }
+  return into;
+}
+
+/** Where a code part's recipes connect: points in a plane of the part. The plane's
  * normal points away from the part, as a face's does. */
 export interface CodeInterface extends CodeInterfaceInfo {
   readonly frame: Frame;
@@ -95,6 +113,8 @@ export const codeResultFormat = "codecad-code-result";
 
 export const codeLimits = {
   source: 256 * 1024,
+  /** A code part's STEP files, decoded, all together. */
+  files: 4 * 1024 * 1024,
   parameters: 40,
   bodies: 50,
   interfaces: 20,
@@ -187,7 +207,31 @@ export function checkCodePart(value: unknown, path = "code"): CodePart {
       `${path}.source`,
       `must be code of at most ${codeLimits.source} bytes`,
     );
+  let files: Record<string, string> | undefined;
+  if (value.files !== undefined) {
+    if (!isObject(value.files))
+      fail(`${path}.files`, "must map names to files");
+    let total = 0;
+    files = {};
+    for (const [name, data] of Object.entries(value.files as object)) {
+      if (!isCodeFileName(name))
+        fail(
+          `${path}.files`,
+          `${JSON.stringify(name)} is not a .step file name`,
+        );
+      if (typeof data !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
+        fail(`${path}.files.${name}`, "must be base64");
+      total += Math.floor(((data as string).length * 3) / 4);
+      if (total > codeLimits.files)
+        fail(
+          `${path}.files`,
+          `may hold at most ${codeLimits.files / 1024 / 1024} MB`,
+        );
+      files[name] = data as string;
+    }
+  }
   return {
+    ...(files ? { files } : {}),
     source: source as string,
     parameters: checkParameters(value.parameters, `${path}.parameters`),
     interfaces: list(
@@ -236,7 +280,11 @@ function checkFrame(v: unknown, path: string): Frame {
 
 /** Checks a recipe tree: only solids built from boxes, cylinders, cones
  * and extruded profiles, moved and combined; never files. */
-export function checkRecipe(value: unknown, path = "recipe"): Recipe {
+export function checkRecipe(
+  value: unknown,
+  path = "recipe",
+  options: { readonly files?: boolean } = {},
+): Recipe {
   let nodes = 0;
   const visit = (v: unknown, at: string, depth: number): Recipe => {
     if (++nodes > codeLimits.recipeNodes)
@@ -293,6 +341,65 @@ export function checkRecipe(value: unknown, path = "recipe"): Recipe {
           source: visit(v.source, `${at}.source`, depth + 1),
           distance: number(v.distance, `${at}.distance`),
         };
+      case "fillet":
+      case "chamfer": {
+        const edges = v.edges;
+        if (!isObject(edges))
+          return fail(`${at}.edges`, "must say which edges");
+        const directions = list(edges.directions, `${at}.edges.directions`, 3);
+        if (!directions.length)
+          fail(`${at}.edges.directions`, "must name at least one face");
+        const labels = list(edges.labels, `${at}.edges.labels`, 3);
+        const tolerance = positive(edges.tolerance, `${at}.edges.tolerance`);
+        if (tolerance >= 90) fail(`${at}.edges.tolerance`, "must be under 90°");
+        const checked = {
+          directions: directions.map((d, i) => {
+            const q = `${at}.edges.directions[${i}]`;
+            if (!isObject(d)) return fail(q, "must be a direction");
+            const x = number(d.x, `${q}.x`);
+            const y = number(d.y, `${q}.y`);
+            const z = number(d.z, `${q}.z`);
+            if (Math.abs(Math.hypot(x, y, z) - 1) > 1e-6)
+              fail(q, "must have length 1");
+            return { x, y, z };
+          }),
+          labels: labels.map((l, i) => text(l, `${at}.edges.labels[${i}]`, 40)),
+          tolerance,
+        };
+        const source = visit(v.source, `${at}.source`, depth + 1);
+        return v.kind === "fillet"
+          ? {
+              kind: "fillet",
+              source,
+              edges: checked,
+              radius: positive(v.radius, `${at}.radius`),
+              ...(v.endRadius === undefined
+                ? {}
+                : { endRadius: positive(v.endRadius, `${at}.endRadius`) }),
+            }
+          : {
+              kind: "chamfer",
+              source,
+              edges: checked,
+              distance: positive(v.distance, `${at}.distance`),
+              ...(v.secondDistance === undefined
+                ? {}
+                : {
+                    secondDistance: positive(
+                      v.secondDistance,
+                      `${at}.secondDistance`,
+                    ),
+                  }),
+            };
+      }
+      case "step":
+        // Only the part's own files, by name: never a path; and only where
+        // the editor's kernel builds them, never in stored results.
+        if (options.files === false)
+          return fail(`${at}.kind`, "may not import files here");
+        if (typeof v.path !== "string" || !isCodeFileName(v.path))
+          return fail(`${at}.path`, "must name one of the part's .step files");
+        return { kind: "step", path: v.path };
       default:
         return fail(
           `${at}.kind`,
@@ -400,7 +507,9 @@ export function readCodeResult(value: unknown): CodeResult {
                     return fail(q, "must be a drilling");
                   return {
                     kind: "drill" as const,
-                    recipe: checkRecipe(m.recipe, `${q}.recipe`),
+                    recipe: checkRecipe(m.recipe, `${q}.recipe`, {
+                      files: false,
+                    }),
                     diameter: positive(m.diameter, `${q}.diameter`),
                     depth: positive(m.depth, `${q}.depth`),
                   };
@@ -458,17 +567,25 @@ export const contentKey = (text: string) =>
     .map((seed) => cyrb53(text, seed).toString(16).padStart(14, "0"))
     .join("");
 
-/** The key a result is stored under: the code, the values it ran with,
- * and the version of the part API. */
+/** The key a result is stored under: the code, its files, the values it
+ * ran with, and the version of the part API. */
 export const codeResultKey = (
   source: string,
   values: Readonly<Record<string, number>>,
+  files: Readonly<Record<string, string>> = {},
 ) =>
   contentKey(
     JSON.stringify([
       codeApiVersion,
       source,
       Object.entries(values).sort(([a], [b]) => (a < b ? -1 : 1)),
+      ...(Object.keys(files).length
+        ? [
+            Object.entries(files)
+              .map(([name, data]) => [name, contentKey(data)])
+              .sort(([a], [b]) => (a! < b! ? -1 : 1)),
+          ]
+        : []),
     ]),
   );
 
@@ -531,7 +648,7 @@ export function codeInstances(document: CadDocument): CodeInstance[] {
         feature,
         pinned,
         values,
-        key: codeResultKey(pinned.code.source, values),
+        key: codeResultKey(pinned.code.source, values, pinned.code.files),
       });
     } catch (error) {
       found.push({

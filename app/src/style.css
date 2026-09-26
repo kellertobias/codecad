@@ -1358,3 +1358,15 @@ dialog.share-dialog h2 {
   font-family: ui-monospace, monospace;
   font-size: 12px;
 }
+.code-files {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+}
+.code-files li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}

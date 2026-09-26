@@ -14,6 +14,7 @@ import {
   type LibraryFile,
   type LibraryVersionData,
 } from "./document/library-file.js";
+import { contentKey } from "./document/code-part.js";
 
 export interface LibraryItemSummary {
   readonly id: string;
@@ -314,6 +315,25 @@ export function openLibrary(file: string, owner = "local"): Library {
     },
     exportFile(id) {
       const item = library.get(id);
+      // Code parts' files go into the file's `files` once each, by content.
+      const files: Record<string, string> = {};
+      const versions = item.versions.map((v) => {
+        const version = library.version(id, v.version);
+        if (!version.code?.files) return version;
+        return {
+          ...version,
+          code: {
+            ...version.code,
+            files: Object.fromEntries(
+              Object.entries(version.code.files).map(([name, data]) => {
+                const key = contentKey(data);
+                files[key] = data;
+                return [name, `@${key}`];
+              }),
+            ),
+          },
+        };
+      });
       return {
         format: libraryFileFormat,
         formatVersion: 1,
@@ -323,8 +343,8 @@ export function openLibrary(file: string, owner = "local"): Library {
           tags: item.tags,
           ...(item.thumbnail ? { thumbnail: item.thumbnail } : {}),
         },
-        versions: item.versions.map((v) => library.version(id, v.version)),
-        files: {},
+        versions,
+        files,
       };
     },
     importFile(value) {

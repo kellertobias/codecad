@@ -4,11 +4,12 @@
 // for the evaluator, wherever it runs. Neither runs any of the part's code.
 import * as b from "brepjs/quick";
 import { Matrix4, Quaternion, Vector3 } from "three";
-import { OpenCascadeEngine } from "../engine.js";
+import { OpenCascadeEngine, recipeFiles } from "../engine.js";
 import type { Recipe } from "../model.js";
 import {
   checkCodeOutput,
   codeResultFormat,
+  recipeFileNames,
   type CodeBlank,
   type CodeInterface,
   type CodeResult,
@@ -22,15 +23,44 @@ import { bore } from "./joints.js";
 export async function buildCodeResult(
   output: unknown,
   key: string,
+  /** The part's STEP files, base64 by name. */
+  files: Readonly<Record<string, string>> = {},
 ): Promise<CodeResult> {
   const checked = checkCodeOutput(output);
+  // Imported files are handed to the engine in memory, under paths only
+  // this build uses; a name the part has no file for is an error, never a
+  // read from anywhere else.
+  const paths = new Map<string, string>();
+  for (const body of checked.bodies)
+    for (const name of recipeFileNames(body.recipe)) {
+      const data = files[name];
+      if (data === undefined)
+        throw new Error(
+          `${body.name} imports ${name}, which the part does not have`,
+        );
+      const path = `code-file:${key}:${name}`;
+      paths.set(name, path);
+      recipeFiles.set(path, base64Bytes(data));
+    }
+  const renamed = (recipe: Recipe): Recipe =>
+    recipe.kind === "step"
+      ? { kind: "step", path: paths.get(recipe.path)! }
+      : "source" in recipe
+        ? ({ ...recipe, source: renamed(recipe.source) } as Recipe)
+        : "left" in recipe
+          ? {
+              ...recipe,
+              left: renamed(recipe.left),
+              right: renamed(recipe.right),
+            }
+          : recipe;
   const engine = new OpenCascadeEngine();
   try {
     const bodies: CodeResultBody[] = [];
     for (const [i, body] of checked.bodies.entries()) {
       let shape: b.Shape3D;
       try {
-        shape = await engine.recipe(body.recipe);
+        shape = await engine.recipe(renamed(body.recipe));
       } catch (error) {
         throw new Error(
           `${body.name}: ${error instanceof Error ? error.message : String(error)}`,
@@ -57,7 +87,13 @@ export async function buildCodeResult(
     };
   } finally {
     engine.dispose();
+    for (const path of paths.values()) recipeFiles.delete(path);
   }
+}
+
+function base64Bytes(data: string): Uint8Array {
+  const text = atob(data);
+  return Uint8Array.from(text, (c) => c.charCodeAt(0));
 }
 
 // ---------------------------------------------------------------- blanks
@@ -219,6 +255,18 @@ function flatBlank(
         irregular:
           "the code cuts it with more than drillings square to its face",
       };
+    }
+    case "fillet":
+    case "chamfer": {
+      // Still cut from the same blank; the rounded edges are machining
+      // the DXF does not describe.
+      const base = flatBlank(recipe.source, m);
+      return base
+        ? {
+            ...base,
+            irregular: "the code rounds or bevels some of its edges",
+          }
+        : undefined;
     }
     default:
       return undefined;

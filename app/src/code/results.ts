@@ -27,7 +27,11 @@ export async function generate(
   options: { replace?: boolean; upload?: boolean } = {},
 ): Promise<CodeResult> {
   const output = await runCodePart(need.pinned.code.source, need.values!);
-  const { result } = await kernel().buildCode(output, need.key!);
+  const { result } = await kernel().buildCode(
+    output,
+    need.key!,
+    need.pinned.code.files,
+  );
   await kernel().useCodeResults([result]);
   if (options.upload !== false)
     await codeResults.put(result, options.replace ?? false);

@@ -13,8 +13,6 @@ test("the editor knows every export of the part API", () => {
       new RegExp(`export (function|namespace|interface|type) ${name}\\b`),
       `${name} is missing from app/src/code/sdk-types.ts`,
     );
-  for (const shape of Object.keys(sdk.Shapes).filter(
-    (n) => n !== "ImportedStep",
-  ))
+  for (const shape of Object.keys(sdk.Shapes))
     assert.match(sdkTypes, new RegExp(`class ${shape}\\b`));
 });

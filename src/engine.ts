@@ -32,6 +32,9 @@ let readRecipeFile = async (path: string): Promise<Uint8Array> => {
   };
   return readFile(path);
 };
+/** Files handed over in memory (a code part's STEP files), by the path its
+ * recipes use; read before `readRecipeFile` is asked. */
+export const recipeFiles = new Map<string, Uint8Array>();
 export function setRecipeFileReader(
   reader: (path: string) => Promise<Uint8Array>,
 ): void {
@@ -365,7 +368,7 @@ export class OpenCascadeEngine implements CadEngine {
         break;
       }
       case "step": {
-        const data = await readRecipeFile(r.path);
+        const data = recipeFiles.get(r.path) ?? (await readRecipeFile(r.path));
         const imported = b.unwrap(
           await b.importSTEP(new Blob([new Uint8Array(data)])),
         );

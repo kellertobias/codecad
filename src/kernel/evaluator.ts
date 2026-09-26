@@ -1893,7 +1893,7 @@ function codeInstance(
       error instanceof Error ? error.message : String(error),
     );
   }
-  const key = codeResultKey(pinned.code.source, values);
+  const key = codeResultKey(pinned.code.source, values, pinned.code.files);
   const result = context.codeResult(key);
   if (!result)
     throw new FeatureError(
