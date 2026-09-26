@@ -19,6 +19,8 @@ import { handleProjects } from "./projects-api.js";
 import { handleOutputs } from "./outputs-api.js";
 import { handleLibrary } from "./library-api.js";
 import { openLibrary } from "./library.js";
+import { openCutProgress } from "./cut-progress.js";
+import { viewerService } from "./viewer-api.js";
 import { JobQueue } from "./jobs.js";
 import {
   kernelBundleOptions,
@@ -170,6 +172,12 @@ let state: {
 /** Slow work done on request, such as exports. Every page hears about the
  * queue's progress through the event stream. */
 const jobs = new JobQueue({ concurrency: 2, onChange: () => broadcast() });
+const viewer = viewerService({
+  directory: join(storage, "viewer"),
+  workspace,
+  jobs,
+  progress: openCutProgress(join(storage, "workspace.sqlite")),
+});
 /** Files being generated on request, by name, so each download can show
  * its progress. */
 const exporting = (): Record<string, Progress> =>
@@ -484,8 +492,19 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (await handleOutputs(req, res, url, workspace, jobs)) return;
+    if (await viewer.handle(req, res, url, trusted)) return;
     if (await handleLibrary(req, res, url, library, trusted)) return;
-    if (await handleProjects(req, res, url, workspace, trusted)) return;
+    if (
+      await handleProjects(req, res, url, workspace, trusted, (project) =>
+        // Prebuilt now, so the phone finds the files ready.
+        viewer
+          .build(project.id)
+          .catch((error) =>
+            console.error(`Viewer files for ${project.name}: ${error}`),
+          ),
+      )
+    )
+      return;
     if (req.method === "POST") {
       if (!trusted()) {
         json({ error: "Invalid editor session" }, 403);
@@ -723,6 +742,16 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
       await serveApp(url.pathname, res);
+      return;
+    }
+    // The mobile viewer is a page of the editor's build, under /p/ so its
+    // service worker (/p/sw.js) can keep it for use offline.
+    if (/^\/p\/[0-9a-f-]{36}\/view\/?$/.test(url.pathname)) {
+      await serveApp("/app/viewer.html", res);
+      return;
+    }
+    if (url.pathname === "/p/sw.js") {
+      await serveApp("/app/viewer-sw.js", res);
       return;
     }
     const resources: Record<string, [string, string]> = {

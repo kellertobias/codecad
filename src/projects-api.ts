@@ -13,6 +13,7 @@ import {
   ProjectNotFound,
   RevisionConflict,
   maxDocumentBytes,
+  type Project,
   type Workspace,
 } from "./workspace.js";
 
@@ -56,6 +57,8 @@ export async function handleProjects(
   url: URL,
   workspace: Workspace,
   trusted: () => boolean,
+  /** Told about every stored revision, e.g. to prebuild viewer files. */
+  saved: (project: Project) => void = () => {},
 ): Promise<boolean> {
   const match = /^\/api\/projects(?:\/([0-9a-f-]{36}))?$/.exec(url.pathname);
   if (!match) return false;
@@ -78,7 +81,9 @@ export async function handleProjects(
       const body = await readJson(req);
       if (typeof body.name !== "string")
         throw new BadRequest("name must be a string");
-      json(workspace.create(body.name, documentField(body)), 201);
+      const project = workspace.create(body.name, documentField(body));
+      saved(project);
+      json(project, 201);
     } else if (id && method === "GET") json(workspace.get(id));
     else if (id && method === "PUT") {
       const body = await readJson(req);
@@ -88,12 +93,12 @@ export async function handleProjects(
         );
       if (body.name !== undefined && typeof body.name !== "string")
         throw new BadRequest("name must be a string");
-      json(
-        workspace.save(id, body.basedOn as number, {
-          document: documentField(body),
-          ...(body.name === undefined ? {} : { name: body.name as string }),
-        }),
-      );
+      const project = workspace.save(id, body.basedOn as number, {
+        document: documentField(body),
+        ...(body.name === undefined ? {} : { name: body.name as string }),
+      });
+      saved(project);
+      json(project);
     } else if (id && method === "DELETE") {
       workspace.delete(id);
       res.writeHead(204).end();

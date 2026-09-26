@@ -12,9 +12,11 @@ import {
   type CadDocument,
   type ExtrudeFeature,
   type Feature,
+  type JointFeature,
   type Plane,
   type SketchFeature,
 } from "../../src/document/schema.js";
+import { rectangleOutline } from "../../src/document/layout.js";
 
 /** A sketch with a rectangle whose corner, width and height are
  * expressions. Its lines are called `<id>.bottom`, `.right`, `.top`,
@@ -152,4 +154,72 @@ export function solvedDocument(
     features,
   });
   return solveDocument(doc, solver).document;
+}
+
+/** A side and a bottom joined with dominos, a layout of both on a sheet,
+ * and a drawing with a section. */
+export function shop(solver: SketchSolver): CadDocument {
+  const domino: JointFeature = {
+    id: "j",
+    type: "joint",
+    name: "Dominos",
+    kind: "domino",
+    a: "bottom:0",
+    b: "side:0",
+  };
+  return {
+    ...solvedDocument(
+      solver,
+      {},
+      [
+        rectangle("side-s", "YZ", "0", "0", "300", "400"),
+        extrude("side", "side-s"),
+        rectangle("bottom-s", "XY", "18", "0", "400", "300"),
+        extrude("bottom", "bottom-s", { name: "Bottom" }),
+        domino,
+      ],
+      {
+        materials: [
+          { id: "ply", name: "Ply 18", kind: "sheet", thickness: "18" },
+        ],
+      },
+    ),
+    stock: [
+      {
+        id: "sheet",
+        name: "Full sheet",
+        material: "ply",
+        kind: "sheet",
+        outline: rectangleOutline(2500, 1250),
+      },
+    ],
+    layouts: [
+      {
+        id: "l1",
+        name: "Sheet 1",
+        stock: "sheet",
+        kerf: 4,
+        placements: [
+          { part: "side:0", x: 10, y: 10, rotation: 0 },
+          { part: "bottom:0", x: 400, y: 10, rotation: 0 },
+        ],
+      },
+    ],
+    drawings: [
+      {
+        id: "d1",
+        name: "Assembly",
+        size: "A3",
+        views: [
+          { id: "front", kind: "view", angle: "front" },
+          {
+            id: "cut",
+            kind: "section",
+            origin: ["100", "150", "0"],
+            normal: [0, 1, 0],
+          },
+        ],
+      },
+    ],
+  };
 }
