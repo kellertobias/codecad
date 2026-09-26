@@ -618,8 +618,27 @@ then prints its LAN address.
   served under the same address.
 - **Project source:** the TypeScript that the server compiles and runs can only
   be changed from this machine.
-- **Users:** there are no user accounts yet. Only open the server on networks
-  you trust.
+- **Users:** by default there are no accounts: everything belongs to this
+  machine. Only open such a server on networks you trust.
+
+**Accounts** are turned on with `CODECAD_ACCOUNTS=1`:
+
+- **Passkeys:** people sign up with a name and a passkey (Face ID, Touch ID,
+  Windows Hello, a phone or a security key), and sign in with it. There are
+  no passwords. A signed-in person can add a passkey for another device.
+  Browsers only use passkeys over HTTPS or on `localhost`. Behind a reverse
+  proxy, set `CODECAD_ORIGIN=https://cad.example.com`.
+- **What is whose:** each person sees only their own projects, library,
+  code-part results and cut progress. Without a session the project APIs
+  answer `401`.
+- **View links:** the share button in the editor's top bar makes a link
+  (`/s/<token>`) that opens the saved project in the phone viewer for anyone,
+  without an account and read-only. Links can be revoked.
+- **Limits:** exports and viewer files are made each in a worker thread,
+  stopped after `CODECAD_JOB_TIMEOUT_MS` (120 s) or past
+  `CODECAD_JOB_MEMORY_MB` (2048 MB, OpenCascade's memory included). Each
+  person's jobs run one at a time, with at most 8 waiting. Stored code-part
+  results are limited to `CODECAD_RESULT_QUOTA_MB` (512 MB) per person.
 
 ## Authoring
 
