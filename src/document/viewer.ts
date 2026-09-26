@@ -67,6 +67,8 @@ export interface ViewerManifest {
   readonly layouts: readonly ViewerLayout[];
   /** What could not be built, said plainly. */
   readonly problems: readonly string[];
+  /** A code part's result was missing: built again once one is stored. */
+  readonly needsRegeneration?: boolean;
 }
 
 /** One copy of a part, as cut progress records it. */

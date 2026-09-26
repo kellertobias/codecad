@@ -23,6 +23,7 @@ import type { JobQueue } from "./jobs.js";
 import type { Project, Workspace } from "./workspace.js";
 import { ProjectNotFound } from "./workspace.js";
 import type { CutProgress } from "./cut-progress.js";
+import type { CodeResultStore } from "./code-results.js";
 import { BadRequest, readJson } from "./projects-api.js";
 import { readDocument } from "./document/schema.js";
 import type { ViewerManifest } from "./document/viewer.js";
@@ -41,6 +42,9 @@ export interface ViewerService {
   /** Builds the project's latest revision for the viewer, unless it is
    * built already; joins a build that is under way. */
   build(id: string): Promise<ViewerManifest>;
+  /** Forgets built revisions that were missing a code part's result, so
+   * they are built again with it. */
+  refreshRegenerated(): Promise<void>;
   handle(
     req: IncomingMessage,
     res: ServerResponse,
@@ -54,8 +58,9 @@ export function viewerService(options: {
   readonly workspace: Workspace;
   readonly jobs: JobQueue;
   readonly progress: CutProgress;
+  readonly codeResults?: CodeResultStore;
 }): ViewerService {
-  const { directory, workspace, jobs, progress } = options;
+  const { directory, workspace, jobs, progress, codeResults } = options;
   const folder = (id: string, revision: number) =>
     join(directory, id, String(revision));
   const built = async (id: string, revision: number) => {
@@ -75,11 +80,19 @@ export function viewerService(options: {
       work: async (report) => {
         const existing = await built(project.id, project.revision);
         if (existing) return existing;
-        const bundle = await viewerBundle(
-          readDocument(project.document),
-          project,
-          (fraction, message) => report({ fraction, message }),
-        );
+        const document = readDocument(project.document);
+        const results = await codeResults?.load(document);
+        let bundle;
+        try {
+          bundle = await viewerBundle(
+            document,
+            project,
+            (fraction, message) => report({ fraction, message }),
+            results,
+          );
+        } finally {
+          results?.dispose();
+        }
         // Written beside the target and renamed into place, so a reader
         // never sees half a revision.
         const target = folder(project.id, project.revision);
@@ -107,6 +120,22 @@ export function viewerService(options: {
   };
 
   const service: ViewerService = {
+    async refreshRegenerated() {
+      const projects = await readdir(directory).catch(() => [] as string[]);
+      for (const id of projects) {
+        const revisions = await readdir(join(directory, id)).catch(
+          () => [] as string[],
+        );
+        for (const revision of revisions.filter((r) => /^\d+$/.test(r))) {
+          const manifest = await built(id, Number(revision));
+          if (manifest?.needsRegeneration)
+            await rm(folder(id, Number(revision)), {
+              recursive: true,
+              force: true,
+            });
+        }
+      }
+    },
     async build(id) {
       const project = workspace.get(id);
       return (await built(id, project.revision)) ?? make(project);

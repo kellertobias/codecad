@@ -9,6 +9,7 @@ import { cutListPages, pageSvg, pagesDxf } from "../reports.js";
 import type { CadDocument } from "../document/schema.js";
 import { SketchSolver } from "../document/sketch-solver.js";
 import { DocumentEvaluator } from "./evaluator.js";
+import type { CodeResultSource } from "./code-parts.js";
 import { describeParts, sheetProject } from "./parts.js";
 import { billOfMaterials, bomCsv } from "./bom.js";
 import { layoutDxf, partDxf } from "./layouts.js";
@@ -33,6 +34,9 @@ export interface OutputFile {
 
 export class OutputError extends Error {}
 
+/** A code part's result is missing: only an editor can make it. */
+export class NeedsRegeneration extends OutputError {}
+
 const types: Record<OutputFormat, string> = {
   svg: "image/svg+xml",
   pdf: "application/pdf",
@@ -54,6 +58,8 @@ const fileName = (value: string) =>
 export async function documentOutput(
   document: CadDocument,
   request: OutputRequest,
+  /** Stored results of the document's code parts. */
+  codeResults?: CodeResultSource,
 ): Promise<OutputFile> {
   if (!allowed[request.kind]?.includes(request.format))
     throw new OutputError(
@@ -65,10 +71,18 @@ export async function documentOutput(
   )
     ? await SketchSolver.create()
     : undefined;
-  const evaluator = new DocumentEvaluator(solver ? { solver } : {});
+  const evaluator = new DocumentEvaluator({
+    ...(solver ? { solver } : {}),
+    ...(codeResults ? { codeResults } : {}),
+  });
   const engine = new OpenCascadeEngine();
   try {
-    const { bodies, hardware } = evaluator.evaluate(document);
+    const { bodies, hardware, status } = evaluator.evaluate(document);
+    const missing = [...status.values()].find(
+      (s) => s.state === "error" && s.regenerate,
+    );
+    if (missing?.state === "error")
+      throw new NeedsRegeneration(missing.message);
     const info = describeParts(document, bodies);
     const done = (bytes: Uint8Array, name: string): OutputFile => ({
       bytes,

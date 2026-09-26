@@ -4,8 +4,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { JobQueue } from "./jobs.js";
 import type { Workspace } from "./workspace.js";
 import { readDocument } from "./document/schema.js";
+import type { CodeResultStore } from "./code-results.js";
 import {
   documentOutput,
+  NeedsRegeneration,
   OutputError,
   type OutputFormat,
   type OutputKind,
@@ -17,6 +19,7 @@ export async function handleOutputs(
   url: URL,
   workspace: Workspace,
   jobs: JobQueue,
+  codeResults?: CodeResultStore,
 ): Promise<boolean> {
   const match =
     /^\/api\/projects\/([0-9a-f-]{36})\/outputs\/(drawing|layout|part|cutlist|bom)$/.exec(
@@ -45,12 +48,19 @@ export async function handleOutputs(
       key: `output\0${id}\0${project.revision}\0${kind}\0${target ?? ""}\0${format}`,
       lane: `output\0${id}`,
       label: `${project.name}: ${kind}${target ? ` ${target}` : ""} (${format})`,
-      work: () =>
-        documentOutput(document, {
-          kind,
-          format,
-          ...(target ? { target } : {}),
-        }),
+      work: async () => {
+        // Code parts come from their stored results; nothing runs code.
+        const results = await codeResults?.load(document);
+        try {
+          return await documentOutput(
+            document,
+            { kind, format, ...(target ? { target } : {}) },
+            results,
+          );
+        } finally {
+          results?.dispose();
+        }
+      },
     });
     res.writeHead(200, {
       "Content-Type": file.type,
@@ -61,7 +71,11 @@ export async function handleOutputs(
     res.end(file.bytes);
   } catch (error) {
     fail(
-      error instanceof OutputError ? 400 : 500,
+      error instanceof NeedsRegeneration
+        ? 409
+        : error instanceof OutputError
+          ? 400
+          : 500,
       error instanceof Error ? error.message : String(error),
     );
   }

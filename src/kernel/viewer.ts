@@ -15,6 +15,7 @@ import {
 } from "../document/viewer.js";
 import { SketchSolver } from "../document/sketch-solver.js";
 import { DocumentEvaluator } from "./evaluator.js";
+import type { CodeResultSource } from "./code-parts.js";
 import { describeParts, sheetProject } from "./parts.js";
 import { layoutParts } from "./layouts.js";
 import { partSheets, renderSheet } from "./drawings.js";
@@ -43,6 +44,7 @@ export async function viewerBundle(
   document: CadDocument,
   project: { readonly id: string; readonly name: string; revision: number },
   report: (fraction: number, message: string) => void = () => {},
+  codeResults?: CodeResultSource,
 ): Promise<ViewerBundle> {
   const files = new Map<string, ViewerFile>();
   const problems: string[] = [];
@@ -51,11 +53,17 @@ export async function viewerBundle(
   )
     ? await SketchSolver.create()
     : undefined;
-  const evaluator = new DocumentEvaluator(solver ? { solver } : {});
+  const evaluator = new DocumentEvaluator({
+    ...(solver ? { solver } : {}),
+    ...(codeResults ? { codeResults } : {}),
+  });
   const engine = new OpenCascadeEngine();
   try {
     report(0.05, "Building the model");
     const { bodies, hardware, status } = evaluator.evaluate(document);
+    const needsRegeneration = [...status.values()].some(
+      (s) => s.state === "error" && s.regenerate,
+    );
     for (const [id, state] of status)
       if (state.state === "error")
         problems.push(
@@ -207,6 +215,7 @@ export async function viewerBundle(
         drawings,
         layouts,
         problems,
+        ...(needsRegeneration ? { needsRegeneration } : {}),
       },
       files,
     };

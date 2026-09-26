@@ -21,6 +21,8 @@ import { handleLibrary } from "./library-api.js";
 import { openLibrary } from "./library.js";
 import { openCutProgress } from "./cut-progress.js";
 import { viewerService } from "./viewer-api.js";
+import { openCodeResults } from "./code-results.js";
+import { handleCodeResults } from "./code-results-api.js";
 import { JobQueue } from "./jobs.js";
 import {
   kernelBundleOptions,
@@ -172,10 +174,12 @@ let state: {
 /** Slow work done on request, such as exports. Every page hears about the
  * queue's progress through the event stream. */
 const jobs = new JobQueue({ concurrency: 2, onChange: () => broadcast() });
+const codeResults = openCodeResults(join(storage, "code-results"));
 const viewer = viewerService({
   directory: join(storage, "viewer"),
   workspace,
   jobs,
+  codeResults,
   progress: openCutProgress(join(storage, "workspace.sqlite")),
 });
 /** Files being generated on request, by name, so each download can show
@@ -491,7 +495,14 @@ const server = createServer(async (req, res) => {
       json(languageService.libraries());
       return;
     }
-    if (await handleOutputs(req, res, url, workspace, jobs)) return;
+    if (await handleOutputs(req, res, url, workspace, jobs, codeResults))
+      return;
+    if (
+      await handleCodeResults(req, res, url, codeResults, trusted, () => {
+        void viewer.refreshRegenerated();
+      })
+    )
+      return;
     if (await viewer.handle(req, res, url, trusted)) return;
     if (await handleLibrary(req, res, url, library, trusted)) return;
     if (
@@ -767,6 +778,7 @@ const server = createServer(async (req, res) => {
       "/kernel-probe": [join(root, "web/kernel-probe.html"), "text/html"],
       "/kernel-probe.js": [join(ui, "kernel-probe.js"), "text/javascript"],
       "/kernel.worker.js": [join(ui, "kernel.worker.js"), "text/javascript"],
+      "/code-sandbox.js": [join(ui, "code-sandbox.js"), "text/javascript"],
       "/occt-wasm.wasm": [join(ui, "occt-wasm.wasm"), "application/wasm"],
       "/style.css": [join(root, "web/style.css"), "text/css"],
       "/project-tabs.css": [join(root, "web/project-tabs.css"), "text/css"],
@@ -827,6 +839,7 @@ function close() {
   for (const listener of listeners) listener.end();
   server.close();
   workspace.close();
+  void codeResults.close();
   process.exit(0);
 }
 process.on("SIGINT", close);
