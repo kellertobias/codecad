@@ -766,6 +766,16 @@ input.expression {
   align-items: center;
   font-size: 12px;
 }
+.hardware-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px;
+}
+.hardware-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
 .part-problem {
   margin: 0;
   font-size: 12px;

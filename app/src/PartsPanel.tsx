@@ -9,6 +9,7 @@ import type {
 } from "../../src/document/schema.ts";
 import type { VariableValues } from "../../src/document/variables.ts";
 import type { Model } from "./kernel.ts";
+import { billOfMaterials, bomCsv } from "../../src/kernel/bom.ts";
 import { Choice, ExpressionField, Field } from "./features/fields.tsx";
 
 type Apply = (change: (document: CadDocument) => CadDocument) => void;
@@ -182,6 +183,40 @@ export function PartsPanel({
           {sheets.reduce((n, p) => n + p.quantity, 0) === 1 ? "" : "s"} for the
           cut list, nesting and DXF.
         </p>
+      ) : null}
+
+      {model?.hardware.length ? (
+        <>
+          <header>
+            <h2>Hardware</h2>
+          </header>
+          <ul className="hardware-list">
+            {billOfMaterials([], model.hardware).map((row) => (
+              <li key={`${row.name}${row.size}`}>
+                <span>
+                  {row.name} {row.size}
+                </span>
+                <span className="quantity">× {row.quantity}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {parts.length ? (
+        <button
+          onClick={() => {
+            const csv = bomCsv(billOfMaterials(parts, model?.hardware ?? []));
+            const link = globalThis.document.createElement("a");
+            link.href = URL.createObjectURL(
+              new Blob([csv], { type: "text/csv" }),
+            );
+            link.download = "bill-of-materials.csv";
+            link.click();
+            URL.revokeObjectURL(link.href);
+          }}
+        >
+          Download the bill of materials (CSV)
+        </button>
       ) : null}
 
       <header>

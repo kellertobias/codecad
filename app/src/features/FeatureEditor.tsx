@@ -1,17 +1,28 @@
 // The inspector for one feature: its parameters as a form. Faces and edges
 // are picked in the 3D view: a "Pick" button hands the view's clicks to
 // that field until it is pressed again.
+import { useEffect, useState } from "react";
 import type {
+  Axis,
   CadDocument,
   EdgeReference,
   ExtrudeFeature,
   FaceReference,
   Feature,
   HoleFeature,
+  JointFeature,
+  MateFeature,
   MirrorFeature,
+  MoveFeature,
   PatternFeature,
   SketchFeature,
 } from "../../../src/document/schema.ts";
+import {
+  dominoSizeNames,
+  jointNames,
+  type JointKind,
+} from "../../../src/kernel/joints.ts";
+import { kernel } from "../kernel.ts";
 import type { VariableValues } from "../../../src/document/variables.ts";
 import {
   detectProfiles,
@@ -23,7 +34,17 @@ import type { Model } from "../kernel.ts";
 import { Checklist, Choice, ExpressionField, Field } from "./fields.tsx";
 
 /** Which reference field the 3D view's clicks go to. */
-export type PickField = "edges" | "faces" | "upTo" | "face";
+export type PickField =
+  | "edges"
+  | "faces"
+  | "upTo"
+  | "face"
+  | "a"
+  | "b"
+  | "moving"
+  | "target"
+  | "movingEdge"
+  | "targetEdge";
 
 export interface FeatureEditorProps {
   document: CadDocument;
@@ -73,6 +94,12 @@ export function FeatureEditor(props: FeatureEditorProps) {
         <ShellFields {...props} feature={feature} />
       ) : feature.type === "hole" ? (
         <HoleFields {...props} feature={feature} />
+      ) : feature.type === "joint" ? (
+        <JointFields {...props} feature={feature} />
+      ) : feature.type === "move" ? (
+        <MoveFields {...props} feature={feature} />
+      ) : feature.type === "mate" ? (
+        <MateFields {...props} feature={feature} />
       ) : (
         <RepeatFields {...props} feature={feature} />
       )}
@@ -714,5 +741,324 @@ function RefList({
         ))}
       </ul>
     </fieldset>
+  );
+}
+
+const bodyName = (model: Model | undefined, id: string) =>
+  model?.bodies.find((body) => body.id === id)?.name ?? id;
+
+/** Which parameters each joint has, with their defaults as placeholders. */
+const jointFields: Record<
+  JointKind,
+  readonly (readonly [keyof JointFeature & string, string, string, string?])[]
+> = {
+  finger: [
+    ["fingerWidth", "Finger width", "20"],
+    ["clearance", "Clearance", "0"],
+  ],
+  domino: [
+    ["count", "Count", "2", ""],
+    ["edgeOffset", "From the ends", "auto"],
+  ],
+  dowel: [
+    ["diameter", "Diameter", "8"],
+    ["length", "Dowel length", "30"],
+    ["count", "Count", "2", ""],
+    ["edgeOffset", "From the ends", "auto"],
+  ],
+  screw: [
+    ["diameter", "Diameter", "4"],
+    ["length", "Screw length", "40"],
+    ["count", "Count", "2", ""],
+    ["edgeOffset", "From the ends", "auto"],
+  ],
+  dado: [
+    ["depth", "Depth", "half"],
+    ["clearance", "Clearance", "0"],
+  ],
+  rabbet: [
+    ["depth", "Depth", "half"],
+    ["clearance", "Clearance", "0"],
+  ],
+  miter: [],
+  halfLap: [["clearance", "Clearance", "0"]],
+};
+
+function JointFields({
+  document,
+  feature,
+  variables,
+  model,
+  update,
+  picking,
+  setPicking,
+}: Props<JointFeature>) {
+  const [meeting, setMeeting] = useState<{
+    description: string;
+    joints: readonly JointKind[];
+  }>();
+  // How the panels meet before this joint changes them.
+  const index = document.features.findIndex((f) => f.id === feature.id);
+  const before = JSON.stringify([
+    feature.a,
+    feature.b,
+    document.features.slice(0, index),
+  ]);
+  useEffect(() => {
+    let current = true;
+    kernel()
+      .contact(document, index - 1, feature.a, feature.b)
+      .then(
+        (answer) => current && setMeeting(answer),
+        (error) =>
+          current &&
+          setMeeting({
+            description: error instanceof Error ? error.message : String(error),
+            joints: [],
+          }),
+      );
+    return () => {
+      current = false;
+    };
+    // Only what comes before the joint changes how the panels meet.
+  }, [before]);
+  const set = (key: keyof JointFeature & string, value: string | undefined) => {
+    const next: Record<string, unknown> = { ...feature, [key]: value };
+    if (value === undefined) delete next[key];
+    update(next as unknown as JointFeature);
+  };
+  return (
+    <>
+      {(["a", "b"] as const).map((side) => (
+        <Field key={side} label={side === "a" ? "First part" : "Second part"}>
+          <span>{bodyName(model, feature[side])}</span>
+          <PickButton
+            field={side}
+            picking={picking}
+            setPicking={setPicking}
+            what="a part"
+          />
+        </Field>
+      ))}
+      <p className="hint">{meeting?.description ?? "…"}</p>
+      <Field label="Joint">
+        <select
+          value={feature.kind}
+          onChange={(event) =>
+            update({ ...feature, kind: event.target.value as JointKind })
+          }
+        >
+          {(meeting?.joints.includes(feature.kind)
+            ? meeting.joints
+            : [feature.kind, ...(meeting?.joints ?? [])]
+          ).map((kind) => (
+            <option key={kind} value={kind}>
+              {jointNames[kind]}
+              {meeting && !meeting.joints.includes(kind)
+                ? " (does not fit)"
+                : ""}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {feature.kind === "domino" ? (
+        <Choice
+          label="Domino"
+          value={feature.domino ?? "5x30"}
+          options={dominoSizeNames.map((size) => [size, size] as const)}
+          commit={(domino) => update({ ...feature, domino })}
+        />
+      ) : null}
+      {jointFields[feature.kind].map(([key, label, placeholder, unit]) => (
+        <ExpressionField
+          key={key}
+          label={label}
+          value={feature[key] as string | undefined}
+          variables={variables}
+          optional
+          placeholder={placeholder}
+          {...(unit !== undefined ? { unit } : {})}
+          commit={(value) => set(key, value)}
+        />
+      ))}
+    </>
+  );
+}
+
+const axes: readonly (readonly [Axis, string])[] = [
+  ["X", "X"],
+  ["Y", "Y"],
+  ["Z", "Z"],
+];
+
+function MoveFields({ feature, variables, model, update }: Props<MoveFeature>) {
+  const triple = (
+    label: string,
+    value: readonly [string, string, string] | undefined,
+    commit: (next: [string, string, string]) => void,
+  ) =>
+    (["x", "y", "z"] as const).map((axis, i) => (
+      <ExpressionField
+        key={`${label}${axis}`}
+        label={`${label} ${axis}`}
+        value={value?.[i]}
+        variables={variables}
+        optional
+        placeholder="0"
+        commit={(v) => {
+          const next = [...(value ?? ["0", "0", "0"])] as [
+            string,
+            string,
+            string,
+          ];
+          next[i] = v ?? "0";
+          commit(next);
+        }}
+      />
+    ));
+  const rotate = feature.rotate ?? { axis: "Z" as Axis, angle: "0" };
+  return (
+    <>
+      <Checklist
+        label="Bodies"
+        items={bodyItems(model, feature)}
+        checked={feature.bodies}
+        commit={(bodies) => update({ ...feature, bodies })}
+        empty="There are no bodies yet."
+      />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!feature.copy}
+          onChange={(event) =>
+            update(
+              event.target.checked
+                ? { ...feature, copy: true }
+                : without(feature, "copy"),
+            )
+          }
+        />
+        Place copies (the originals stay)
+      </label>
+      {triple("Move", feature.translate, (translate) =>
+        update({ ...feature, translate }),
+      )}
+      <Choice
+        label="Turn about"
+        value={rotate.axis}
+        options={axes}
+        commit={(axis) => update({ ...feature, rotate: { ...rotate, axis } })}
+      />
+      <ExpressionField
+        label="Angle"
+        value={feature.rotate?.angle}
+        variables={variables}
+        unit="°"
+        optional
+        placeholder="0"
+        commit={(angle) =>
+          update(
+            angle
+              ? { ...feature, rotate: { ...rotate, angle } }
+              : without(feature, "rotate"),
+          )
+        }
+      />
+      {feature.rotate
+        ? triple("Centre", feature.rotate.center, (center) =>
+            update({ ...feature, rotate: { ...rotate, center } }),
+          )
+        : null}
+    </>
+  );
+}
+
+function MateFields({
+  document,
+  feature,
+  variables,
+  update,
+  picking,
+  setPicking,
+}: Props<MateFeature>) {
+  const face = (label: string, field: "moving" | "target") => (
+    <Field label={label}>
+      <span>{describeFace(document, feature[field])}</span>
+      <PickButton
+        field={field}
+        picking={picking}
+        setPicking={setPicking}
+        what="a face"
+      />
+    </Field>
+  );
+  const edge = (label: string, field: "movingEdge" | "targetEdge") => (
+    <Field label={label}>
+      <span className={feature[field] ? undefined : "hint"}>
+        {feature[field] ? describeEdge(document, feature[field]!) : "none yet"}
+      </span>
+      <PickButton
+        field={field}
+        picking={picking}
+        setPicking={setPicking}
+        what="an edge"
+      />
+    </Field>
+  );
+  return (
+    <>
+      <Choice
+        label="Mate"
+        value={feature.kind}
+        options={[
+          ["planar", "Face against face"],
+          ["fastened", "Face against face, centred"],
+          ["edge", "Face against face, edges lined up"],
+        ]}
+        commit={(kind) => update({ ...feature, kind })}
+      />
+      {face("Moves", "moving")}
+      {face("Onto", "target")}
+      {feature.kind === "edge" ? (
+        <>
+          {edge("Its edge", "movingEdge")}
+          {edge("Onto edge", "targetEdge")}
+          <Choice
+            label="Flush at"
+            value={feature.align ?? "start"}
+            options={[
+              ["start", "the start"],
+              ["middle", "the middle"],
+              ["end", "the end"],
+            ]}
+            commit={(align) => update({ ...feature, align })}
+          />
+        </>
+      ) : null}
+      <ExpressionField
+        label="Gap"
+        value={feature.offset}
+        variables={variables}
+        optional
+        placeholder="0"
+        commit={(offset) =>
+          update(offset ? { ...feature, offset } : without(feature, "offset"))
+        }
+      />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!feature.flip}
+          onChange={(event) =>
+            update(
+              event.target.checked
+                ? { ...feature, flip: true }
+                : without(feature, "flip"),
+            )
+          }
+        />
+        Faces point the same way
+      </label>
+    </>
   );
 }

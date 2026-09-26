@@ -19,6 +19,9 @@ const symbols: Record<Feature["type"], string> = {
   hole: "◎",
   pattern: "⋯",
   mirror: "⇋",
+  joint: "⊞",
+  move: "✥",
+  mate: "⊣",
 };
 
 export function FeatureTree({

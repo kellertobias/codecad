@@ -79,6 +79,11 @@ export function App() {
   /** The face last clicked in the 3D view, for a new sketch. */
   const [face, setFace] = useState<Extract<Pick, { kind: "face" }>>();
   const [body, setBody] = useState<string>();
+  /** A joint or mate being set up: the parts or faces clicked so far. */
+  const [draft, setDraft] = useState<
+    | { readonly kind: "joint"; readonly bodies: readonly string[] }
+    | { readonly kind: "mate"; readonly faces: readonly FaceReference[] }
+  >();
   const history = useDocumentHistory<CadDocument>(emptyDocument());
   const document = history.current;
 
@@ -219,6 +224,7 @@ export function App() {
     const keys = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !isTyping(event.target)) {
         setPicking(undefined);
+        setDraft(undefined);
         setMeasuring(false);
       }
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -395,8 +401,73 @@ export function App() {
       }));
   };
 
+  const newMove = () => {
+    const chosen = body ?? face?.body;
+    add("move", (id, name) => ({
+      id,
+      type: "move",
+      name,
+      bodies: chosen ? [chosen] : [],
+      translate: ["0", "0", "0"],
+    }));
+  };
+
+  /** Continues setting up a joint or mate with a click in the view. */
+  const onDraft = async (pick: Pick | undefined) => {
+    if (!draft || !pick) return;
+    if (draft.kind === "joint") {
+      const bodies = draft.bodies.includes(pick.body)
+        ? draft.bodies
+        : [...draft.bodies, pick.body];
+      if (bodies.length < 2) return setDraft({ kind: "joint", bodies });
+      setDraft(undefined);
+      const [a, b] = bodies as [string, string];
+      const answer = await kernel().contact(document, rollback, a, b);
+      if (!answer.joints.length)
+        return setMessage(`No joint fits: ${answer.description}.`);
+      setMessage(undefined);
+      add("joint", (id, name) => ({
+        id,
+        type: "joint",
+        name,
+        kind: answer.joints[0]!,
+        a,
+        b,
+      }));
+      return;
+    }
+    if (pick.kind !== "face") return;
+    const answer = await kernel().pickFace(pick.body, pick.face);
+    if (!answer.ref) return setMessage(answer.reason);
+    if (!answer.planar) return setMessage("Mates join flat faces.");
+    const faces = [...draft.faces, answer.ref];
+    if (faces.length < 2) return setDraft({ kind: "mate", faces });
+    setDraft(undefined);
+    const [moving, target] = faces as [FaceReference, FaceReference];
+    if (moving.body === target.body)
+      return setMessage("Pick the second face on another part.");
+    setMessage(undefined);
+    add("mate", (id, name) => ({
+      id,
+      type: "mate",
+      name,
+      kind: "planar",
+      moving,
+      target,
+    }));
+  };
+
   /** A click in the 3D view: fills the field being picked, or selects. */
   const onPick = async (pick: Pick | undefined) => {
+    if (draft) {
+      try {
+        await onDraft(pick);
+      } catch (error) {
+        setDraft(undefined);
+        setMessage(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
     if (!picking || !feature) {
       // A click selects a face; the body highlight is the parts list's.
       setFace(pick?.kind === "face" ? pick : undefined);
@@ -419,6 +490,26 @@ export function App() {
         setMessage(undefined);
         return;
       }
+      if ((picking === "a" || picking === "b") && feature.type === "joint") {
+        if (!pick) return;
+        const other = feature[picking === "a" ? "b" : "a"];
+        if (pick.body === other)
+          return setMessage("Pick a different part for the other side.");
+        replace({ ...feature, [picking]: pick.body });
+        setPicking(undefined);
+        return;
+      }
+      if (
+        (picking === "movingEdge" || picking === "targetEdge") &&
+        feature.type === "mate"
+      ) {
+        if (pick?.kind !== "edge") return;
+        const answer = await kernel().pickEdge(pick.body, pick.edge);
+        if (!answer.ref) return setMessage(answer.reason);
+        replace({ ...feature, [picking]: answer.ref });
+        setPicking(undefined);
+        return;
+      }
       if (pick?.kind !== "face") return;
       const answer = await kernel().pickFace(pick.body, pick.face);
       if (!answer.ref) return setMessage(answer.reason);
@@ -434,6 +525,13 @@ export function App() {
         if (!answer.planar) return setMessage("Extrude up to a flat face.");
         replace({ ...feature, upTo: ref });
         setPicking(undefined);
+      } else if (
+        (picking === "moving" || picking === "target") &&
+        feature.type === "mate"
+      ) {
+        if (!answer.planar) return setMessage("Mates join flat faces.");
+        replace({ ...feature, [picking]: ref });
+        setPicking(undefined);
       } else if (picking === "face" && feature.type === "sketch") {
         if (!answer.planar) return setMessage("Sketches go on flat faces.");
         replace({ ...feature, face: ref });
@@ -447,9 +545,13 @@ export function App() {
 
   const mode: PickMode = measuring
     ? "measure"
-    : picking === "edges"
-      ? "edge"
-      : "face";
+    : draft?.kind === "joint" || picking === "a" || picking === "b"
+      ? "body"
+      : picking === "edges" ||
+          picking === "movingEdge" ||
+          picking === "targetEdge"
+        ? "edge"
+        : "face";
   const highlight = useMemo((): Highlight => {
     const faces = new Map<string, Set<number>>();
     if (face && !picking) faces.set(face.body, new Set([face.face]));
@@ -626,6 +728,34 @@ export function App() {
               <button onClick={() => newRepeat("mirror")}>Mirror</button>
               <span className="separator" />
               <button
+                className={draft?.kind === "joint" ? "active" : undefined}
+                onClick={() =>
+                  setDraft(
+                    draft?.kind === "joint"
+                      ? undefined
+                      : { kind: "joint", bodies: [] },
+                  )
+                }
+                title="Click two touching parts, then choose how they are joined"
+              >
+                Joint
+              </button>
+              <button
+                className={draft?.kind === "mate" ? "active" : undefined}
+                onClick={() =>
+                  setDraft(
+                    draft?.kind === "mate"
+                      ? undefined
+                      : { kind: "mate", faces: [] },
+                  )
+                }
+                title="Click a face of the part to move, then the face it goes onto"
+              >
+                Mate
+              </button>
+              <button onClick={newMove}>Move</button>
+              <span className="separator" />
+              <button
                 className={measuring ? "active" : undefined}
                 onClick={() => setMeasuring((m) => !m)}
               >
@@ -640,9 +770,28 @@ export function App() {
               onPick={(pick) => void onPick(pick)}
             />
             <div className="model-status">
-              {picking ? (
+              {draft ? (
                 <span className="ok">
-                  Click {picking === "edges" ? "edges" : "a face"} in the view
+                  {draft.kind === "joint"
+                    ? draft.bodies.length
+                      ? "Now click the part it joins."
+                      : "Click the first of two touching parts."
+                    : draft.faces.length
+                      ? "Now click the face it goes onto."
+                      : "Click a face of the part to move."}{" "}
+                  Esc cancels.
+                </span>
+              ) : picking ? (
+                <span className="ok">
+                  Click{" "}
+                  {picking === "edges"
+                    ? "edges"
+                    : picking === "a" || picking === "b"
+                      ? "a part"
+                      : picking === "movingEdge" || picking === "targetEdge"
+                        ? "an edge"
+                        : "a face"}{" "}
+                  in the view
                   {until !== undefined && until < features.length - 1
                     ? " (the model is shown as it is before this feature)"
                     : ""}

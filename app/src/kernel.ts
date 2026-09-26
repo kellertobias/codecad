@@ -3,7 +3,9 @@
 // while one runs, only the newest document waits for its turn.
 import { useEffect, useRef, useState } from "react";
 import { KernelClient } from "../../web/kernel/client.ts";
-import type { BodyView } from "../../web/kernel/protocol.ts";
+import type { BodyView, KernelResponse } from "../../web/kernel/protocol.ts";
+
+type Answer = Extract<KernelResponse, { type: "model" }>;
 import type { CadDocument } from "../../src/document/schema.ts";
 import type { Frame } from "../../src/document/frames.ts";
 import type { FeatureStatus } from "../../src/kernel/evaluator.ts";
@@ -20,6 +22,7 @@ export interface Model {
   readonly frames: ReadonlyMap<string, Frame>;
   readonly projections: ReadonlyMap<string, Float32Array>;
   readonly parts: readonly PartInfo[];
+  readonly hardware: Answer["hardware"];
   readonly ms: number;
   readonly meshMs: number;
   /** The document the model was made from. */
@@ -61,6 +64,7 @@ export function useModel(
             frames: new Map(result.frames),
             projections: new Map(result.projections),
             parts: result.parts,
+            hardware: result.hardware,
             ms: result.ms,
             meshMs: result.meshMs,
             document: next.document,
