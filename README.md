@@ -384,8 +384,28 @@ are drawn in the sketch as dashed reference lines, and points snap to them.
   also lists conflicting constraints (shown in red), redundant ones (orange)
   and dimensions whose expression fails. Closed regions are shaded, including
   holes; these are the profiles a later extrude will use.
-- **Keys:** Ctrl/⌘+Z and Shift+Ctrl/⌘+Z undo and redo any change, to variables
-  or sketches alike, and Ctrl/⌘+S saves.
+- **Keys:** every tool and constraint has a key, shown in its tooltip:
+  H, V, P, N, E, G, I, O, M, Y and K apply the constraints the selection
+  allows, D adds a distance or diameter, Shift+H and Shift+V the horizontal
+  and vertical distances. Ctrl/⌘+Enter closes the sketch.
+
+**Keyboard shortcuts:** the toolbars show icons, and each button's tooltip says
+what it does and its key. Press **?** for the full list. The main ones:
+
+- Ctrl/⌘+S saves; Ctrl/⌘+Z and Shift+Ctrl/⌘+Z undo and redo any change, to
+  variables or sketches alike.
+- Alt+1 to Alt+4 switch between model, drawings, stock & layouts and library.
+- In the model, S sketches, E extrudes, H makes a hole, F a fillet, C a
+  chamfer, L a shell, P a pattern, Shift+M a mirror, J a joint, M a mate, G a
+  move and D measures.
+- ↑ and ↓ select features, Enter edits the selected sketch, Delete removes the
+  selected feature, Shift+S suppresses it, and [ and ] move the rollback bar.
+- 0 fits the view; 1, 2 and 3 look from the front, top and right.
+- In a layout, [ and ] select placed parts, the arrow keys move them by 1 mm
+  (with Shift 10 mm), R and Shift+R turn them, F flips them, Delete takes
+  them off and N auto-nests.
+
+Single keys work while no field has the focus.
 
 **Bodies** come from features, which are built in the order the feature list
 shows. The toolbar above the 3D view adds them where the rollback bar is:
@@ -486,6 +506,30 @@ drawer runner or a leg.
   library.
 - **Files:** items export to one file and import from one, with all their
   versions (`/api/library/<id>/file`).
+
+**Phone viewer:** `/p/<id>/view` (the phone icon in the editor's top bar)
+shows the saved project on a phone, for the workshop. It never loads the CAD
+kernel: every save starts a server job that prebuilds the model as GLB, every
+drawing and part sheet as SVG and PDF, the cut list, and the layouts.
+
+- **Model:** turn it with one finger and zoom with two. Tap a part to pick it,
+  and **Alone** shows only that part.
+- **Drawings:** open a sheet to pinch-zoom it (double-tap zooms too), and
+  download it as PDF.
+- **Cut list:** parts by material, with a box to tick for every copy cut, and
+  the hardware. Tapping a part marks it in the layouts and the model too.
+- **Layouts:** the stock with the parts on it, ticked-off parts shaded; tap a
+  part to tick it there.
+- **Offline:** once opened, the viewer keeps the revision's files on the
+  phone, so drawings, the cut list and layouts open without wifi. Ticks made
+  offline are sent when the phone is back online.
+
+Ticks are stored on the server per saved revision
+(`GET/POST /api/projects/<id>/progress/<revision>`); a new revision starts
+unticked, as its parts may have changed. The viewer reads
+`GET /api/projects/<id>/viewer` and the files under
+`/api/projects/<id>/viewer/<revision>/`. `npm run test:e2e` runs the viewer's
+browser tests at phone width with Playwright.
 
 The server makes these files from the saved project as jobs:
 `GET /api/projects/<id>/outputs/<kind>?format=…&target=…`:
