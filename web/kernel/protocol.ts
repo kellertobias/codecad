@@ -166,5 +166,7 @@ export type KernelResponse =
       readonly type: "nest";
       readonly placements: readonly Placement[];
       readonly left: readonly string[];
+      /** By rectangles or by true outlines. */
+      readonly method: "guillotine" | "shape";
     }
   | { readonly id: number; readonly type: "error"; readonly message: string };

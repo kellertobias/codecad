@@ -149,7 +149,7 @@ export function gap(a: readonly Point2[], b: readonly Point2[]): number {
 }
 
 /** How far an outline stays inside a piece: negative when it leaves it. */
-function clearance(
+export function clearance(
   outline: readonly Point2[],
   piece: readonly Point2[],
 ): number {

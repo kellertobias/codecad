@@ -549,6 +549,10 @@ export interface Layout {
   readonly margin?: number;
   /** Strips narrower than this between parts are flagged. */
   readonly minimumStrip?: number;
+  /** How auto-nest places parts: in rectangles cut straight through (for
+   * a panel saw), by their true outlines (for a CNC), or whichever places
+   * more (the default). */
+  readonly nesting?: "auto" | "guillotine" | "shape";
   readonly placements: readonly Placement[];
 }
 
@@ -850,6 +854,9 @@ function validate(document: Record<string, unknown>): void {
       string(layout.stock, `${at}.stock`);
       for (const key of ["kerf", "margin", "minimumStrip"])
         optional(layout[key], `${at}.${key}`, finite);
+      optional(layout.nesting, `${at}.nesting`, (v, q) =>
+        oneOf(v, q, ["auto", "guillotine", "shape"]),
+      );
       list(layout.placements, `${at}.placements`).forEach((placed, j) => {
         const q = `${at}.placements[${j}]`;
         if (!isObject(placed)) return fail(q, "must be an object");

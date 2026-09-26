@@ -22,6 +22,7 @@ import {
   type Rectangle,
 } from "../document/layout.js";
 import type { BodyShape, PartInfo } from "./parts.js";
+import { shapeNest } from "../document/shape-nesting.js";
 import { sheetProject } from "./parts.js";
 
 /** The sheet parts of one material, as layouts see them. */
@@ -58,9 +59,38 @@ const bounds = (outline: readonly { x: number; y: number }[]) => {
 class NestParts extends Assembly {}
 
 /** Fills a piece with the parts still to place (their copies not in any
- * other layout), using the guillotine nesting: on a rectangular piece
- * directly, on an offcut in the largest rectangles that fit inside it. */
+ * other layout), as the layout asks: by rectangles (guillotine), by true
+ * outlines, or (auto) whichever places more, rectangles when equal. */
 export function autoNest(
+  layout: Layout,
+  piece: StockPiece,
+  parts: readonly LayoutPart[],
+  others: readonly Layout[],
+): {
+  placements: Placement[];
+  left: string[];
+  method: "guillotine" | "shape";
+} {
+  const method = layout.nesting ?? "auto";
+  const guillotine =
+    method === "shape"
+      ? undefined
+      : guillotineNest(layout, piece, parts, others);
+  const shaped =
+    method === "guillotine"
+      ? undefined
+      : shapeNest(layout, piece, parts, others);
+  if (
+    shaped &&
+    (!guillotine || shaped.placements.length > guillotine.placements.length)
+  )
+    return { ...shaped, method: "shape" };
+  return { ...guillotine!, method: "guillotine" };
+}
+
+/** The guillotine nesting: on a rectangular piece directly, on an offcut
+ * in the largest rectangles that fit inside it. */
+function guillotineNest(
   layout: Layout,
   piece: StockPiece,
   parts: readonly LayoutPart[],

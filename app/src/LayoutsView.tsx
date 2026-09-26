@@ -382,10 +382,12 @@ function LayoutEditor({
         others,
       );
       set({ ...layout, placements: [...result.placements] });
+      const how =
+        result.method === "shape" ? "by their true shapes" : "in rectangles";
       setMessage(
         result.left.length
-          ? `Did not fit: ${result.left.join(", ")}`
-          : `Placed ${result.placements.length} parts`,
+          ? `Placed ${result.placements.length} ${how}; did not fit: ${result.left.join(", ")}`
+          : `Placed ${result.placements.length} parts ${how}`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -497,6 +499,21 @@ function LayoutEditor({
             />
           </label>
         ))}
+        <select
+          aria-label="How auto-nest places parts"
+          title="Rectangles suit a panel saw; true shapes interlock parts for a CNC"
+          value={layout.nesting ?? "auto"}
+          onChange={(e) =>
+            set({
+              ...layout,
+              nesting: e.target.value as NonNullable<Layout["nesting"]>,
+            })
+          }
+        >
+          <option value="auto">best of both</option>
+          <option value="guillotine">rectangles (saw)</option>
+          <option value="shape">true shapes (CNC)</option>
+        </select>
         <span className="spacer" />
         <button
           disabled={nesting || !parts.length}
