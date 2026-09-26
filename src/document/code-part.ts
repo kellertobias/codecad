@@ -625,8 +625,11 @@ export interface CodeInstance {
 }
 
 /** The code-part instances of a document, with the values and result key
- * each needs. */
-export function codeInstances(document: CadDocument): CodeInstance[] {
+ * each needs; also those inside library items it places, however deep. */
+export function codeInstances(
+  document: CadDocument,
+  depth = 0,
+): CodeInstance[] {
   let variables: ReturnType<typeof evaluateVariables> | undefined;
   const found: CodeInstance[] = [];
   for (const feature of document.features) {
@@ -634,15 +637,44 @@ export function codeInstances(document: CadDocument): CodeInstance[] {
     const pinned = document.library?.find(
       (p) => p.item === feature.item && p.version === feature.version,
     );
-    if (!pinned || !isCodePinned(pinned)) continue;
+    if (!pinned) continue;
     variables ??= evaluateVariables(document.variables);
+    let given: Record<string, number>;
     try {
-      const given = Object.fromEntries(
+      given = Object.fromEntries(
         Object.entries(feature.values ?? {}).map(([name, expression]) => [
           name,
           evaluateWith(expression, variables!),
         ]),
       );
+    } catch (error) {
+      if (isCodePinned(pinned))
+        found.push({
+          feature,
+          pinned,
+          problem: error instanceof Error ? error.message : String(error),
+        });
+      continue;
+    }
+    if (!isCodePinned(pinned)) {
+      // A document item: its own code parts, with the values it is given.
+      if (pinned.document && depth < maxNesting)
+        found.push(
+          ...codeInstances(
+            {
+              ...pinned.document,
+              variables: pinned.document.variables.map((v) =>
+                v.name in given
+                  ? { ...v, expression: String(given[v.name]) }
+                  : v,
+              ),
+            },
+            depth + 1,
+          ),
+        );
+      continue;
+    }
+    try {
       const values = parameterValues(pinned.code.parameters, given);
       found.push({
         feature,
@@ -660,3 +692,6 @@ export function codeInstances(document: CadDocument): CodeInstance[] {
   }
   return found;
 }
+
+/** How deep library items may hold library items. */
+export const maxNesting = 5;

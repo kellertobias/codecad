@@ -212,10 +212,11 @@ function SaveToLibrary({
   const [note, setNote] = useState("");
   const [exposed, setExposed] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const blocked = document.features.some((f) => f.type === "instance")
-    ? "This project contains library items; a library item cannot yet."
-    : !document.features.length
-      ? "The project is empty."
+  const blocked = !document.features.length
+    ? "The project is empty."
+    : target !== "new" &&
+        (document.library ?? []).some((p) => p.item === target)
+      ? "This project places the item itself; save it as a new item instead."
       : undefined;
   const save = async () => {
     setBusy(true);

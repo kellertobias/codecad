@@ -15,6 +15,7 @@ import {
   type LibraryVersionData,
 } from "./document/library-file.js";
 import { contentKey } from "./document/code-part.js";
+import type { CadDocument } from "./document/schema.js";
 
 export interface LibraryItemSummary {
   readonly id: string;
@@ -278,6 +279,15 @@ export function openLibrary(file: string, owner = "local"): Library {
     },
     addVersion(id, next) {
       const checked = checkVersion(next.document, next.exposed, next.code);
+      // An item may hold other items, but not itself.
+      const holds = (document: CadDocument | undefined): boolean =>
+        (document?.library ?? []).some(
+          (p) => p.item === id || holds(p.document),
+        );
+      if (holds(checked.document))
+        throw new LibraryError(
+          `${row(id).name} cannot be saved into itself: the project places ${row(id).name}`,
+        );
       const version = row(id).latest + 1;
       const now = new Date().toISOString();
       transaction(() => {

@@ -649,6 +649,20 @@ export interface CadDocument {
   readonly library?: readonly PinnedItem[];
 }
 
+/** How deep library items hold library items in a (not yet read)
+ * document. */
+function nesting(document: unknown, depth = 0): number {
+  if (depth > 6) return depth;
+  const library = (document as { library?: unknown } | null)?.library;
+  if (!Array.isArray(library)) return depth;
+  return Math.max(
+    depth,
+    ...library.map((p: { document?: unknown }) =>
+      p?.document ? nesting(p.document, depth + 1) : depth,
+    ),
+  );
+}
+
 export function emptyDocument(): CadDocument {
   return {
     schemaVersion: currentSchemaVersion,
@@ -947,20 +961,18 @@ function validate(document: Record<string, unknown>): void {
         }
         return;
       }
-      let inner: CadDocument;
+      // Items may hold items (a pinned copy is a snapshot, so this is a
+      // tree), a few levels deep.
+      if (nesting(pinned.document) > 5)
+        fail(`${at}.document`, "library items are nested too deeply");
       try {
-        inner = readDocument(pinned.document);
+        readDocument(pinned.document);
       } catch (error) {
         return fail(
           `${at}.document`,
           error instanceof Error ? error.message : String(error),
         );
       }
-      if (inner.features.some((f) => f.type === "instance"))
-        fail(
-          `${at}.document`,
-          "a library item cannot contain library items yet",
-        );
     });
   });
   optional(document.parts, "parts", (value, p) => {

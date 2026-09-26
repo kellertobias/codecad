@@ -305,3 +305,64 @@ test("the library is served over HTTP", async () => {
     library.close();
   }
 });
+
+test("library items hold library items; an item cannot hold itself", async () => {
+  const library = openLibrary(":memory:");
+  const plate = library.create(
+    { name: "Hinge plate" },
+    { document: hingePlate(), exposed: ["w"] },
+  );
+  // A door with the plate mated onto it, saved as an item of its own.
+  const { id: plateInstance, document: doorWithPlate } = withInstance(
+    door(),
+    library,
+    plate.id,
+    1,
+    { mate: { interface: "mount", target: top, at: ["100", "200"] } },
+  );
+  const doorItem = library.create(
+    { name: "Door" },
+    { document: doorWithPlate, exposed: [] },
+  );
+  // Placed twice in a project, side by side.
+  let project = solvedDocument(solver, {}, []);
+  const first = withInstance(project, library, doorItem.id, 1);
+  project = first.document;
+  const second = withInstance(project, library, doorItem.id, 1, {
+    placement: { translate: ["500", "0", "0"] },
+  });
+  project = second.document;
+  const evaluator = new DocumentEvaluator({ solver });
+  const result = evaluator.evaluate(project);
+  for (const [f, status] of result.status)
+    assert.equal(status.state, "ok", `${f}: ${JSON.stringify(status)}`);
+  const ids = result.bodies.map((body) => body.id).sort();
+  assert.deepEqual(
+    ids,
+    [
+      `${first.id}:door:0`,
+      `${first.id}:${plateInstance}:plate:0`,
+      `${second.id}:door:0`,
+      `${second.id}:${plateInstance}:plate:0`,
+    ].sort(),
+  );
+  // Each door is drilled by its own plate; the hardware adds up.
+  const doors = result.bodies.filter((body) => body.id.endsWith(":door:0"));
+  assert.ok(doors.every((body) => body.machining.length === 2));
+  assert.deepEqual(
+    result.hardware.map((h) => [h.kind, h.count]),
+    [
+      ["screw", 2],
+      ["screw", 2],
+    ],
+  );
+  evaluator.dispose();
+
+  // Saving the door (which places the plate) as a version of the plate.
+  assert.throws(
+    () =>
+      library.addVersion(plate.id, { document: doorWithPlate, exposed: [] }),
+    /cannot be saved into itself/,
+  );
+  library.close();
+});

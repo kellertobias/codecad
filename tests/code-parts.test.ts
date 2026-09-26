@@ -399,3 +399,60 @@ export default definePart({
   library.close();
   other.close();
 });
+
+test("code parts inside a library item are found, with the values handed down", async () => {
+  const library = openLibrary(":memory:");
+  const plate = library.create(
+    { name: "Plate" },
+    { code: await codePart(plateSource), exposed: ["w"] },
+  );
+  // A door item whose plate is as wide as the door's variable `pw`.
+  const base = solvedDocument(solver, { pw: "70" }, [
+    rectangle("d", "XY", "0", "0", "400", "600"),
+    extrude("door", "d"),
+  ]);
+  const inner = insertInstance(
+    base,
+    { id: plate.id, name: plate.name },
+    library.version(plate.id, 1),
+  );
+  const doorDocument: CadDocument = {
+    ...inner.document,
+    features: inner.document.features.map((f) =>
+      f.id === inner.id
+        ? ({ ...f, values: { w: "pw" } } as InstanceFeature)
+        : f,
+    ),
+  };
+  const doorItem = library.create(
+    { name: "Door" },
+    { document: doorDocument, exposed: ["pw"] },
+  );
+  const outer = insertInstance(
+    solvedDocument(solver, {}, []),
+    { id: doorItem.id, name: doorItem.name },
+    library.version(doorItem.id, 1),
+  );
+  const project: CadDocument = {
+    ...outer.document,
+    features: outer.document.features.map((f) =>
+      f.id === outer.id
+        ? ({ ...f, values: { pw: "120" } } as InstanceFeature)
+        : f,
+    ),
+  };
+  const [need] = codeInstances(project);
+  assert.deepEqual(need!.values, { w: 120, t: 3 });
+  const store = new CodeResults();
+  await generate(project, store);
+  const evaluator = new DocumentEvaluator({ codeResults: store, solver });
+  const result = evaluator.evaluate(project);
+  for (const [f, s] of result.status)
+    assert.equal(s.state, "ok", `${f}: ${JSON.stringify(s)}`);
+  const body = result.bodies.find((b2) => b2.id.endsWith(`${inner.id}:b0`))!;
+  const bb = b.getBounds(body.shape);
+  assert.ok(Math.abs(bb.xMax - bb.xMin - 120) < 1e-6);
+  evaluator.dispose();
+  store.dispose();
+  library.close();
+});

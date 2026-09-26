@@ -69,8 +69,6 @@ export function checkVersion(
       `The item's document is not valid: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (checked.features.some((f) => f.type === "instance"))
-    throw new LibraryError("A library item cannot contain library items yet");
   const names = new Set(checked.variables.map((v) => v.name));
   const unknown = (exposed as string[]).filter((n) => !names.has(n));
   if (unknown.length)
