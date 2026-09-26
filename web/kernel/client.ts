@@ -77,6 +77,11 @@ export class KernelClient {
     return this.send({ type: "pick-edge", body, edge });
   }
 
+  /** Loads the sketch solver in the worker. */
+  useSolver(wasm: string): Promise<Answer<"solver">> {
+    return this.send({ type: "solver", wasm });
+  }
+
   /** A drawing sheet as SVG. */
   drawing(
     document: CadDocument,

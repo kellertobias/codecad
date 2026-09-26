@@ -17,6 +17,7 @@ import {
   type Evaluation,
 } from "../../src/kernel/evaluator.js";
 import { describeParts } from "../../src/kernel/parts.js";
+import { SketchSolver } from "../../src/document/sketch-solver.js";
 import { renderSheet } from "../../src/kernel/drawings.js";
 import { autoNest } from "../../src/kernel/layouts.js";
 import { pageSvg } from "../../src/reports.js";
@@ -57,7 +58,10 @@ self.onmessage = async (event: MessageEvent<KernelRequest>) => {
     else if (request.type === "pick-face") pickFace(request);
     else if (request.type === "pick-edge") pickEdge(request);
     else if (request.type === "drawing") await drawing(request);
-    else if (request.type === "nest")
+    else if (request.type === "solver") {
+      evaluator.useSolver(await SketchSolver.create({ wasm: request.wasm }));
+      post({ id: request.id, type: "solver" });
+    } else if (request.type === "nest")
       post({
         id: request.id,
         type: "nest",

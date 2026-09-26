@@ -985,6 +985,95 @@ a.button.disabled {
   gap: 6px;
 }
 
+/* The part library. */
+.library {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+.library-items {
+  overflow: auto;
+  padding: 12px;
+}
+.library-items header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.library-items header h2 {
+  flex: 1;
+}
+label.button {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 13px;
+}
+.item-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.item-grid li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.item-grid img,
+.item-grid .no-thumbnail {
+  width: 100%;
+  aspect-ratio: 297 / 210;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 4px;
+}
+.item-grid small {
+  color: var(--muted);
+}
+.library-side {
+  overflow: auto;
+  padding: 8px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.save-to-library,
+.interfaces {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.interfaces header {
+  display: flex;
+  align-items: center;
+}
+.interfaces header h2 {
+  flex: 1;
+}
+.update-available {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 /* Editing sketches is for large screens; on a phone the panels stack. */
 @media (max-width: 900px) {
   .shell {
@@ -1001,7 +1090,8 @@ a.button.disabled {
   }
   .drawings,
   .layouts,
-  .layout-body {
+  .layout-body,
+  .library {
     grid-template-columns: 1fr;
   }
   .sheet-editor {

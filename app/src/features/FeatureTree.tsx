@@ -22,6 +22,7 @@ const symbols: Record<Feature["type"], string> = {
   joint: "⊞",
   move: "✥",
   mate: "⊣",
+  instance: "❖",
 };
 
 export function FeatureTree({

@@ -218,7 +218,13 @@ export class DocumentEvaluator {
 
   /** `solver` re-solves the sketches of library items whose variables an
    * instance sets. */
-  constructor(private readonly options: { solver?: SketchSolver } = {}) {}
+  constructor(private options: { solver?: SketchSolver } = {}) {}
+
+  /** Gives the evaluator a sketch solver once one has loaded. */
+  useSolver(solver: SketchSolver): void {
+    this.options = { ...this.options, solver };
+    for (const nested of this.instances.values()) nested.useSolver(solver);
+  }
 
   /** Evaluates the features of a solved document, up to and including
    * the one at index `until` (all of them when left out). */

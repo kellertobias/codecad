@@ -81,3 +81,59 @@ export const outputUrl = (
   `/api/projects/${project}/outputs/${kind}?format=${format}${
     target ? `&target=${encodeURIComponent(target)}` : ""
   }`;
+
+export interface LibraryItemSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly tags: readonly string[];
+  readonly latest: number;
+  readonly thumbnail?: string;
+  readonly updatedAt: string;
+}
+export interface LibraryVersion<Document> {
+  readonly version: number;
+  readonly createdAt: string;
+  readonly note?: string;
+  readonly document: Document;
+  readonly exposed: readonly string[];
+}
+
+export const library = {
+  list: () =>
+    request<{ items: LibraryItemSummary[] }>("/api/library").then(
+      (r) => r.items,
+    ),
+  create: <D>(body: {
+    name: string;
+    description?: string;
+    tags?: readonly string[];
+    document: D;
+    exposed: readonly string[];
+    thumbnail?: string;
+    note?: string;
+  }) => request<LibraryItemSummary>("/api/library", { method: "POST", body }),
+  addVersion: <D>(
+    id: string,
+    body: {
+      document: D;
+      exposed: readonly string[];
+      thumbnail?: string;
+      note?: string;
+    },
+  ) =>
+    request<LibraryItemSummary>(`/api/library/${id}/versions`, {
+      method: "POST",
+      body,
+    }),
+  version: <D>(id: string, version: number) =>
+    request<LibraryVersion<D>>(`/api/library/${id}/versions/${version}`),
+  remove: (id: string) =>
+    request<void>(`/api/library/${id}`, { method: "DELETE" }),
+  importFile: (file: unknown) =>
+    request<LibraryItemSummary>("/api/library/import", {
+      method: "POST",
+      body: file,
+    }),
+  fileUrl: (id: string) => `/api/library/${id}/file`,
+};

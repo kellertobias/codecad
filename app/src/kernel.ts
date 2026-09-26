@@ -3,6 +3,7 @@
 // while one runs, only the newest document waits for its turn.
 import { useEffect, useRef, useState } from "react";
 import { KernelClient } from "../../web/kernel/client.ts";
+import solverWasm from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
 import type { BodyView, KernelResponse } from "../../web/kernel/protocol.ts";
 
 type Answer = Extract<KernelResponse, { type: "model" }>;
@@ -14,7 +15,14 @@ import type { PartInfo } from "../../src/kernel/parts.ts";
 let client: KernelClient | undefined;
 /** One worker for the page, started on first use; it lives as long as the
  * page (a React remount must not kill it). */
-export const kernel = () => (client ??= new KernelClient("/kernel.worker.js"));
+export const kernel = () => {
+  if (!client) {
+    client = new KernelClient("/kernel.worker.js");
+    // Library instances with values of their own need the sketch solver.
+    void client.useSolver(solverWasm).catch(() => {});
+  }
+  return client;
+};
 
 export interface Model {
   readonly bodies: readonly BodyView[];

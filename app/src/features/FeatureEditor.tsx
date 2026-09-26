@@ -10,6 +10,7 @@ import type {
   FaceReference,
   Feature,
   HoleFeature,
+  InstanceFeature,
   JointFeature,
   MateFeature,
   MirrorFeature,
@@ -44,7 +45,8 @@ export type PickField =
   | "moving"
   | "target"
   | "movingEdge"
-  | "targetEdge";
+  | "targetEdge"
+  | "instanceTarget";
 
 export interface FeatureEditorProps {
   document: CadDocument;
@@ -57,6 +59,12 @@ export interface FeatureEditorProps {
   update(next: Feature, merge?: string): void;
   editSketch(id: string): void;
   close(): void;
+  /** The library's newest version of each item, and how to move an
+   * instance to it. */
+  library?: {
+    readonly latest: ReadonlyMap<string, number>;
+    update(instance: string): void;
+  };
 }
 
 export function FeatureEditor(props: FeatureEditorProps) {
@@ -100,6 +108,8 @@ export function FeatureEditor(props: FeatureEditorProps) {
         <MoveFields {...props} feature={feature} />
       ) : feature.type === "mate" ? (
         <MateFields {...props} feature={feature} />
+      ) : feature.type === "instance" ? (
+        <InstanceFields {...props} feature={feature} />
       ) : (
         <RepeatFields {...props} feature={feature} />
       )}
@@ -1059,6 +1069,172 @@ function MateFields({
         />
         Faces point the same way
       </label>
+    </>
+  );
+}
+
+function InstanceFields({
+  document,
+  feature,
+  variables,
+  update,
+  picking,
+  setPicking,
+  library,
+}: Props<InstanceFeature>) {
+  const pinned = document.library?.find(
+    (p) => p.item === feature.item && p.version === feature.version,
+  );
+  if (!pinned)
+    return (
+      <p className="error">
+        This project keeps no copy of version {feature.version} of the item.
+      </p>
+    );
+  const newest = library?.latest.get(feature.item);
+  const interfaces = pinned.document.interfaces ?? [];
+  const setValue = (name: string, value: string | undefined) => {
+    const values = { ...(feature.values ?? {}) };
+    if (value === undefined) delete values[name];
+    else values[name] = value;
+    update(
+      Object.keys(values).length
+        ? { ...feature, values }
+        : without(feature, "values"),
+    );
+  };
+  const mate = feature.mate;
+  const setMate = (change: Partial<NonNullable<InstanceFeature["mate"]>>) =>
+    update({ ...feature, mate: { ...mate!, ...change } });
+  return (
+    <>
+      <Field label="Item">
+        <span>
+          {pinned.name}, version {feature.version}
+        </span>
+      </Field>
+      {newest !== undefined && newest > feature.version ? (
+        <div className="update-available">
+          <span>Version {newest} is in the library.</span>
+          <button onClick={() => library!.update(feature.id)}>Update</button>
+        </div>
+      ) : null}
+      {pinned.exposed.length ? <h2>Values</h2> : null}
+      {pinned.exposed.map((name) => {
+        const own = pinned.document.variables.find((v) => v.name === name);
+        return (
+          <ExpressionField
+            key={name}
+            label={name}
+            value={feature.values?.[name]}
+            variables={variables}
+            unit={own?.unit === "none" ? "" : (own?.unit ?? "mm")}
+            optional
+            placeholder={own?.expression ?? ""}
+            commit={(value) => setValue(name, value)}
+          />
+        );
+      })}
+      <h2>Placement</h2>
+      <Choice
+        label="Placed"
+        value={mate ? "mate" : "free"}
+        options={[
+          ["free", "By position"],
+          ...(interfaces.length
+            ? ([["mate", "By an interface, on a face"]] as const)
+            : []),
+        ]}
+        commit={(how) =>
+          how === "free"
+            ? update(without(feature, "mate"))
+            : setPicking("instanceTarget")
+        }
+      />
+      {mate ? (
+        <>
+          <Choice
+            label="Interface"
+            value={mate.interface}
+            options={interfaces.map((i) => [i.id, i.name] as const)}
+            commit={(id) => setMate({ interface: id })}
+          />
+          <Field label="Onto">
+            <span>{describeFace(document, mate.target)}</span>
+            <PickButton
+              field="instanceTarget"
+              picking={picking}
+              setPicking={setPicking}
+              what="a face"
+            />
+          </Field>
+          {(["x", "y"] as const).map((axis, i) => (
+            <ExpressionField
+              key={axis}
+              label={`At ${axis}`}
+              value={mate.at?.[i]}
+              variables={variables}
+              optional
+              placeholder="0"
+              commit={(value) => {
+                const at = [...(mate.at ?? ["0", "0"])] as [string, string];
+                at[i] = value ?? "0";
+                setMate({ at });
+              }}
+            />
+          ))}
+          <ExpressionField
+            label="Turned"
+            value={mate.angle}
+            variables={variables}
+            unit="°"
+            optional
+            placeholder="0"
+            commit={(angle) =>
+              update({
+                ...feature,
+                mate: angle ? { ...mate, angle } : without(mate, "angle"),
+              })
+            }
+          />
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={mate.holes !== false}
+              onChange={(event) => setMate({ holes: event.target.checked })}
+            />
+            Drill its holes into the part
+          </label>
+        </>
+      ) : (
+        <>
+          {(["x", "y", "z"] as const).map((axis, i) => (
+            <ExpressionField
+              key={axis}
+              label={`Move ${axis}`}
+              value={feature.placement?.translate?.[i]}
+              variables={variables}
+              optional
+              placeholder="0"
+              commit={(value) => {
+                const translate = [
+                  ...(feature.placement?.translate ?? ["0", "0", "0"]),
+                ] as [string, string, string];
+                translate[i] = value ?? "0";
+                update({
+                  ...feature,
+                  placement: { ...feature.placement, translate },
+                });
+              }}
+            />
+          ))}
+        </>
+      )}
+      {!interfaces.length ? (
+        <p className="hint">
+          The item has no interfaces; give it one to mate it onto a face.
+        </p>
+      ) : null}
     </>
   );
 }

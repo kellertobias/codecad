@@ -22,7 +22,15 @@ import type {
   SketchSolution,
   SketchSolver,
 } from "../../src/document/sketch-solver.ts";
-import { Conflict, projects, type ProjectSummary } from "./api.ts";
+import {
+  Conflict,
+  library,
+  projects,
+  type LibraryItemSummary,
+  type ProjectSummary,
+} from "./api.ts";
+import { updateInstance } from "../../src/document/library.ts";
+import { LibraryView } from "./LibraryView.tsx";
 import { useDocumentHistory } from "./history.ts";
 import { loadSolver } from "./solver.ts";
 import { kernel, useModel } from "./kernel.ts";
@@ -79,7 +87,21 @@ export function App() {
   const [plane, setPlane] = useState<Plane>("XY");
   const [tab, setTab] = useState<Tab>("variables");
   /** What the main area shows. */
-  const [area, setArea] = useState<"model" | "drawings" | "layouts">("model");
+  const [area, setArea] = useState<
+    "model" | "drawings" | "layouts" | "library"
+  >("model");
+  const [items, setItems] = useState<LibraryItemSummary[]>([]);
+  const refreshLibrary = useCallback(
+    () => library.list().then(setItems, () => {}),
+    [],
+  );
+  useEffect(() => {
+    void refreshLibrary();
+  }, [refreshLibrary, area]);
+  const latest = useMemo(
+    () => new Map(items.map((item) => [item.id, item.latest])),
+    [items],
+  );
   /** The face last clicked in the 3D view, for a new sketch. */
   const [face, setFace] = useState<Extract<Pick, { kind: "face" }>>();
   const [body, setBody] = useState<string>();
@@ -536,6 +558,20 @@ export function App() {
         if (!answer.planar) return setMessage("Mates join flat faces.");
         replace({ ...feature, [picking]: ref });
         setPicking(undefined);
+      } else if (picking === "instanceTarget" && feature.type === "instance") {
+        if (!answer.planar) return setMessage("Mate onto a flat face.");
+        const pinned = document.library?.find(
+          (p) => p.item === feature.item && p.version === feature.version,
+        );
+        const first = pinned?.document.interfaces?.[0];
+        if (!first) return setMessage("The item has no interface to mate by.");
+        replace({
+          ...feature,
+          mate: feature.mate
+            ? { ...feature.mate, target: ref }
+            : { interface: first.id, target: ref },
+        });
+        setPicking(undefined);
       } else if (picking === "face" && feature.type === "sketch") {
         if (!answer.planar) return setMessage("Sketches go on flat faces.");
         replace({ ...feature, face: ref });
@@ -686,6 +722,7 @@ export function App() {
                 ["model", "Model"],
                 ["drawings", "Drawings"],
                 ["layouts", "Stock & layouts"],
+                ["library", "Library"],
               ] as const
             ).map(([key, label]) => (
               <button
@@ -708,6 +745,21 @@ export function App() {
             apply={change}
             project={open.id}
             dirty={dirty}
+          />
+        ) : area === "library" && !sketch ? (
+          <LibraryView
+            document={document}
+            items={items}
+            refresh={refreshLibrary}
+            apply={change}
+            rollback={rollback}
+            inserted={(id) => {
+              setSelected(id);
+              setTab("feature");
+              setArea("model");
+              if (rollback !== undefined) setRollback(rollback + 1);
+            }}
+            report={setMessage}
           />
         ) : area === "layouts" && !sketch ? (
           <LayoutsView
@@ -899,6 +951,30 @@ export function App() {
               setPicking={setPicking}
               update={replace}
               editSketch={(id) => setSketching(id)}
+              library={{
+                latest,
+                update: (instance) => {
+                  const target = features.find(
+                    (f) => f.id === instance && f.type === "instance",
+                  );
+                  if (target?.type !== "instance") return;
+                  const newest = latest.get(target.item);
+                  if (newest === undefined) return;
+                  const item = items.find((i) => i.id === target.item)!;
+                  void library.version<CadDocument>(target.item, newest).then(
+                    (version) =>
+                      change((d) =>
+                        updateInstance(
+                          d,
+                          instance,
+                          { id: item.id, name: item.name },
+                          version,
+                        ),
+                      ),
+                    (error) => setMessage(String(error)),
+                  );
+                },
+              }}
               close={() => {
                 setSelected(undefined);
                 setPicking(undefined);

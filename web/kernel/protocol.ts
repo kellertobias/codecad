@@ -38,6 +38,9 @@ export type KernelRequest =
       readonly body: string;
       readonly edge: number;
     }
+  /** Loads the sketch solver from this URL, for library instances whose
+   * variables are set. */
+  | { readonly id: number; readonly type: "solver"; readonly wasm: string }
   /** A drawing sheet of a document, as SVG. */
   | {
       readonly id: number;
@@ -129,6 +132,7 @@ export type KernelResponse =
       readonly joints: readonly JointKind[];
     }
   | { readonly id: number; readonly type: "drawing"; readonly svg: string }
+  | { readonly id: number; readonly type: "solver" }
   | {
       readonly id: number;
       readonly type: "nest";
