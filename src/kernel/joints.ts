@@ -630,7 +630,7 @@ const turnedTo = (axis: Vector3) =>
   );
 
 /** A cylinder along `axis` from `start` for `depth`. */
-function bore(
+export function bore(
   start: Vector3,
   axis: Vector3,
   diameter: number,

@@ -16,9 +16,9 @@ import {
   type Workspace,
 } from "./workspace.js";
 
-class BadRequest extends Error {}
+export class BadRequest extends Error {}
 
-async function readJson(
+export async function readJson(
   req: IncomingMessage,
 ): Promise<Record<string, unknown>> {
   let size = 0;

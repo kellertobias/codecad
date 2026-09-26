@@ -17,6 +17,8 @@ import {
 import { openWorkspace } from "./workspace.js";
 import { handleProjects } from "./projects-api.js";
 import { handleOutputs } from "./outputs-api.js";
+import { handleLibrary } from "./library-api.js";
+import { openLibrary } from "./library.js";
 import { JobQueue } from "./jobs.js";
 import {
   kernelBundleOptions,
@@ -45,6 +47,7 @@ const storage = process.env.CODECAD_STORAGE ?? join(root, ".codecad"),
   ui = join(storage, "ui");
 await mkdir(ui, { recursive: true });
 const workspace = openWorkspace(join(storage, "workspace.sqlite"));
+const library = openLibrary(join(storage, "workspace.sqlite"));
 const parameterFile = join(
   storage,
   "parameters",
@@ -481,6 +484,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (await handleOutputs(req, res, url, workspace, jobs)) return;
+    if (await handleLibrary(req, res, url, library, trusted)) return;
     if (await handleProjects(req, res, url, workspace, trusted)) return;
     if (req.method === "POST") {
       if (!trusted()) {

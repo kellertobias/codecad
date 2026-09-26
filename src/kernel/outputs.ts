@@ -7,6 +7,7 @@ import { pdf, pdfPages } from "../exporters.js";
 import { csv, cutRows } from "../manufacturing.js";
 import { cutListPages, pageSvg, pagesDxf } from "../reports.js";
 import type { CadDocument } from "../document/schema.js";
+import { SketchSolver } from "../document/sketch-solver.js";
 import { DocumentEvaluator } from "./evaluator.js";
 import { describeParts, sheetProject } from "./parts.js";
 import { billOfMaterials, bomCsv } from "./bom.js";
@@ -58,7 +59,13 @@ export async function documentOutput(
     throw new OutputError(
       `A ${request.kind} comes as ${allowed[request.kind]?.join(", ") ?? "nothing"}`,
     );
-  const evaluator = new DocumentEvaluator();
+  // Library instances with values of their own need their sketches solved.
+  const solver = document.features.some(
+    (f) => f.type === "instance" && f.values && Object.keys(f.values).length,
+  )
+    ? await SketchSolver.create()
+    : undefined;
+  const evaluator = new DocumentEvaluator(solver ? { solver } : {});
   const engine = new OpenCascadeEngine();
   try {
     const { bodies, hardware } = evaluator.evaluate(document);
@@ -117,9 +124,12 @@ export async function documentOutput(
           new TextEncoder().encode(bomCsv(billOfMaterials(info, hardware))),
           "bill-of-materials",
         );
+      default:
+        throw new OutputError(`There is no ${String(request.kind)} output`);
     }
   } finally {
     engine.dispose();
     evaluator.dispose();
+    solver?.dispose();
   }
 }

@@ -345,7 +345,38 @@ export interface MateFeature extends FeatureBase {
   readonly flip?: boolean;
 }
 
+/** An item of the library placed in this project, from the copy of it
+ * the project keeps (`document.library`). Exposed variables can be given
+ * other values; `mate` puts one of its interfaces on a face of a part here
+ * and drills the interface's holes into that part. */
+export interface InstanceFeature extends FeatureBase {
+  readonly type: "instance";
+  readonly item: string;
+  readonly version: number;
+  /** Exposed variable name → expression (in this project's variables). */
+  readonly values?: Readonly<Record<string, string>>;
+  readonly placement?: {
+    readonly translate?: readonly [string, string, string];
+    readonly rotate?: { readonly axis: Axis; readonly angle: string };
+  };
+  readonly mate?: {
+    readonly interface: string;
+    readonly target: FaceReference;
+    /** Where on the target face, in its sketch coordinates. */
+    readonly at?: readonly [string, string];
+    /** Turned about the face's normal, in degrees. */
+    readonly angle?: string;
+    /** Gap between the faces. */
+    readonly offset?: string;
+    /** Drill the interface's holes into the target (the default). */
+    readonly holes?: boolean;
+    readonly diameter?: string;
+    readonly depth?: string;
+  };
+}
+
 export type Feature =
+  | InstanceFeature
   | MoveFeature
   | MateFeature
   | JointFeature
@@ -402,6 +433,37 @@ export function mapExpressions<F extends Feature>(
     if (typeof mapped[key] === "string") mapped[key] = map(mapped[key]);
   if (feature.type === "pattern" && feature.center)
     mapped.center = feature.center.map(map);
+  if (feature.type === "instance") {
+    if (feature.values)
+      mapped.values = Object.fromEntries(
+        Object.entries(feature.values).map(([name, value]) => [
+          name,
+          map(value),
+        ]),
+      );
+    if (feature.placement)
+      mapped.placement = {
+        ...(feature.placement.translate
+          ? { translate: feature.placement.translate.map(map) }
+          : {}),
+        ...(feature.placement.rotate
+          ? {
+              rotate: {
+                ...feature.placement.rotate,
+                angle: map(feature.placement.rotate.angle),
+              },
+            }
+          : {}),
+      };
+    if (feature.mate) {
+      const mate: Record<string, unknown> = { ...feature.mate };
+      for (const key of ["angle", "offset", "diameter", "depth"] as const)
+        if (feature.mate[key] !== undefined)
+          mate[key] = map(feature.mate[key]!);
+      if (feature.mate.at) mate.at = feature.mate.at.map(map);
+      mapped.mate = mate;
+    }
+  }
   if (feature.type === "move") {
     if (feature.translate) mapped.translate = feature.translate.map(map);
     if (feature.rotate)
@@ -542,6 +604,29 @@ export interface DrawingSheet {
   readonly views: readonly DrawingView[];
 }
 
+/** Where something connects to this part: the free points of a sketch
+ * (screw holes, dowels, connector points), in that sketch's plane. */
+export interface PartInterfaceDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly sketch: string;
+  readonly kind: "screw" | "dowel" | "point";
+  /** Holes drilled into what this interface is mated to. */
+  readonly diameter?: string;
+  readonly depth?: string;
+}
+
+/** A copy of one version of a library item, kept in the project so it
+ * builds the same until it is updated on purpose. */
+export interface PinnedItem {
+  readonly item: string;
+  readonly version: number;
+  readonly name: string;
+  readonly document: CadDocument;
+  /** Variables of the item an instance may set. */
+  readonly exposed: readonly string[];
+}
+
 export interface CadDocument {
   readonly schemaVersion: typeof currentSchemaVersion;
   readonly units: "mm";
@@ -552,6 +637,8 @@ export interface CadDocument {
   readonly stock?: readonly StockPiece[];
   readonly layouts?: readonly Layout[];
   readonly drawings?: readonly DrawingSheet[];
+  readonly interfaces?: readonly PartInterfaceDefinition[];
+  readonly library?: readonly PinnedItem[];
 }
 
 export function emptyDocument(): CadDocument {
@@ -831,6 +918,32 @@ function validate(document: Record<string, unknown>): void {
       });
     }),
   );
+  optional(document.library, "library", (value, p) => {
+    list(value, p).forEach((pinned, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(pinned)) return fail(at, "must be an object");
+      string(pinned.item, `${at}.item`);
+      finite(pinned.version, `${at}.version`);
+      string(pinned.name, `${at}.name`);
+      list(pinned.exposed, `${at}.exposed`).forEach((name, j) =>
+        string(name, `${at}.exposed[${j}]`),
+      );
+      let inner: CadDocument;
+      try {
+        inner = readDocument(pinned.document);
+      } catch (error) {
+        return fail(
+          `${at}.document`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      if (inner.features.some((f) => f.type === "instance"))
+        fail(
+          `${at}.document`,
+          "a library item cannot contain library items yet",
+        );
+    });
+  });
   optional(document.parts, "parts", (value, p) => {
     const bodies = new Set<string>();
     list(value, p).forEach((part, i) => {
@@ -868,6 +981,7 @@ function validate(document: Record<string, unknown>): void {
       "joint",
       "move",
       "mate",
+      "instance",
     ]);
     featureTypes.set(feature.id as string, feature.type as string);
     string(feature.name, `${path}.name`);
@@ -959,6 +1073,21 @@ function validate(document: Record<string, unknown>): void {
         );
       },
     );
+  });
+  optional(document.interfaces, "interfaces", (value, p) => {
+    const ids = new Set<string>();
+    list(value, p).forEach((item, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(item)) return fail(at, "must be an object");
+      unique(ids, item.id, `${at}.id`);
+      string(item.name, `${at}.name`);
+      string(item.sketch, `${at}.sketch`);
+      if (featureTypes.get(item.sketch as string) !== "sketch")
+        fail(`${at}.sketch`, "must name a sketch of this document");
+      oneOf(item.kind, `${at}.kind`, ["screw", "dowel", "point"]);
+      optional(item.diameter, `${at}.diameter`, string);
+      optional(item.depth, `${at}.depth`, string);
+    });
   });
 }
 
@@ -1064,6 +1193,43 @@ function validateFeature(
       if (feature.kind === "counterbore" && feature.headDepth === undefined)
         c.fail(at("headDepth"), "a counterbore needs a depth");
       break;
+    case "instance": {
+      c.string(feature.item, at("item"));
+      if (!Number.isInteger(feature.version))
+        c.fail(at("version"), "must be a whole number");
+      c.optional(feature.values, at("values"), (v, p) => {
+        if (!v || typeof v !== "object" || Array.isArray(v))
+          return c.fail(p, "must map variable names to expressions");
+        for (const [name, value] of Object.entries(v))
+          c.expression(value, `${p}.${name}`);
+      });
+      const triple = (value: unknown, path: string, count = 3) => {
+        const items = c.list(value, path);
+        if (items.length !== count) c.fail(path, `must list ${count} values`);
+        items.forEach((item, i) => c.expression(item, `${path}[${i}]`));
+      };
+      c.optional(feature.placement, at("placement"), (v, p) => {
+        const placement = v as Record<string, unknown>;
+        c.optional(placement.translate, `${p}.translate`, (t, q) =>
+          triple(t, q),
+        );
+        c.optional(placement.rotate, `${p}.rotate`, (r, q) => {
+          const rotate = r as Record<string, unknown>;
+          c.oneOf(rotate.axis, `${q}.axis`, ["X", "Y", "Z"]);
+          c.expression(rotate.angle, `${q}.angle`);
+        });
+      });
+      c.optional(feature.mate, at("mate"), (v, p) => {
+        const mate = v as Record<string, unknown>;
+        c.string(mate.interface, `${p}.interface`);
+        c.face(mate.target, `${p}.target`);
+        c.optional(mate.at, `${p}.at`, (a, q) => triple(a, q, 2));
+        for (const key of ["angle", "offset", "diameter", "depth"])
+          c.optional(mate[key], `${p}.${key}`, c.expression);
+        c.optional(mate.holes, `${p}.holes`, c.boolean);
+      });
+      break;
+    }
     case "move": {
       c.list(feature.bodies, at("bodies")).forEach((id, i) =>
         c.string(id, `${at("bodies")}[${i}]`),

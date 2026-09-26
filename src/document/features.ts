@@ -54,6 +54,9 @@ export function dependencies(feature: Feature): Set<string> {
     case "move":
       used.push(...feature.bodies.map(bodyFeature));
       break;
+    case "instance":
+      if (feature.mate) used.push(...faceFeatures(feature.mate.target));
+      break;
     case "mate":
       used.push(
         ...faceFeatures(feature.moving),
@@ -146,6 +149,7 @@ const labels: Record<FeatureType, string> = {
   joint: "Joint",
   move: "Move",
   mate: "Mate",
+  instance: "Library part",
 };
 
 export const featureLabel = (type: FeatureType) => labels[type];

@@ -43,6 +43,7 @@ import {
   type FaceReference,
   type Feature,
   type HoleFeature,
+  type InstanceFeature,
   type JointFeature,
   type MateFeature,
   type MoveFeature,
@@ -55,7 +56,10 @@ import {
   evaluateWith,
   type VariableValues,
 } from "../document/variables.js";
+import type { SketchSolver } from "../document/sketch-solver.js";
+import { solveDocument } from "../document/sketch-edit.js";
 import {
+  bore,
   contact,
   grown,
   JointError,
@@ -169,6 +173,9 @@ export interface Evaluation {
   /** For sketches on faces: the face's edges in sketch coordinates, as
    * x1, y1, x2, y2 runs, to draw and snap to. */
   readonly projections: ReadonlyMap<string, Float32Array>;
+  /** Library instances evaluated this time: from which of their features
+   * they were rebuilt (all of them cached: their feature count). */
+  readonly instances: ReadonlyMap<string, { rerunFrom: number; ms: number }>;
   /** Screws, dowels and dominos the joints need. */
   readonly hardware: readonly (Hardware & { readonly feature: string })[];
   /** Index of the first feature that was re-run; features.length when
@@ -204,6 +211,14 @@ const emptyModel: Model = {
 
 export class DocumentEvaluator {
   private steps: Step[] = [];
+  /** One evaluator per library instance, so each keeps its own cache. */
+  private readonly instances = new Map<string, DocumentEvaluator>();
+  /** How the instances evaluated in the last evaluation went. */
+  private runs = new Map<string, { rerunFrom: number; ms: number }>();
+
+  /** `solver` re-solves the sketches of library items whose variables an
+   * instance sets. */
+  constructor(private readonly options: { solver?: SketchSolver } = {}) {}
 
   /** Evaluates the features of a solved document, up to and including
    * the one at index `until` (all of them when left out). */
@@ -220,6 +235,7 @@ export class DocumentEvaluator {
     );
     const status = new Map<string, FeatureStatus>();
     const projections = new Map<string, Float32Array>();
+    this.runs = new Map();
     let model = emptyModel;
     let key = "";
     let rerunFrom = features.length;
@@ -245,7 +261,13 @@ export class DocumentEvaluator {
     }
     // Steps past the end belong to features that were deleted.
     if (this.steps.length > features.length) this.drop(features.length);
+    for (const [id, nested] of this.instances)
+      if (!features.some((f) => f.id === id && f.type === "instance")) {
+        nested.dispose();
+        this.instances.delete(id);
+      }
     return {
+      instances: this.runs,
       bodies: [...model.bodies.values()],
       status,
       frames: model.frames,
@@ -261,6 +283,8 @@ export class DocumentEvaluator {
   /** Frees every shape the evaluator holds. */
   dispose(): void {
     this.drop(0);
+    for (const nested of this.instances.values()) nested.dispose();
+    this.instances.clear();
   }
 
   private drop(from: number): void {
@@ -282,6 +306,20 @@ export class DocumentEvaluator {
     const context: Context = {
       document,
       model,
+      ...(this.options.solver ? { solver: this.options.solver } : {}),
+      nested: (id) => {
+        let nested = this.instances.get(id);
+        if (!nested) {
+          nested = new DocumentEvaluator(this.options);
+          this.instances.set(id, nested);
+        }
+        return nested;
+      },
+      ran: (id, evaluation) =>
+        this.runs.set(id, {
+          rerunFrom: evaluation.rerunFrom,
+          ms: evaluation.ms,
+        }),
       own: <T extends Disposable>(shape: T) => {
         owned.add(shape);
         return shape;
@@ -326,6 +364,10 @@ export class DocumentEvaluator {
 interface Context {
   readonly document: CadDocument;
   readonly model: Model;
+  readonly solver?: SketchSolver;
+  /** The evaluator kept for a library instance. */
+  nested(id: string): DocumentEvaluator;
+  ran(id: string, evaluation: Evaluation): void;
   own<T extends Disposable>(shape: T): T;
   /** An expression's value, or a FeatureError naming the field. */
   value(expression: string, name: string): number;
@@ -353,6 +395,7 @@ const evaluators: Evaluators = {
   joint,
   move,
   mate,
+  instance,
   pattern: (feature, context) => repeat(feature, context),
   mirror: (feature, context) => repeat(feature, context),
 };
@@ -1524,12 +1567,17 @@ function repeat(
 }
 
 /** A body moved by a transform, with its names, blank and cuts. */
-function moved(context: Context, body: Body, m: Matrix4): Body {
+function moved(
+  context: Context,
+  body: Body,
+  m: Matrix4,
+  rename?: (origin: string) => string,
+): Body {
   const shape = place(context, body.shape, m);
   return {
     ...body,
     shape,
-    roles: copyRoles(body.roles, body.shape, shape),
+    roles: copyRoles(body.roles, body.shape, shape, rename),
     ...(body.blank ? { blank: moveBlank(body.blank, m) } : {}),
     machining: body.machining.map((cut) => ({
       ...cut,
@@ -1679,6 +1727,210 @@ function mate(feature: MateFeature, context: Context): Result {
     m = new Matrix4().makeTranslation(shift.x, shift.y, shift.z).multiply(m);
   }
   return { model: withBody(context.model, moved(context, moving.body, m)) };
+}
+
+// ---------------------------------------------------------------- library instances
+
+function instance(feature: InstanceFeature, context: Context): Result {
+  const pinned = context.document.library?.find(
+    (p) => p.item === feature.item && p.version === feature.version,
+  );
+  if (!pinned)
+    throw new FeatureError(
+      `This project keeps no copy of version ${feature.version} of the library item`,
+      true,
+    );
+  // Exposed variables take the values this project gives them, and the
+  // item's sketches are solved again for them.
+  const overrides = new Map<string, number>();
+  for (const [name, expression] of Object.entries(feature.values ?? {})) {
+    if (!pinned.exposed.includes(name))
+      throw new FeatureError(`${pinned.name} does not let you set ${name}`);
+    overrides.set(name, context.value(expression, name));
+  }
+  let inner = pinned.document;
+  if (overrides.size) {
+    if (!context.solver)
+      throw new FeatureError(
+        "Setting a library item's variables needs the sketch solver",
+      );
+    inner = solveDocument(
+      {
+        ...inner,
+        variables: inner.variables.map((v) =>
+          overrides.has(v.name)
+            ? { ...v, expression: String(overrides.get(v.name)) }
+            : v,
+        ),
+      },
+      context.solver,
+    ).document;
+  }
+  const evaluation = context.nested(feature.id).evaluate(inner);
+  context.ran(feature.id, evaluation);
+  const failed = [...evaluation.status].find(([, s]) => s.state === "error");
+  if (failed) {
+    const [id, status] = failed;
+    throw new FeatureError(
+      `In ${pinned.name}, ${inner.features.find((f) => f.id === id)?.name ?? id}: ${status.state === "error" ? status.message : ""}`,
+    );
+  }
+  const innerVariables = evaluateVariables(inner.variables);
+  const m = feature.mate
+    ? mateMatrix(feature, inner, evaluation, context)
+    : placementMatrix(feature.placement, context);
+
+  let model = context.model;
+  for (const body of evaluation.bodies)
+    model = withBody(model, {
+      ...moved(context, body, m, (origin) => `${feature.id}#${origin}`),
+      id: `${feature.id}:${body.id}`,
+      name: `${feature.name} · ${body.name}`,
+      feature: feature.id,
+    });
+  const hardware = new Map(model.hardware);
+  const items = [...evaluation.hardware.map(({ feature: _f, ...h }) => h)];
+
+  // The interface's holes, drilled into the part it is mated to.
+  if (feature.mate && feature.mate.holes !== false) {
+    const iface = inner.interfaces!.find(
+      (i) => i.id === feature.mate!.interface,
+    )!;
+    if (iface.kind !== "point") {
+      const sketch = inner.features.find(
+        (f): f is SketchFeature => f.id === iface.sketch && f.type === "sketch",
+      )!;
+      const frame = evaluation.frames.get(iface.sketch)!;
+      const inItem = (expression: string | undefined, fallback: string) => {
+        try {
+          return evaluateWith(expression ?? fallback, innerVariables);
+        } catch (error) {
+          throw new FeatureError(
+            `${iface.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
+      const diameter = feature.mate.diameter
+        ? context.value(feature.mate.diameter, "Hole diameter")
+        : inItem(iface.diameter, iface.kind === "dowel" ? "8" : "3");
+      const depth = feature.mate.depth
+        ? context.value(feature.mate.depth, "Hole depth")
+        : inItem(iface.depth, iface.kind === "dowel" ? "15" : "12");
+      if (!(diameter > 0 && depth > 0))
+        throw new FeatureError("Interface holes need a diameter and depth");
+      const { body: target, face } = resolveFace(model, feature.mate.target);
+      const into = vector(b.normalAt(face) as unknown as Vec3).negate();
+      const points = freePoints(sketch);
+      if (!points.length)
+        throw new FeatureError(`${iface.name} has no points to drill at`);
+      const tools = points.map((p) => {
+        const at = vector(toWorld(frame, p.x, p.y)).applyMatrix4(m);
+        return build(context, bore(at, into, diameter, depth));
+      });
+      const tool =
+        tools.length === 1
+          ? tools[0]!
+          : (context.own(b.compound(tools)) as unknown as b.Shape3D);
+      const next = combine(context, target, tool, new Map(), feature.id, "cut");
+      model = withBody(model, {
+        ...next,
+        machining: [
+          ...target.machining,
+          ...points.map((p) => ({
+            feature: feature.id,
+            kind: "drill" as const,
+            recipe: bore(
+              vector(toWorld(frame, p.x, p.y)).applyMatrix4(m),
+              into,
+              diameter,
+              depth,
+            ),
+            diameter,
+            depth,
+          })),
+        ],
+      });
+      if (iface.kind === "screw" || iface.kind === "dowel")
+        items.push({
+          kind: iface.kind,
+          size: `Ø${Math.round(diameter * 10) / 10}`,
+          count: points.length,
+        });
+    }
+  }
+  hardware.set(feature.id, items);
+  return { model: { ...model, hardware } };
+}
+
+/** Points of a sketch that belong to no curve. */
+function freePoints(sketch: SketchFeature) {
+  const used = new Set(
+    sketch.entities.flatMap((e) =>
+      e.type === "line"
+        ? [e.start, e.end]
+        : e.type === "circle"
+          ? [e.center]
+          : e.type === "arc"
+            ? [e.center, e.start, e.end]
+            : [],
+    ),
+  );
+  return sketch.entities.filter(
+    (e): e is Extract<typeof e, { type: "point" }> =>
+      e.type === "point" && !used.has(e.id),
+  );
+}
+
+function placementMatrix(
+  placement: InstanceFeature["placement"],
+  context: Context,
+): Matrix4 {
+  const m = new Matrix4();
+  if (placement?.translate) {
+    const [x, y, z] = placement.translate.map((e, i) =>
+      context.value(e, `Move ${"xyz"[i]}`),
+    ) as [number, number, number];
+    m.makeTranslation(x, y, z);
+  }
+  if (placement?.rotate)
+    m.multiply(
+      rotationAbout(
+        axisVector(placement.rotate.axis),
+        (context.value(placement.rotate.angle, "Angle") * Math.PI) / 180,
+      ),
+    );
+  return m;
+}
+
+/** Where an item goes so its interface lies on the target face, facing
+ * it: the interface's origin at `at` on the face, turned by `angle`. */
+function mateMatrix(
+  feature: InstanceFeature,
+  inner: CadDocument,
+  evaluation: Evaluation,
+  context: Context,
+): Matrix4 {
+  const mate = feature.mate!;
+  const iface = inner.interfaces?.find((i) => i.id === mate.interface);
+  if (!iface)
+    throw new FeatureError(`The item has no interface ${mate.interface}`, true);
+  const own = evaluation.frames.get(iface.sketch);
+  if (!own)
+    throw new FeatureError(`The sketch of ${iface.name} could not be placed`);
+  const { face } = resolveFace(context.model, mate.target);
+  const target = planarFrame(face, "The face to mate to");
+  const [x, y] = (mate.at ?? ["0", "0"]).map((e, i) =>
+    context.value(e, `Position ${"xy"[i]}`),
+  ) as [number, number];
+  const offset = mate.offset ? context.value(mate.offset, "Gap") : 0;
+  const angle = mate.angle ? context.value(mate.angle, "Angle") : 0;
+  return (
+    frameMatrix4({ ...target, origin: toWorld(target, x, y, offset) })
+      .multiply(new Matrix4().makeRotationZ((angle * Math.PI) / 180))
+      // Face to face: the interface's normal against the target's.
+      .multiply(new Matrix4().makeRotationX(Math.PI))
+      .multiply(frameMatrix4(own).invert())
+  );
 }
 
 function nameOf(context: Context, id: string): string {
