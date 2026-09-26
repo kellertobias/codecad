@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DocumentError,
   emptyDocument,
@@ -40,6 +40,7 @@ import { SketchEditor } from "./sketch/SketchEditor.tsx";
 import { sketchSegments } from "./sketch/geometry.ts";
 import {
   Viewport,
+  type ViewControls,
   type Highlight,
   type Pick,
   type PickMode,
@@ -49,6 +50,9 @@ import { FeatureTree } from "./features/FeatureTree.tsx";
 import { DrawingsView } from "./DrawingsView.tsx";
 import { LayoutsView } from "./LayoutsView.tsx";
 import { FeatureEditor, type PickField } from "./features/FeatureEditor.tsx";
+import { ShortcutHelp, ToolButton } from "./controls.tsx";
+import { Icon, type IconName } from "./icons.tsx";
+import { isTyping, matches, tip, type ShortcutId } from "./shortcuts.ts";
 
 interface Open {
   readonly id: string;
@@ -58,10 +62,13 @@ interface Open {
   readonly saved: string;
 }
 
-const isTyping = (target: EventTarget | null) =>
-  target instanceof HTMLInputElement ||
-  target instanceof HTMLTextAreaElement ||
-  target instanceof HTMLSelectElement;
+type Area = "model" | "drawings" | "layouts" | "library";
+const areas: readonly [Area, string, IconName, ShortcutId][] = [
+  ["model", "Model", "model", "areaModel"],
+  ["drawings", "Drawings", "drawings", "areaDrawings"],
+  ["layouts", "Stock & layouts", "layouts", "areaLayouts"],
+  ["library", "Library", "library", "areaLibrary"],
+];
 
 type Tab = "feature" | "variables" | "parts";
 
@@ -87,9 +94,9 @@ export function App() {
   const [plane, setPlane] = useState<Plane>("XY");
   const [tab, setTab] = useState<Tab>("variables");
   /** What the main area shows. */
-  const [area, setArea] = useState<
-    "model" | "drawings" | "layouts" | "library"
-  >("model");
+  const [area, setArea] = useState<Area>("model");
+  const [help, setHelp] = useState(false);
+  const viewControls = useRef<ViewControls>(null);
   const [items, setItems] = useState<LibraryItemSummary[]>([]);
   const refreshLibrary = useCallback(
     () => library.list().then(setItems, () => {}),
@@ -244,29 +251,14 @@ export function App() {
     }
   }, [open, document, refresh]);
 
-  // Undo, redo and save from the keyboard, unless a field is being typed in
-  // (fields keep their own undo). Escape ends picking and measuring.
+  // Keyboard shortcuts (see shortcuts.ts). The handler is replaced every
+  // render, so it always sees the current state; the listener stays.
+  const onKey = useRef<(event: KeyboardEvent) => void>(() => {});
   useEffect(() => {
-    const keys = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !isTyping(event.target)) {
-        setPicking(undefined);
-        setDraft(undefined);
-        setMeasuring(false);
-      }
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const key = event.key.toLowerCase();
-      if (key === "s") {
-        event.preventDefault();
-        void save();
-      } else if (!isTyping(event.target) && (key === "z" || key === "y")) {
-        event.preventDefault();
-        if (key === "y" || event.shiftKey) history.redo();
-        else history.undo();
-      }
-    };
+    const keys = (event: KeyboardEvent) => onKey.current(event);
     addEventListener("keydown", keys);
     return () => removeEventListener("keydown", keys);
-  }, [history, save]);
+  }, []);
 
   const replace = (next: Feature, merge?: string) =>
     change(
@@ -624,6 +616,122 @@ export function App() {
     });
   }, [model, features, selected]);
 
+  onKey.current = (event) => {
+    if (event.defaultPrevented) return;
+    const run = (action: () => void) => {
+      event.preventDefault();
+      action();
+    };
+    if (matches(event, "save")) return run(() => void save());
+    // Fields keep their own keys, undo included; the overview its own.
+    if (isTyping(event.target) || help) return;
+    if (matches(event, "undo")) return run(history.undo);
+    if (matches(event, "redo")) return run(history.redo);
+    if (matches(event, "help")) return run(() => setHelp(true));
+    if (!open) return;
+    if (sketch) {
+      // The sketch editor has its own single keys.
+      if (matches(event, "closeSketch")) run(() => setSketching(undefined));
+      return;
+    }
+    for (const [key, , , shortcut] of areas)
+      if (matches(event, shortcut)) return run(() => setArea(key));
+    if (matches(event, "cancel")) {
+      setPicking(undefined);
+      setDraft(undefined);
+      setMeasuring(false);
+      return;
+    }
+    if (area !== "model") return;
+    const index = features.findIndex((f) => f.id === selected);
+    const select = (at: number) => {
+      const next = features[Math.max(0, Math.min(features.length - 1, at))];
+      if (!next) return;
+      setSelected(next.id);
+      setPicking(undefined);
+      setTab("feature");
+    };
+    const upTo = rollback ?? features.length - 1;
+    const onButton =
+      event.target instanceof HTMLButtonElement ||
+      event.target instanceof HTMLAnchorElement;
+    const commands: [ShortcutId, () => void][] = [
+      ["sketch", () => void newSketch()],
+      ["extrude", newExtrude],
+      ["hole", newHole],
+      ["fillet", () => newRound("fillet")],
+      ["chamfer", () => newRound("chamfer")],
+      ["shell", newShell],
+      ["pattern", () => newRepeat("pattern")],
+      ["mirror", () => newRepeat("mirror")],
+      [
+        "joint",
+        () =>
+          setDraft(
+            draft?.kind === "joint" ? undefined : { kind: "joint", bodies: [] },
+          ),
+      ],
+      [
+        "mate",
+        () =>
+          setDraft(
+            draft?.kind === "mate" ? undefined : { kind: "mate", faces: [] },
+          ),
+      ],
+      ["move", newMove],
+      ["measure", () => setMeasuring((m) => !m)],
+      ["viewFit", () => viewControls.current?.setView([0.4, -1, 0.7])],
+      ["viewFront", () => viewControls.current?.setView([0, -1, 0])],
+      ["viewTop", () => viewControls.current?.setView([0, 0, 1])],
+      ["viewRight", () => viewControls.current?.setView([1, 0, 0])],
+      ["variables", () => setTab("variables")],
+      ["parts", () => setTab("parts")],
+      [
+        "previousFeature",
+        () => select(index < 0 ? features.length - 1 : index - 1),
+      ],
+      ["nextFeature", () => select(index < 0 ? 0 : index + 1)],
+      ["rollbackUp", () => setRollback(Math.max(0, upTo - 1))],
+      [
+        "rollbackDown",
+        () =>
+          setRollback(upTo + 1 >= features.length - 1 ? undefined : upTo + 1),
+      ],
+    ];
+    if (feature && !onButton)
+      commands.push(
+        [
+          "editFeature",
+          () => {
+            if (feature.type === "sketch") setSketching(feature.id);
+            else setTab("feature");
+          },
+        ],
+        [
+          "deleteFeature",
+          () => {
+            change((d) => ({
+              ...d,
+              features: d.features.filter((f) => f.id !== feature.id),
+            }));
+            setSelected(undefined);
+            setTab("variables");
+          },
+        ],
+        [
+          "suppressFeature",
+          () =>
+            replace(
+              feature.suppressed
+                ? (({ suppressed: _s, ...rest }) => rest as Feature)(feature)
+                : { ...feature, suppressed: true },
+            ),
+        ],
+      );
+    for (const [shortcut, action] of commands)
+      if (matches(event, shortcut)) return run(action);
+  };
+
   const failed = model
     ? [...model.status.values()].filter((s) => s.state === "error").length
     : 0;
@@ -636,29 +744,48 @@ export function App() {
         <strong>CodeCAD</strong>
         {open ? <span className="project-name">{open.name}</span> : null}
         <span className="spacer" />
-        <button
+        <ToolButton
+          icon="undo"
+          label="Undo"
+          shortcut="undo"
           onClick={history.undo}
           disabled={!history.canUndo}
-          title="Undo (Ctrl/⌘+Z)"
-        >
-          Undo
-        </button>
-        <button
+        />
+        <ToolButton
+          icon="redo"
+          label="Redo"
+          shortcut="redo"
           onClick={history.redo}
           disabled={!history.canRedo}
-          title="Redo (Shift+Ctrl/⌘+Z)"
-        >
-          Redo
-        </button>
-        <button
-          className="primary"
+        />
+        <ToolButton
+          icon={dirty || !open ? "save" : "saved"}
+          label={dirty || !open ? "Save" : "Saved"}
+          shortcut="save"
+          className={dirty ? "primary" : undefined}
           onClick={() => void save()}
           disabled={!open || !dirty}
-          title="Save (Ctrl/⌘+S)"
-        >
-          {dirty ? "Save" : "Saved"}
-        </button>
+        />
+        {open ? (
+          <a
+            className="button tool"
+            href={`/p/${open.id}/view`}
+            target="_blank"
+            rel="noreferrer"
+            title="The saved project on a phone: model, drawings, cut list and layouts, also offline"
+            aria-label="Open the phone viewer"
+          >
+            <Icon name="phone" />
+          </a>
+        ) : null}
+        <ToolButton
+          icon="keyboard"
+          label="Keyboard shortcuts"
+          shortcut="help"
+          onClick={() => setHelp(true)}
+        />
       </header>
+      {help ? <ShortcutHelp close={() => setHelp(false)} /> : null}
       <aside className="sidebar">
         <section>
           <header>
@@ -717,20 +844,15 @@ export function App() {
         ) : null}
         {open && !sketch ? (
           <nav className="areas" aria-label="Show">
-            {(
-              [
-                ["model", "Model"],
-                ["drawings", "Drawings"],
-                ["layouts", "Stock & layouts"],
-                ["library", "Library"],
-              ] as const
-            ).map(([key, label]) => (
+            {areas.map(([key, label, icon, shortcut]) => (
               <button
                 key={key}
                 className={area === key ? "active" : undefined}
+                title={tip(shortcut, label)}
                 onClick={() => setArea(key)}
               >
-                {label}
+                <Icon name={icon} size={16} />
+                <span>{label}</span>
               </button>
             ))}
           </nav>
@@ -779,9 +901,10 @@ export function App() {
               <span className="spacer" />
               <button
                 className="primary"
+                title={tip("closeSketch")}
                 onClick={() => setSketching(undefined)}
               >
-                Close sketch
+                <Icon name="close_sketch" size={16} /> Close sketch
               </button>
             </div>
             <SketchEditor
@@ -806,23 +929,65 @@ export function App() {
                 <option value="XZ">XZ (front)</option>
                 <option value="YZ">YZ (side)</option>
               </select>
-              <button
+              <ToolButton
+                icon="sketch"
+                label={
+                  face
+                    ? "Sketch on the selected face"
+                    : `Sketch on the ${plane} plane`
+                }
+                shortcut="sketch"
                 onClick={() => void newSketch()}
-                title="A new sketch on the selected face, or on the plane"
-              >
-                {face ? "Sketch on face" : "Sketch"}
-              </button>
+              />
               <span className="separator" />
-              <button onClick={newExtrude}>Extrude</button>
-              <button onClick={newHole}>Hole</button>
-              <button onClick={() => newRound("fillet")}>Fillet</button>
-              <button onClick={() => newRound("chamfer")}>Chamfer</button>
-              <button onClick={newShell}>Shell</button>
-              <button onClick={() => newRepeat("pattern")}>Pattern</button>
-              <button onClick={() => newRepeat("mirror")}>Mirror</button>
+              <ToolButton
+                icon="extrude"
+                label="Extrude"
+                shortcut="extrude"
+                onClick={newExtrude}
+              />
+              <ToolButton
+                icon="hole"
+                label="Hole"
+                shortcut="hole"
+                onClick={newHole}
+              />
+              <ToolButton
+                icon="fillet"
+                label="Fillet"
+                shortcut="fillet"
+                onClick={() => newRound("fillet")}
+              />
+              <ToolButton
+                icon="chamfer"
+                label="Chamfer"
+                shortcut="chamfer"
+                onClick={() => newRound("chamfer")}
+              />
+              <ToolButton
+                icon="shell"
+                label="Shell"
+                shortcut="shell"
+                onClick={newShell}
+              />
+              <ToolButton
+                icon="pattern"
+                label="Pattern"
+                shortcut="pattern"
+                onClick={() => newRepeat("pattern")}
+              />
+              <ToolButton
+                icon="mirror"
+                label="Mirror"
+                shortcut="mirror"
+                onClick={() => newRepeat("mirror")}
+              />
               <span className="separator" />
-              <button
-                className={draft?.kind === "joint" ? "active" : undefined}
+              <ToolButton
+                icon="joint"
+                label="Joint: click two touching parts, then choose how they are joined"
+                shortcut="joint"
+                active={draft?.kind === "joint"}
                 onClick={() =>
                   setDraft(
                     draft?.kind === "joint"
@@ -830,12 +995,12 @@ export function App() {
                       : { kind: "joint", bodies: [] },
                   )
                 }
-                title="Click two touching parts, then choose how they are joined"
-              >
-                Joint
-              </button>
-              <button
-                className={draft?.kind === "mate" ? "active" : undefined}
+              />
+              <ToolButton
+                icon="mate"
+                label="Mate: click a face of the part to move, then the face it goes onto"
+                shortcut="mate"
+                active={draft?.kind === "mate"}
                 onClick={() =>
                   setDraft(
                     draft?.kind === "mate"
@@ -843,24 +1008,28 @@ export function App() {
                       : { kind: "mate", faces: [] },
                   )
                 }
-                title="Click a face of the part to move, then the face it goes onto"
-              >
-                Mate
-              </button>
-              <button onClick={newMove}>Move</button>
+              />
+              <ToolButton
+                icon="move"
+                label="Move"
+                shortcut="move"
+                onClick={newMove}
+              />
               <span className="separator" />
-              <button
-                className={measuring ? "active" : undefined}
+              <ToolButton
+                icon="measure"
+                label="Measure"
+                shortcut="measure"
+                active={measuring}
                 onClick={() => setMeasuring((m) => !m)}
-              >
-                Measure
-              </button>
+              />
             </div>
             <Viewport
               bodies={model?.bodies ?? []}
               sketches={overlays}
               mode={mode}
               highlight={highlight}
+              controls={viewControls}
               onPick={(pick) => void onPick(pick)}
             />
             <div className="model-status">
@@ -892,9 +1061,7 @@ export function App() {
                   . Esc ends.
                 </span>
               ) : face ? (
-                <span>
-                  Face selected: “Sketch on face” starts a sketch there.
-                </span>
+                <span>Face selected: Sketch (S) starts a sketch on it.</span>
               ) : null}
               <span className="spacer" />
               {kernelError ? (

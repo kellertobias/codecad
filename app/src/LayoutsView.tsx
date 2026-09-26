@@ -1,7 +1,7 @@
 // Stock and layouts: the pieces of material on hand (full sheets, boards,
 // offcuts of any outline), and part blanks placed on them by hand or by
 // auto-nesting, checked as they move.
-import { useMemo, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type {
   CadDocument,
   Layout,
@@ -19,6 +19,9 @@ import {
 import { kernel, type Model } from "./kernel.ts";
 import { outputUrl } from "./api.ts";
 import { Field } from "./features/fields.tsx";
+import { ToolButton } from "./controls.tsx";
+import { Icon } from "./icons.tsx";
+import { isTyping, matches, tip } from "./shortcuts.ts";
 
 type Apply = (
   change: (document: CadDocument) => CadDocument,
@@ -368,6 +371,91 @@ function LayoutEditor({
     );
   const points = (outline: readonly { x: number; y: number }[]) =>
     outline.map((p) => `${p.x},${-p.y}`).join(" ");
+  const autoNest = async () => {
+    if (nesting || !parts.length) return;
+    setNesting(true);
+    try {
+      const result = await kernel().nest(
+        { ...layout, placements: [] },
+        piece,
+        parts,
+        others,
+      );
+      set({ ...layout, placements: [...result.placements] });
+      setMessage(
+        result.left.length
+          ? `Did not fit: ${result.left.join(", ")}`
+          : `Placed ${result.placements.length} parts`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNesting(false);
+    }
+  };
+  const removeActive = () => {
+    if (active === undefined) return;
+    set({
+      ...layout,
+      placements: layout.placements.filter((_, i) => i !== active),
+    });
+    setActive(undefined);
+  };
+
+  // Keys for the selected part (see shortcuts.ts); replaced every render.
+  const onKey = useRef<(event: KeyboardEvent) => void>(() => {});
+  onKey.current = (event) => {
+    if (event.defaultPrevented || isTyping(event.target)) return;
+    if (document.querySelector("dialog[open]")) return;
+    const run = (action: () => void) => {
+      event.preventDefault();
+      action();
+    };
+    if (matches(event, "layoutNest")) return run(() => void autoNest());
+    const count = layout.placements.length;
+    if (matches(event, "layoutNext") && count)
+      return run(() => setActive(((active ?? -1) + 1) % count));
+    if (matches(event, "layoutPrevious") && count)
+      return run(() => setActive(((active ?? count) + count - 1) % count));
+    const selected =
+      active === undefined ? undefined : layout.placements[active];
+    if (active === undefined || !selected) return;
+    if (matches(event, "cancel")) return run(() => setActive(undefined));
+    if (matches(event, "layoutRotateLeft"))
+      return run(() =>
+        place(active, { rotation: (selected.rotation + 90) % 360 }),
+      );
+    if (matches(event, "layoutRotateRight"))
+      return run(() =>
+        place(active, { rotation: (selected.rotation + 270) % 360 }),
+      );
+    if (matches(event, "layoutFlip"))
+      return run(() => place(active, { flip: !selected.flip }));
+    if (matches(event, "layoutRemove")) return run(removeActive);
+    if (matches(event, "layoutNudge")) {
+      const step = event.shiftKey ? 10 : 1;
+      const [dx, dy] =
+        event.key === "ArrowLeft"
+          ? [-step, 0]
+          : event.key === "ArrowRight"
+            ? [step, 0]
+            : event.key === "ArrowUp"
+              ? [0, step]
+              : [0, -step];
+      return run(() =>
+        place(
+          active,
+          { x: selected.x + dx, y: selected.y + dy },
+          `nudge:${layout.id}:${active}`,
+        ),
+      );
+    }
+  };
+  useEffect(() => {
+    const keys = (event: KeyboardEvent) => onKey.current(event);
+    addEventListener("keydown", keys);
+    return () => removeEventListener("keydown", keys);
+  }, []);
 
   return (
     <section className="layout-main">
@@ -412,31 +500,10 @@ function LayoutEditor({
         <span className="spacer" />
         <button
           disabled={nesting || !parts.length}
-          onClick={async () => {
-            setNesting(true);
-            try {
-              const result = await kernel().nest(
-                { ...layout, placements: [] },
-                piece,
-                parts,
-                others,
-              );
-              set({ ...layout, placements: [...result.placements] });
-              setMessage(
-                result.left.length
-                  ? `Did not fit: ${result.left.join(", ")}`
-                  : `Placed ${result.placements.length} parts`,
-              );
-            } catch (error) {
-              setMessage(
-                error instanceof Error ? error.message : String(error),
-              );
-            } finally {
-              setNesting(false);
-            }
-          }}
+          title={tip("layoutNest", "Auto-nest")}
+          onClick={() => void autoNest()}
         >
-          {nesting ? "Nesting…" : "Auto-nest"}
+          <Icon name="pattern" size={16} /> {nesting ? "Nesting…" : "Auto-nest"}
         </button>
         <a
           className={`button${download ? "" : " disabled"}`}
@@ -525,17 +592,12 @@ function LayoutEditor({
               placement={layout.placements[active]!}
               name={byId.get(layout.placements[active]!.part)?.name ?? ""}
               change={(c) => place(active, c)}
-              remove={() => {
-                set({
-                  ...layout,
-                  placements: layout.placements.filter((_, i) => i !== active),
-                });
-                setActive(undefined);
-              }}
+              remove={removeActive}
             />
           ) : (
             <p className="hint">
-              Drag parts to move them; click one to turn or flip it.
+              Drag parts to move them; click one to turn or flip it. [ and ]
+              select parts, arrows move them, R turns and F flips.
             </p>
           )}
           <h2>Checks</h2>
@@ -613,20 +675,32 @@ function PlacementTools({
     <div className="placement-tools">
       <strong>{name}</strong>
       <div className="button-row">
-        <button
+        <ToolButton
+          icon="rotate_left"
+          label="Turn 90° counter-clockwise"
+          shortcut="layoutRotateLeft"
           onClick={() => change({ rotation: (placement.rotation + 90) % 360 })}
-        >
-          ⟲ 90°
-        </button>
-        <button
+        />
+        <ToolButton
+          icon="rotate_right"
+          label="Turn 90° clockwise"
+          shortcut="layoutRotateRight"
           onClick={() => change({ rotation: (placement.rotation + 270) % 360 })}
-        >
-          ⟳ 90°
-        </button>
-        <button onClick={() => change({ flip: !placement.flip })}>Flip</button>
-        <button className="danger" onClick={remove}>
-          Remove
-        </button>
+        />
+        <ToolButton
+          icon="mirror"
+          label="Flip"
+          shortcut="layoutFlip"
+          active={!!placement.flip}
+          onClick={() => change({ flip: !placement.flip })}
+        />
+        <ToolButton
+          icon="trash"
+          label="Take off the stock"
+          shortcut="layoutRemove"
+          className="danger"
+          onClick={remove}
+        />
       </div>
       <Field label="Angle">
         <input

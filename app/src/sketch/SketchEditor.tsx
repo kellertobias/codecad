@@ -55,6 +55,9 @@ import {
   type Vec,
   type View,
 } from "./geometry.ts";
+import { ToolButton } from "../controls.tsx";
+import type { IconName } from "../icons.tsx";
+import { constraintShortcuts, matches, type ShortcutId } from "../shortcuts.ts";
 import {
   dimensionLabel,
   layoutDimensions,
@@ -63,40 +66,84 @@ import {
 
 type Tool =
   "select" | "line" | "rectangle" | "circle" | "arc" | "slot" | "trim";
-const tools: { tool: Tool; label: string; key: string; clicks: string }[] = [
-  { tool: "select", label: "Select", key: "Escape", clicks: "" },
-  { tool: "line", label: "Line", key: "l", clicks: "Click points; Esc ends" },
+const tools: {
+  tool: Tool;
+  label: string;
+  icon: IconName;
+  shortcut: ShortcutId;
+  clicks: string;
+}[] = [
+  {
+    tool: "select",
+    label: "Select",
+    icon: "select",
+    shortcut: "sketchSelect",
+    clicks: "",
+  },
+  {
+    tool: "line",
+    label: "Line",
+    icon: "line",
+    shortcut: "sketchLine",
+    clicks: "Click points; Esc ends",
+  },
   {
     tool: "rectangle",
     label: "Rectangle",
-    key: "r",
+    icon: "rectangle",
+    shortcut: "sketchRectangle",
     clicks: "Click two corners",
   },
   {
     tool: "circle",
     label: "Circle",
-    key: "c",
+    icon: "circle",
+    shortcut: "sketchCircle",
     clicks: "Click the centre, then the edge",
   },
   {
     tool: "arc",
     label: "Arc",
-    key: "a",
+    icon: "arc",
+    shortcut: "sketchArc",
     clicks: "Click centre, start, end (counter-clockwise)",
   },
   {
     tool: "slot",
     label: "Slot",
-    key: "s",
+    icon: "slot",
+    shortcut: "sketchSlot",
     clicks: "Click both ends, then the width",
   },
   {
     tool: "trim",
     label: "Trim",
-    key: "t",
+    icon: "trim",
+    shortcut: "sketchTrim",
     clicks: "Click the piece of a line to cut away",
   },
 ];
+
+/** Icons for the constraints and dimensions offered for a selection, by
+ * the label the sketch model gives them. */
+const constraintIcons: Readonly<Record<string, IconName>> = {
+  Horizontal: "horizontal",
+  Vertical: "vertical",
+  Parallel: "parallel",
+  Perpendicular: "perpendicular",
+  Equal: "equal",
+  Tangent: "tangent",
+  Coincident: "coincident",
+  On: "on",
+  Midpoint: "midpoint",
+  Symmetric: "symmetric",
+  Fix: "fix",
+  Distance: "dimension",
+  Diameter: "diameter",
+  Radius: "radius",
+  "Horizontal distance": "dimension_h",
+  "Vertical distance": "dimension_v",
+};
 
 export interface SketchEditorProps {
   sketch: SketchFeature;
@@ -381,31 +428,58 @@ export function SketchEditor({
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (editing || event.target !== wrapper.current) return;
-    if (event.key === "Escape") {
+    if (matches(event, "sketchSelect")) {
       if (clicks.length) setClicks([]);
       else if (tool !== "select") setTool("select");
       else setSelection([]);
       return;
     }
-    if (
-      (event.key === "Delete" || event.key === "Backspace") &&
-      selection.length
-    ) {
+    const run = (action: () => void) => {
       event.preventDefault();
-      edit(remove(sketch, new Set(selection)));
-      setSelection([]);
+      action();
+    };
+    if (selection.length) {
+      if (matches(event, "sketchDelete"))
+        return run(() => {
+          edit(remove(sketch, new Set(selection)));
+          setSelection([]);
+        });
+      if (selectedCurves && matches(event, "sketchConstruction"))
+        return run(() => edit(toggleConstruction(sketch, new Set(selection))));
+      if (canOffset(sketch, selection) && matches(event, "sketchOffset"))
+        return run(applyOffset);
+      for (const option of [...options, ...dimensionOptions]) {
+        const shortcut = constraintShortcuts[option.label];
+        if (shortcut && matches(event, shortcut))
+          return run(() => addAndEdit(option.constraint));
+      }
+    }
+    if (matches(event, "sketchFit")) return run(() => setView(undefined));
+    const chosen = tools.find((t) => matches(event, t.shortcut));
+    if (chosen)
+      run(() => {
+        setTool(chosen.tool);
+        setClicks([]);
+      });
+  };
+
+  const applyOffset = () => {
+    let distance: number;
+    try {
+      distance = evaluateWith(offsetBy, variables);
+    } catch {
       return;
     }
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === "x" && selection.length) {
-      edit(toggleConstruction(sketch, new Set(selection)));
-      return;
-    }
-    const chosen = tools.find((t) => t.key === event.key);
-    if (chosen) {
-      setTool(chosen.tool);
-      setClicks([]);
-    }
+    // The constraints hold the size; the sign only picks the side.
+    const value = offsetBy.trim().replace(/^-\s*/, "");
+    const made = offset(sketch, selection, distance, value);
+    if (!made) return;
+    edit(made.sketch);
+    setSelection(
+      made.created.filter((id) =>
+        made.sketch.entities.some((e) => e.id === id && e.type !== "point"),
+      ),
+    );
   };
 
   const commitEditing = () => {
@@ -435,21 +509,29 @@ export function SketchEditor({
     <section className="sketch-editor">
       <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
         {tools.map((t) => (
-          <button
+          <ToolButton
             key={t.tool}
-            className={tool === t.tool ? "active" : undefined}
-            title={`${t.label} (${t.key === "Escape" ? "Esc" : t.key.toUpperCase()})`}
+            icon={t.icon}
+            label={t.label}
+            shortcut={t.shortcut}
+            active={tool === t.tool}
             onClick={() => {
               setTool(t.tool);
               setClicks([]);
               wrapper.current?.focus();
             }}
-          >
-            {t.label}
-          </button>
+          />
         ))}
         <span className="spacer" />
-        <button onClick={() => setView(undefined)}>Fit</button>
+        <ToolButton
+          icon="fit"
+          label="Fit the sketch"
+          shortcut="sketchFit"
+          onClick={() => {
+            setView(undefined);
+            wrapper.current?.focus();
+          }}
+        />
       </div>
       <div
         className="sketch-context"
@@ -462,22 +544,18 @@ export function SketchEditor({
             selection.
           </span>
         )}
-        {options.map((option) => (
-          <button
-            key={option.label}
-            onClick={() => addAndEdit(option.constraint)}
-          >
-            {option.label}
-          </button>
-        ))}
-        {dimensionOptions.map((option) => (
-          <button
-            key={option.label}
-            className="dimension"
-            onClick={() => addAndEdit(option.constraint)}
-          >
-            {option.label}
-          </button>
+        {[...options, ...dimensionOptions].map((option, i) => (
+          <ToolButton
+            key={`${i}:${option.label}`}
+            icon={constraintIcons[option.label] ?? "dimension"}
+            label={option.label}
+            shortcut={constraintShortcuts[option.label]}
+            className={i >= options.length ? "dimension" : undefined}
+            onClick={() => {
+              addAndEdit(option.constraint);
+              wrapper.current?.focus();
+            }}
+          />
         ))}
         {canOffset(sketch, selection) ? (
           <span className="offset">
@@ -487,50 +565,33 @@ export function SketchEditor({
               value={offsetBy}
               onChange={(event) => setOffsetBy(event.target.value)}
             />
-            <button
-              onClick={() => {
-                let distance: number;
-                try {
-                  distance = evaluateWith(offsetBy, variables);
-                } catch {
-                  return;
-                }
-                // The constraints hold the size; the sign only picks the side.
-                const value = offsetBy.trim().replace(/^-\s*/, "");
-                const made = offset(sketch, selection, distance, value);
-                if (!made) return;
-                edit(made.sketch);
-                setSelection(
-                  made.created.filter((id) =>
-                    made.sketch.entities.some(
-                      (e) => e.id === id && e.type !== "point",
-                    ),
-                  ),
-                );
-              }}
-            >
-              Offset
-            </button>
+            <ToolButton
+              icon="offset"
+              label="Offset"
+              shortcut="sketchOffset"
+              onClick={applyOffset}
+            />
           </span>
         ) : null}
         {selectedCurves ? (
-          <button
-            title="Construction geometry guides the sketch but makes no profile (X)"
+          <ToolButton
+            icon="construction"
+            label="Construction geometry: guides the sketch but makes no profile"
+            shortcut="sketchConstruction"
             onClick={() => edit(toggleConstruction(sketch, new Set(selection)))}
-          >
-            Construction
-          </button>
+          />
         ) : null}
         {selection.length ? (
-          <button
+          <ToolButton
+            icon="trash"
+            label="Delete"
+            shortcut="sketchDelete"
             className="danger"
             onClick={() => {
               edit(remove(sketch, new Set(selection)));
               setSelection([]);
             }}
-          >
-            Delete
-          </button>
+          />
         ) : null}
       </div>
       <div

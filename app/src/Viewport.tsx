@@ -3,7 +3,13 @@
 // re-renders never rebuild them. Bodies arrive as meshes whose triangles
 // are grouped by face and whose lines are grouped by edge, which is what
 // picking reads: a click names a face or an edge by the kernel's hash.
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type RefObject,
+} from "react";
 import {
   AmbientLight,
   Box3,
@@ -26,6 +32,7 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { BodyView } from "../../web/kernel/protocol.ts";
+import { ToolButton } from "./controls.tsx";
 import {
   measure,
   type MeasurePick,
@@ -68,6 +75,12 @@ export interface SketchOverlay {
   readonly active: boolean;
 }
 
+/** What the editor can do with the view from outside, e.g. from keys. */
+export interface ViewControls {
+  /** Looks at the model from `direction` (toward the observer), fitted. */
+  setView(direction: [number, number, number]): void;
+}
+
 interface Scenery {
   renderer: WebGLRenderer;
   scene: Scene;
@@ -98,12 +111,14 @@ export function Viewport({
   mode = "none",
   highlight = {},
   onPick,
+  controls,
 }: {
   bodies: readonly BodyView[];
   sketches?: readonly SketchOverlay[];
   mode?: PickMode;
   highlight?: Highlight;
   onPick?: (pick: Pick | undefined) => void;
+  controls?: RefObject<ViewControls | null>;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const view = useRef<Scenery | undefined>(undefined);
@@ -458,6 +473,13 @@ export function Viewport({
     if (!current) return;
     frame(current, new Vector3(...direction));
   };
+  useEffect(() => {
+    if (!controls) return;
+    controls.current = { setView };
+    return () => {
+      controls.current = null;
+    };
+  });
 
   return (
     <div className="viewport">
@@ -470,12 +492,30 @@ export function Viewport({
         onPointerLeave={() => setHover(undefined)}
       />
       <div className="view-buttons">
-        <button onClick={() => setView([0.4, -1, 0.7])} title="Fit the model">
-          Fit
-        </button>
-        <button onClick={() => setView([0, -1, 0])}>Front</button>
-        <button onClick={() => setView([0, 0, 1])}>Top</button>
-        <button onClick={() => setView([1, 0, 0])}>Right</button>
+        <ToolButton
+          icon="fit"
+          label="Fit the model"
+          shortcut="viewFit"
+          onClick={() => setView([0.4, -1, 0.7])}
+        />
+        <ToolButton
+          icon="front"
+          label="Front view"
+          shortcut="viewFront"
+          onClick={() => setView([0, -1, 0])}
+        />
+        <ToolButton
+          icon="top"
+          label="Top view"
+          shortcut="viewTop"
+          onClick={() => setView([0, 0, 1])}
+        />
+        <ToolButton
+          icon="right"
+          label="Right view"
+          shortcut="viewRight"
+          onClick={() => setView([1, 0, 0])}
+        />
       </div>
       {mode === "measure" ? (
         <p className="measure-result">
