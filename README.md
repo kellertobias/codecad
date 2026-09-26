@@ -468,6 +468,25 @@ still to place, using the guillotine nesting; on an offcut it uses the
 largest rectangles inside it. A layout downloads as one DXF with every part
 where the layout shows it.
 
+**Library** keeps parts and assemblies to use again, such as a hinge plate, a
+drawer runner or a leg.
+
+- **Saving:** save a project as an item, or as a new version of an item you
+  already have. Choose which of its variables a copy may set (a plate's width,
+  for example).
+- **Interfaces** say where an item connects: the free points of a sketch, as
+  screw holes, dowels or plain points, with the hole size to drill.
+- **Inserting:** inserting an item places a copy of it in the project, with
+  values of its own for the variables it lets you set. Place it by position,
+  or mate one of its interfaces onto a face you pick. Mating drills the
+  interface's holes into that part, and the screws or dowels go into the bill
+  of materials.
+- **Versions:** a project keeps a copy of the version it uses, so it builds the
+  same until you update it. The form shows when a newer version is in the
+  library.
+- **Files:** items export to one file and import from one, with all their
+  versions (`/api/library/<id>/file`).
+
 The server makes these files from the saved project as jobs:
 `GET /api/projects/<id>/outputs/<kind>?format=…&target=…`:
 
@@ -1158,6 +1177,7 @@ measured or supplier STEP geometry and mounting dimensions for your hardware.
 - `src/manufacturing.ts`: cut lists, nesting, DXF.
 - `src/drawing.ts`, `exporters.ts`: projections, PDF, glTF and clearance results.
 - `src/server.ts`, `worker.ts`: local server and isolated rebuild/export process.
+- `src/workspace.ts`, `library.ts` and their `*-api.ts`: stored projects and the part library.
 - `src/document/`: the browser editor's document: schema, expressions, variables, sketch solving, profiles, feature-list edits.
 - `src/kernel/`: the document evaluator (features into bodies, stable face names), joints between panels, bodies as parts, the bill of materials, drawings, layouts and the files made from a document.
 - `app/`: the browser editor.
