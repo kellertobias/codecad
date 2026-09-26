@@ -28,19 +28,19 @@ before(async () => {
   directory = await mkdtemp(join(tmpdir(), "codecad-viewer-"));
   workspace = openWorkspace(":memory:");
   const jobs = new JobQueue({ concurrency: 1 });
+  const progress = openCutProgress(":memory:");
   viewer = viewerService({
     directory,
-    workspace,
     jobs,
-    progress: openCutProgress(":memory:"),
+    stores: () => ({ workspace, progress }),
   });
   server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const trusted = () => req.headers["x-test"] === "yes";
-    if (await viewer.handle(req, res, url, trusted)) return;
+    if (await viewer.handle(req, res, url, { owner: "local", trusted })) return;
     if (
       await handleProjects(req, res, url, workspace, trusted, (p) =>
-        built.push(viewer.build(p.id)),
+        built.push(viewer.build("local", p.id)),
       )
     )
       return;

@@ -39,19 +39,26 @@ before(async () => {
   workspace = openWorkspace(":memory:");
   store = openCodeResults(join(directory, "results"));
   const jobs = new JobQueue({ concurrency: 1 });
+  const progress = openCutProgress(":memory:");
   viewer = viewerService({
     directory: join(directory, "viewer"),
-    workspace,
     jobs,
-    progress: openCutProgress(":memory:"),
-    codeResults: store,
+    stores: () => ({ workspace, progress, codeResults: store }),
   });
   server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const trusted = () => req.headers["x-test"] === "yes";
     try {
-      if (await handleOutputs(req, res, url, workspace, jobs, store)) return;
-      if (await viewer.handle(req, res, url, trusted)) return;
+      if (
+        await handleOutputs(req, res, url, {
+          workspace,
+          jobs,
+          codeResults: store,
+        })
+      )
+        return;
+      if (await viewer.handle(req, res, url, { owner: "local", trusted }))
+        return;
       if (
         await handleCodeResults(req, res, url, store, trusted, () => {
           void viewer.refreshRegenerated();

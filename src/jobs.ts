@@ -43,6 +43,13 @@ interface Job {
   start(): void;
 }
 
+/** Too many jobs of one lane are waiting already. */
+export class JobsBusy extends Error {}
+
+/** The lane of an owner's kernel jobs: one at a time per user, so no one
+ * user holds up the others. */
+export const ownerLane = (owner: string) => `owner\0${owner}`;
+
 export class JobQueue {
   private readonly jobs = new Map<string, Job>();
   private readonly busyLanes = new Set<string>();
@@ -52,6 +59,9 @@ export class JobQueue {
     private readonly options: {
       readonly concurrency: number;
       readonly onChange?: () => void;
+      /** Jobs one lane may have queued or running before more are
+       * refused (JobsBusy). */
+      readonly maxPerLane?: number;
     },
   ) {
     if (!Number.isInteger(options.concurrency) || options.concurrency < 1)
@@ -64,6 +74,16 @@ export class JobQueue {
     const existing = this.jobs.get(spec.key);
     if (existing) return existing.promise as Promise<T>;
     const lane = spec.lane ?? spec.key;
+    const limit = this.options.maxPerLane;
+    if (
+      limit !== undefined &&
+      [...this.jobs.values()].filter((j) => j.lane === lane).length >= limit
+    )
+      return Promise.reject(
+        new JobsBusy(
+          `${limit} jobs are waiting already; try again when they are done`,
+        ),
+      );
     let start!: () => void;
     const promise = new Promise<T>((resolve, reject) => {
       start = () => {

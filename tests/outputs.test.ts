@@ -21,7 +21,7 @@ before(async () => {
   project = workspace.create("Shop", { ...shop(solver) }).id;
   server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (!(await handleOutputs(req, res, url, workspace, jobs)))
+    if (!(await handleOutputs(req, res, url, { workspace, jobs })))
       res.writeHead(404).end();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

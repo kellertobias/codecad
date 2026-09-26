@@ -87,7 +87,7 @@ export async function handleCodeResults(
       );
       req.destroy();
     } else if (error instanceof RejectedResult)
-      json({ error: error.message }, 400);
+      json({ error: error.message }, error.status);
     else throw error;
   }
   return true;

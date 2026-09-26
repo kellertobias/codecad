@@ -6,8 +6,16 @@
 // Uploads are untrusted. Their structure is checked here; their geometry
 // is parsed in a worker thread with a memory limit and a time limit, which
 // is ended and replaced when a check takes too long or the worker dies.
-import { Worker } from "node:worker_threads";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import type { Worker } from "node:worker_threads";
+import { startWorker } from "./worker-threads.js";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import {
   codeInstances,
@@ -18,7 +26,15 @@ import {
 import type { CadDocument } from "./document/schema.js";
 import { CodeResults } from "./kernel/code-parts.js";
 
-export class RejectedResult extends Error {}
+export class RejectedResult extends Error {
+  constructor(
+    message: string,
+    /** The HTTP status that says why. */
+    readonly status = 400,
+  ) {
+    super(message);
+  }
+}
 
 export interface ResultCheckOptions {
   /** How long one upload's geometry may take to check. */
@@ -35,25 +51,8 @@ export class ResultChecker {
   constructor(private readonly options: ResultCheckOptions = {}) {}
 
   private start(): Worker {
-    const own = import.meta.url;
-    const file = new URL(
-      own.endsWith(".ts") ? "./code-result-check.ts" : "./code-result-check.js",
-      own,
-    );
-    // Only the flags that load TypeScript (tsx, in development and tests)
-    // carry over; the rest of the process's flags may not apply to workers.
-    const execArgv: string[] = [];
-    process.execArgv.forEach((flag, i, all) => {
-      if (/^--(import|require|loader|experimental-loader)=/.test(flag))
-        execArgv.push(flag);
-      else if (/^--(import|require|loader|experimental-loader)$/.test(flag))
-        execArgv.push(flag, all[i + 1]!);
-    });
-    const worker = new Worker(file, {
-      execArgv,
-      resourceLimits: {
-        maxOldGenerationSizeMb: this.options.memoryMb ?? 1024,
-      },
+    const worker = startWorker(import.meta.url, "code-result-check", {
+      maxOldGenerationSizeMb: this.options.memoryMb ?? 1024,
     });
     worker.unref();
     return worker;
@@ -138,12 +137,19 @@ export interface CodeResultStore {
    * it); those not stored yet are left out, and the evaluator reports
    * them as needing regeneration. */
   load(document: CadDocument): Promise<CodeResults>;
+  /** The same, as stored (for a kernel job to load itself). */
+  results(document: CadDocument): Promise<CodeResult[]>;
+  /** Bytes stored. */
+  size(): Promise<number>;
   close(): Promise<void>;
 }
 
 export function openCodeResults(
   directory: string,
-  options: ResultCheckOptions = {},
+  options: ResultCheckOptions & {
+    /** Most bytes this store keeps; uploads past it are refused. */
+    readonly quotaBytes?: number;
+  } = {},
 ): CodeResultStore {
   const checker = new ResultChecker(options);
   const file = (key: string) => {
@@ -176,11 +182,20 @@ export function openCodeResults(
       }
       // Content-addressed: the same key is the same code and values.
       if (!replace && (await store.has(result.key))) return result;
+      const text = JSON.stringify(result);
+      if (
+        options.quotaBytes !== undefined &&
+        (await store.size()) + text.length > options.quotaBytes
+      )
+        throw new RejectedResult(
+          `Stored code-part results may take at most ${Math.round(options.quotaBytes / 1024 / 1024)} MB; delete projects or code parts to make room`,
+          413,
+        );
       await checker.check(result);
       await mkdir(directory, { recursive: true });
       const target = file(result.key);
       const staging = `${target}.${process.pid}.${Date.now()}.part`;
-      await writeFile(staging, JSON.stringify(result));
+      await writeFile(staging, text);
       await rename(staging, target);
       return result;
     },
@@ -197,6 +212,25 @@ export function openCodeResults(
         loaded.dispose();
         throw error;
       }
+    },
+    async results(document) {
+      const found: CodeResult[] = [];
+      for (const need of codeInstances(document)) {
+        if (!need.key || found.some((r) => r.key === need.key)) continue;
+        const result = await store.get(need.key);
+        if (result) found.push(result);
+      }
+      return found;
+    },
+    async size() {
+      let total = 0;
+      for (const name of await readdir(directory).catch(() => [] as string[]))
+        if (name.endsWith(".json"))
+          total += await stat(join(directory, name)).then(
+            (s) => s.size,
+            () => 0,
+          );
+      return total;
     },
     close: () => checker.close(),
   };

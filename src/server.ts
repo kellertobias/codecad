@@ -14,14 +14,15 @@ import {
   isLoopbackAddress,
   reachableAddresses,
 } from "./network.js";
-import { openWorkspace } from "./workspace.js";
 import { handleProjects } from "./projects-api.js";
 import { handleOutputs } from "./outputs-api.js";
 import { handleLibrary } from "./library-api.js";
-import { openLibrary } from "./library.js";
-import { openCutProgress } from "./cut-progress.js";
+import { ownerStores } from "./owner-stores.js";
+import { openAccounts } from "./accounts.js";
+import { cookie, handleAccounts, sessionCookie } from "./accounts-api.js";
+import { openShares } from "./shares.js";
+import { handleShares } from "./shares-api.js";
 import { viewerService } from "./viewer-api.js";
-import { openCodeResults } from "./code-results.js";
 import { handleCodeResults } from "./code-results-api.js";
 import { JobQueue } from "./jobs.js";
 import {
@@ -50,8 +51,18 @@ const token = randomBytes(24).toString("hex");
 const storage = process.env.CODECAD_STORAGE ?? join(root, ".codecad"),
   ui = join(storage, "ui");
 await mkdir(ui, { recursive: true });
-const workspace = openWorkspace(join(storage, "workspace.sqlite"));
-const library = openLibrary(join(storage, "workspace.sqlite"));
+// Projects, libraries and results by owner. With CODECAD_ACCOUNTS=1 people
+// sign in with passkeys and each has their own; otherwise everything is
+// the machine's ("local").
+const stores = ownerStores(storage, {
+  resultQuotaBytes:
+    Number(process.env.CODECAD_RESULT_QUOTA_MB ?? 512) * 1024 * 1024,
+});
+const accounts =
+  process.env.CODECAD_ACCOUNTS === "1"
+    ? openAccounts(join(storage, "workspace.sqlite"))
+    : undefined;
+const shares = openShares(join(storage, "workspace.sqlite"));
 const parameterFile = join(
   storage,
   "parameters",
@@ -173,14 +184,17 @@ let state: {
 } = { phase: "starting", generation: 0, message: "Loading project", log: "" };
 /** Slow work done on request, such as exports. Every page hears about the
  * queue's progress through the event stream. */
-const jobs = new JobQueue({ concurrency: 2, onChange: () => broadcast() });
-const codeResults = openCodeResults(join(storage, "code-results"));
+const jobs = new JobQueue({
+  concurrency: 2,
+  onChange: () => broadcast(),
+  // Per owner: one job runs at a time, a few more may wait.
+  maxPerLane: 8,
+});
 const viewer = viewerService({
   directory: join(storage, "viewer"),
-  workspace,
   jobs,
-  codeResults,
-  progress: openCutProgress(join(storage, "workspace.sqlite")),
+  stores: (owner) => stores.get(owner),
+  shares,
 });
 /** Files being generated on request, by name, so each download can show
  * its progress. */
@@ -495,27 +509,66 @@ const server = createServer(async (req, res) => {
       json(languageService.libraries());
       return;
     }
-    if (await handleOutputs(req, res, url, workspace, jobs, codeResults))
-      return;
+    // Accounts: who is asking decides whose projects they see.
+    const user = accounts?.session(cookie(req, sessionCookie));
+    const owner = accounts ? user?.id : "local";
     if (
-      await handleCodeResults(req, res, url, codeResults, trusted, () => {
-        void viewer.refreshRegenerated();
+      await handleAccounts(req, res, url, {
+        accounts,
+        user,
+        trusted,
       })
     )
       return;
-    if (await viewer.handle(req, res, url, trusted)) return;
-    if (await handleLibrary(req, res, url, library, trusted)) return;
+    // View links need no account.
+    if (await viewer.handleShared(req, res, url)) return;
     if (
-      await handleProjects(req, res, url, workspace, trusted, (project) =>
-        // Prebuilt now, so the phone finds the files ready.
-        viewer
-          .build(project.id)
-          .catch((error) =>
-            console.error(`Viewer files for ${project.name}: ${error}`),
-          ),
-      )
-    )
+      !owner &&
+      /^\/api\/(projects|library|code-results|shares)(\/|$)/.test(url.pathname)
+    ) {
+      json({ error: "Sign in first" }, 401);
       return;
+    }
+    if (owner) {
+      const own = stores.get(owner);
+      if (
+        await handleOutputs(req, res, url, {
+          workspace: own.workspace,
+          jobs,
+          codeResults: own.codeResults,
+          owner,
+        })
+      )
+        return;
+      if (
+        await handleCodeResults(req, res, url, own.codeResults, trusted, () => {
+          void viewer.refreshRegenerated();
+        })
+      )
+        return;
+      if (
+        await handleShares(req, res, url, {
+          shares,
+          workspace: own.workspace,
+          owner,
+          trusted,
+        })
+      )
+        return;
+      if (await viewer.handle(req, res, url, { owner, trusted })) return;
+      if (await handleLibrary(req, res, url, own.library, trusted)) return;
+      if (
+        await handleProjects(req, res, url, own.workspace, trusted, (project) =>
+          // Prebuilt now, so the phone finds the files ready.
+          viewer
+            .build(owner, project.id)
+            .catch((error) =>
+              console.error(`Viewer files for ${project.name}: ${error}`),
+            ),
+        )
+      )
+        return;
+    }
     if (req.method === "POST") {
       if (!trusted()) {
         json({ error: "Invalid editor session" }, 403);
@@ -761,7 +814,12 @@ const server = createServer(async (req, res) => {
       await serveApp("/app/viewer.html", res);
       return;
     }
-    if (url.pathname === "/p/sw.js") {
+    // A view link: the same viewer, for a project shared by its token.
+    if (/^\/s\/[A-Za-z0-9_-]{32}\/?$/.test(url.pathname)) {
+      await serveApp("/app/viewer.html", res);
+      return;
+    }
+    if (url.pathname === "/p/sw.js" || url.pathname === "/s/sw.js") {
       await serveApp("/app/viewer-sw.js", res);
       return;
     }
@@ -838,8 +896,9 @@ function close() {
   for (const watcher of watchers) watcher.close();
   for (const listener of listeners) listener.end();
   server.close();
-  workspace.close();
-  void codeResults.close();
+  void stores.close();
+  accounts?.close();
+  shares.close();
   process.exit(0);
 }
 process.on("SIGINT", close);

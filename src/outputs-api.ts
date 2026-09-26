@@ -1,12 +1,16 @@
 // GET /api/projects/<id>/outputs/<kind>?format=…&target=… makes a file
 // from the project's saved document as a server job, and sends it.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { JobQueue } from "./jobs.js";
+import { JobsBusy, ownerLane, type JobQueue } from "./jobs.js";
+import {
+  JobLimitExceeded,
+  outputJob,
+  type KernelJobLimits,
+} from "./kernel-jobs.js";
 import type { Workspace } from "./workspace.js";
 import { readDocument } from "./document/schema.js";
 import type { CodeResultStore } from "./code-results.js";
 import {
-  documentOutput,
   NeedsRegeneration,
   OutputError,
   type OutputFormat,
@@ -17,10 +21,16 @@ export async function handleOutputs(
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
-  workspace: Workspace,
-  jobs: JobQueue,
-  codeResults?: CodeResultStore,
+  context: {
+    readonly workspace: Workspace;
+    readonly jobs: JobQueue;
+    readonly codeResults?: CodeResultStore;
+    /** Whose project it is: their jobs run one at a time. */
+    readonly owner?: string;
+    readonly limits?: KernelJobLimits;
+  },
 ): Promise<boolean> {
+  const { workspace, jobs, codeResults, owner = "local", limits } = context;
   const match =
     /^\/api\/projects\/([0-9a-f-]{36})\/outputs\/(drawing|layout|part|cutlist|bom)$/.exec(
       url.pathname,
@@ -46,21 +56,17 @@ export async function handleOutputs(
     // same work.
     const file = await jobs.run({
       key: `output\0${id}\0${project.revision}\0${kind}\0${target ?? ""}\0${format}`,
-      lane: `output\0${id}`,
+      lane: ownerLane(owner),
       label: `${project.name}: ${kind}${target ? ` ${target}` : ""} (${format})`,
-      work: async () => {
-        // Code parts come from their stored results; nothing runs code.
-        const results = await codeResults?.load(document);
-        try {
-          return await documentOutput(
-            document,
-            { kind, format, ...(target ? { target } : {}) },
-            results,
-          );
-        } finally {
-          results?.dispose();
-        }
-      },
+      // In a bounded worker; code parts come from their stored results,
+      // and nothing runs code.
+      work: async () =>
+        outputJob(
+          document,
+          { kind, format, ...(target ? { target } : {}) },
+          (await codeResults?.results(document)) ?? [],
+          limits,
+        ),
     });
     res.writeHead(200, {
       "Content-Type": file.type,
@@ -73,9 +79,13 @@ export async function handleOutputs(
     fail(
       error instanceof NeedsRegeneration
         ? 409
-        : error instanceof OutputError
-          ? 400
-          : 500,
+        : error instanceof JobsBusy
+          ? 429
+          : error instanceof JobLimitExceeded
+            ? 503
+            : error instanceof OutputError
+              ? 400
+              : 500,
       error instanceof Error ? error.message : String(error),
     );
   }
