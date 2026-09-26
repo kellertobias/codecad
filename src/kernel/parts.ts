@@ -37,6 +37,10 @@ export interface PartInfo {
   readonly thickness?: number;
   readonly width?: number;
   readonly height?: number;
+  /** Sheet parts: the blank's outline in its own coordinates. */
+  readonly outline?: readonly { readonly x: number; readonly y: number }[];
+  /** Which blank axis must follow the stock's grain. */
+  readonly grain: "x" | "y" | "none";
   /** Why a body set to sheet stock is not one, or why its DXF would miss
    * something. */
   readonly problem?: string;
@@ -140,6 +144,7 @@ export function describeParts(
       body: body.id,
       name: props?.name ?? body.name,
       quantity: props?.quantity ?? 1,
+      grain: props?.grain ?? "none",
       ...(material ? { material } : {}),
     };
     const blank =
@@ -168,6 +173,7 @@ export function describeParts(
       thickness,
       width: round(Math.max(...xs) - Math.min(...xs)),
       height: round(Math.max(...ys) - Math.min(...ys)),
+      outline: blank.outline,
       ...(body.irregular
         ? {
             problem: `Its DXF shows the blank and its cuts only: ${body.irregular}`,

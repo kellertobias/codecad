@@ -440,6 +440,106 @@ export interface PartProperties {
    * extruded exactly as deep as its sheet material is thick. */
   readonly stock?: "auto" | "sheet" | "solid";
   readonly quantity?: number;
+  /** Which axis of the part's blank must run along the stock's grain. */
+  readonly grain?: "x" | "y" | "none";
+}
+
+export interface Point2 {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** A piece of stock on hand: a full sheet, an offcut of any outline, or a
+ * board. Its outline is in millimetres, counter-clockwise. */
+export interface StockPiece {
+  readonly id: string;
+  readonly name: string;
+  readonly material: string;
+  readonly kind: "sheet" | "offcut" | "board";
+  readonly outline: readonly Point2[];
+  /** The direction the grain runs on the piece. */
+  readonly grain?: "x" | "y" | "none";
+  readonly cost?: number;
+  readonly quantity?: number;
+}
+
+/** A part placed on a stock piece: its blank turned `rotation` degrees
+ * counter-clockwise (after mirroring it across its y axis when `flip`),
+ * then moved by (x, y). */
+export interface Placement {
+  readonly part: string;
+  /** Which of the part's copies, from 0. */
+  readonly copy?: number;
+  readonly x: number;
+  readonly y: number;
+  readonly rotation: number;
+  readonly flip?: boolean;
+}
+
+export interface Layout {
+  readonly id: string;
+  readonly name: string;
+  readonly stock: string;
+  /** Saw or bit width kept free between parts. */
+  readonly kerf?: number;
+  /** Kept free along the stock's edge. */
+  readonly margin?: number;
+  /** Strips narrower than this between parts are flagged. */
+  readonly minimumStrip?: number;
+  readonly placements: readonly Placement[];
+}
+
+export type ViewAngle =
+  "front" | "back" | "left" | "right" | "top" | "bottom" | "isometric";
+
+interface ViewBase {
+  readonly id: string;
+  /** Paper position of the view's centre, in mm from the top left;
+   * arranged automatically when left out. */
+  readonly at?: Point2;
+  /** Paper millimetres per model millimetre; chosen to fit when left out. */
+  readonly scale?: number;
+  /** Bodies drawn; all of them when left out. */
+  readonly bodies?: readonly string[];
+  readonly label?: string;
+}
+
+export type DrawingView =
+  | (ViewBase & {
+      readonly kind: "view";
+      readonly angle: ViewAngle | "auxiliary";
+      /** Auxiliary views: from the model toward the observer. */
+      readonly direction?: readonly [number, number, number];
+      readonly hidden?: boolean;
+    })
+  /** Cut by a plane through `origin` square to `normal`, seen from the
+   * side `normal` points to, with the material in front taken away. */
+  | (ViewBase & {
+      readonly kind: "section";
+      readonly origin: readonly [string, string, string];
+      readonly normal: readonly [number, number, number];
+    })
+  /** A circle of another view, enlarged. `center` is in that view's
+   * model millimetres (x right, y up on the paper). */
+  | (ViewBase & {
+      readonly kind: "detail";
+      readonly of: string;
+      readonly center: Point2;
+      readonly radius: number;
+    })
+  /** The bodies moved apart from the middle of the model. */
+  | (ViewBase & {
+      readonly kind: "exploded";
+      readonly distance: string;
+    })
+  /** A sheet part's blank as it is cut, with its machining. */
+  | (ViewBase & { readonly kind: "flat"; readonly part: string });
+
+export interface DrawingSheet {
+  readonly id: string;
+  readonly name: string;
+  readonly size: "A4" | "A3" | "A2" | "A1";
+  readonly views: readonly DrawingView[];
 }
 
 export interface CadDocument {
@@ -449,6 +549,9 @@ export interface CadDocument {
   readonly features: readonly Feature[];
   readonly materials?: readonly MaterialDefinition[];
   readonly parts?: readonly PartProperties[];
+  readonly stock?: readonly StockPiece[];
+  readonly layouts?: readonly Layout[];
+  readonly drawings?: readonly DrawingSheet[];
 }
 
 export function emptyDocument(): CadDocument {
@@ -622,6 +725,112 @@ function validate(document: Record<string, unknown>): void {
         fail(`${at}.thickness`, "sheet and board stock needs a thickness");
     });
   });
+  const point = (value: unknown, p: string) => {
+    if (!isObject(value)) return fail(p, "must be a point");
+    finite(value.x, `${p}.x`);
+    finite(value.y, `${p}.y`);
+  };
+  const stockIds = new Set<string>();
+  optional(document.stock, "stock", (value, p) =>
+    list(value, p).forEach((piece, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(piece)) return fail(at, "must be an object");
+      unique(stockIds, piece.id, `${at}.id`);
+      string(piece.name, `${at}.name`);
+      string(piece.material, `${at}.material`);
+      oneOf(piece.kind, `${at}.kind`, ["sheet", "offcut", "board"]);
+      const outline = list(piece.outline, `${at}.outline`);
+      if (outline.length < 3) fail(`${at}.outline`, "needs at least 3 points");
+      outline.forEach((q, j) => point(q, `${at}.outline[${j}]`));
+      optional(piece.grain, `${at}.grain`, (v, q) =>
+        oneOf(v, q, ["x", "y", "none"]),
+      );
+      optional(piece.cost, `${at}.cost`, finite);
+      optional(piece.quantity, `${at}.quantity`, finite);
+    }),
+  );
+  const layoutIds = new Set<string>();
+  optional(document.layouts, "layouts", (value, p) =>
+    list(value, p).forEach((layout, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(layout)) return fail(at, "must be an object");
+      unique(layoutIds, layout.id, `${at}.id`);
+      string(layout.name, `${at}.name`);
+      string(layout.stock, `${at}.stock`);
+      for (const key of ["kerf", "margin", "minimumStrip"])
+        optional(layout[key], `${at}.${key}`, finite);
+      list(layout.placements, `${at}.placements`).forEach((placed, j) => {
+        const q = `${at}.placements[${j}]`;
+        if (!isObject(placed)) return fail(q, "must be an object");
+        string(placed.part, `${q}.part`);
+        for (const key of ["x", "y", "rotation"])
+          finite(placed[key], `${q}.${key}`);
+        optional(placed.copy, `${q}.copy`, finite);
+        optional(placed.flip, `${q}.flip`, boolean);
+      });
+    }),
+  );
+  const sheetIds = new Set<string>();
+  optional(document.drawings, "drawings", (value, p) =>
+    list(value, p).forEach((sheet, i) => {
+      const at = `${p}[${i}]`;
+      if (!isObject(sheet)) return fail(at, "must be an object");
+      unique(sheetIds, sheet.id, `${at}.id`);
+      string(sheet.name, `${at}.name`);
+      oneOf(sheet.size, `${at}.size`, ["A4", "A3", "A2", "A1"]);
+      const viewIds = new Set<string>();
+      list(sheet.views, `${at}.views`).forEach((view, j) => {
+        const q = `${at}.views[${j}]`;
+        if (!isObject(view)) return fail(q, "must be an object");
+        unique(viewIds, view.id, `${q}.id`);
+        oneOf(view.kind, `${q}.kind`, [
+          "view",
+          "section",
+          "detail",
+          "exploded",
+          "flat",
+        ]);
+        optional(view.at, `${q}.at`, point);
+        optional(view.scale, `${q}.scale`, finite);
+        optional(view.label, `${q}.label`, string);
+        optional(view.bodies, `${q}.bodies`, (v, r) =>
+          list(v, r).forEach((id, k) => string(id, `${r}[${k}]`)),
+        );
+        const triple = (v: unknown, r: string, check: typeof finite) => {
+          const items = list(v, r);
+          if (items.length !== 3) fail(r, "must list x, y and z");
+          items.forEach((item, k) => check(item, `${r}[${k}]`));
+        };
+        if (view.kind === "view") {
+          oneOf(view.angle, `${q}.angle`, [
+            "front",
+            "back",
+            "left",
+            "right",
+            "top",
+            "bottom",
+            "isometric",
+            "auxiliary",
+          ]);
+          optional(view.direction, `${q}.direction`, (v, r) =>
+            triple(v, r, finite),
+          );
+          if (view.angle === "auxiliary" && !view.direction)
+            fail(`${q}.direction`, "an auxiliary view needs a direction");
+          optional(view.hidden, `${q}.hidden`, boolean);
+        } else if (view.kind === "section") {
+          triple(view.origin, `${q}.origin`, string);
+          triple(view.normal, `${q}.normal`, finite);
+        } else if (view.kind === "detail") {
+          string(view.of, `${q}.of`);
+          point(view.center, `${q}.center`);
+          finite(view.radius, `${q}.radius`);
+        } else if (view.kind === "exploded")
+          string(view.distance, `${q}.distance`);
+        else string(view.part, `${q}.part`);
+      });
+    }),
+  );
   optional(document.parts, "parts", (value, p) => {
     const bodies = new Set<string>();
     list(value, p).forEach((part, i) => {
@@ -632,6 +841,9 @@ function validate(document: Record<string, unknown>): void {
       optional(part.material, `${at}.material`, string);
       optional(part.stock, `${at}.stock`, (v, q) =>
         oneOf(v, q, ["auto", "sheet", "solid"]),
+      );
+      optional(part.grain, `${at}.grain`, (v, q) =>
+        oneOf(v, q, ["x", "y", "none"]),
       );
       optional(part.quantity, `${at}.quantity`, (v, q) => {
         if (!Number.isInteger(v) || (v as number) < 1)

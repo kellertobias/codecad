@@ -133,6 +133,25 @@ export function renameVariable(
     features: document.features.map((feature) =>
       mapExpressions(feature, rename),
     ),
+    ...(document.drawings
+      ? {
+          drawings: document.drawings.map((sheet) => ({
+            ...sheet,
+            views: sheet.views.map((view) =>
+              view.kind === "section"
+                ? {
+                    ...view,
+                    origin: view.origin.map(
+                      rename,
+                    ) as unknown as typeof view.origin,
+                  }
+                : view.kind === "exploded"
+                  ? { ...view, distance: rename(view.distance) }
+                  : view,
+            ),
+          })),
+        }
+      : {}),
     ...(document.materials
       ? {
           materials: document.materials.map((material) => {
