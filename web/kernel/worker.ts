@@ -17,6 +17,9 @@ import {
   type Evaluation,
 } from "../../src/kernel/evaluator.js";
 import { describeParts } from "../../src/kernel/parts.js";
+import { renderSheet } from "../../src/kernel/drawings.js";
+import { autoNest } from "../../src/kernel/layouts.js";
+import { pageSvg } from "../../src/reports.js";
 import {
   contact,
   describeContact,
@@ -53,6 +56,18 @@ self.onmessage = async (event: MessageEvent<KernelRequest>) => {
     else if (request.type === "document") document(request);
     else if (request.type === "pick-face") pickFace(request);
     else if (request.type === "pick-edge") pickEdge(request);
+    else if (request.type === "drawing") await drawing(request);
+    else if (request.type === "nest")
+      post({
+        id: request.id,
+        type: "nest",
+        ...autoNest(
+          request.layout,
+          request.piece,
+          request.parts,
+          request.others,
+        ),
+      });
     else meet(request);
   } catch (error) {
     post({
@@ -222,6 +237,28 @@ function meet(request: Extract<KernelRequest, { type: "contact" }>) {
     description: describeContact(found),
     joints: jointsFor(found),
   });
+}
+
+async function drawing(request: Extract<KernelRequest, { type: "drawing" }>) {
+  // The evaluator's cache makes this cheap for the document on screen.
+  const { bodies } = evaluator.evaluate(request.document);
+  const engine = new OpenCascadeEngine();
+  try {
+    const page = await renderSheet(
+      engine,
+      request.document,
+      bodies,
+      describeParts(request.document, bodies),
+      request.sheet,
+    );
+    post({
+      id: request.id,
+      type: "drawing",
+      svg: new TextDecoder().decode(pageSvg(page)),
+    });
+  } finally {
+    engine.dispose();
+  }
 }
 
 function heap(): { heapBytes?: number } {

@@ -1,5 +1,11 @@
 import type { Recipe } from "../../src/model.js";
-import type { CadDocument } from "../../src/document/schema.js";
+import type {
+  CadDocument,
+  DrawingSheet,
+  Layout,
+  StockPiece,
+} from "../../src/document/schema.js";
+import type { LayoutPart } from "../../src/document/layout.js";
 import type { KernelRequest, KernelResponse } from "./protocol.js";
 
 type Answer<T extends KernelResponse["type"]> = Extract<
@@ -69,6 +75,24 @@ export class KernelClient {
 
   pickEdge(body: string, edge: number): Promise<Answer<"edge">> {
     return this.send({ type: "pick-edge", body, edge });
+  }
+
+  /** A drawing sheet as SVG. */
+  drawing(
+    document: CadDocument,
+    sheet: DrawingSheet,
+  ): Promise<Answer<"drawing">> {
+    return this.send({ type: "drawing", document, sheet });
+  }
+
+  /** Fills a stock piece with the parts still to place. */
+  nest(
+    layout: Layout,
+    piece: StockPiece,
+    parts: readonly LayoutPart[],
+    others: readonly Layout[],
+  ): Promise<Answer<"nest">> {
+    return this.send({ type: "nest", layout, piece, parts, others });
   }
 
   /** How two bodies meet, and the joints that fit. */

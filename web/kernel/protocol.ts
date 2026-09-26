@@ -6,9 +6,14 @@ import type { PartInfo } from "../../src/kernel/parts.js";
 import type { Frame } from "../../src/document/frames.js";
 import type {
   CadDocument,
+  DrawingSheet,
   EdgeReference,
   FaceReference,
+  Layout,
+  Placement,
+  StockPiece,
 } from "../../src/document/schema.js";
+import type { LayoutPart } from "../../src/document/layout.js";
 
 /** Messages the page sends to the kernel worker. */
 export type KernelRequest =
@@ -32,6 +37,22 @@ export type KernelRequest =
       readonly type: "pick-edge";
       readonly body: string;
       readonly edge: number;
+    }
+  /** A drawing sheet of a document, as SVG. */
+  | {
+      readonly id: number;
+      readonly type: "drawing";
+      readonly document: CadDocument;
+      readonly sheet: DrawingSheet;
+    }
+  /** Fills a stock piece with the parts still to place. */
+  | {
+      readonly id: number;
+      readonly type: "nest";
+      readonly layout: Layout;
+      readonly piece: StockPiece;
+      readonly parts: readonly LayoutPart[];
+      readonly others: readonly Layout[];
     }
   /** How two bodies of the last evaluated model meet, and the joints
    * that fit. */
@@ -106,5 +127,12 @@ export type KernelResponse =
       /** How they meet, in words. */
       readonly description: string;
       readonly joints: readonly JointKind[];
+    }
+  | { readonly id: number; readonly type: "drawing"; readonly svg: string }
+  | {
+      readonly id: number;
+      readonly type: "nest";
+      readonly placements: readonly Placement[];
+      readonly left: readonly string[];
     }
   | { readonly id: number; readonly type: "error"; readonly message: string };

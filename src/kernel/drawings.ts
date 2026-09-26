@@ -545,29 +545,4 @@ function defaultLabel(view: DrawingView): string {
   }
 }
 
-/** A manufacturing sheet for every sheet part: its blank as cut, the part
- * itself from the front and in isometric, and what to cut it from. */
-export function partSheets(info: readonly PartInfo[]): DrawingSheet[] {
-  return info
-    .filter((part) => part.stock === "sheet")
-    .map((part) => ({
-      id: `part:${part.body}`,
-      name: `${part.name} — ${part.material?.name ?? ""} ${part.thickness} mm, ${part.quantity}×`,
-      size: "A4" as const,
-      views: [
-        {
-          id: "flat",
-          kind: "flat" as const,
-          part: part.body,
-          label: "Blank as cut",
-        },
-        {
-          id: "iso",
-          kind: "view" as const,
-          angle: "isometric" as const,
-          bodies: [part.body],
-          label: "Part",
-        },
-      ],
-    }));
-}
+export { partSheets } from "../document/sheets.js";

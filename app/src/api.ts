@@ -70,3 +70,14 @@ export const projects = {
       body: { basedOn, document },
     }),
 };
+
+/** Where the server makes a file from the saved project. */
+export const outputUrl = (
+  project: string,
+  kind: "drawing" | "layout" | "part" | "cutlist" | "bom",
+  format: "svg" | "pdf" | "dxf" | "csv",
+  target?: string,
+) =>
+  `/api/projects/${project}/outputs/${kind}?format=${format}${
+    target ? `&target=${encodeURIComponent(target)}` : ""
+  }`;

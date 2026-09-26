@@ -38,6 +38,8 @@ import {
   type SketchOverlay,
 } from "./Viewport.tsx";
 import { FeatureTree } from "./features/FeatureTree.tsx";
+import { DrawingsView } from "./DrawingsView.tsx";
+import { LayoutsView } from "./LayoutsView.tsx";
 import { FeatureEditor, type PickField } from "./features/FeatureEditor.tsx";
 
 interface Open {
@@ -76,6 +78,8 @@ export function App() {
   const [measuring, setMeasuring] = useState(false);
   const [plane, setPlane] = useState<Plane>("XY");
   const [tab, setTab] = useState<Tab>("variables");
+  /** What the main area shows. */
+  const [area, setArea] = useState<"model" | "drawings" | "layouts">("model");
   /** The face last clicked in the 3D view, for a new sketch. */
   const [face, setFace] = useState<Extract<Pick, { kind: "face" }>>();
   const [body, setBody] = useState<string>();
@@ -589,7 +593,9 @@ export function App() {
     : 0;
 
   return (
-    <div className="shell">
+    <div
+      className={`shell${open && area !== "model" && !sketch ? " wide" : ""}`}
+    >
       <header className="topbar">
         <strong>CodeCAD</strong>
         {open ? <span className="project-name">{open.name}</span> : null}
@@ -673,8 +679,44 @@ export function App() {
             </button>
           </p>
         ) : null}
+        {open && !sketch ? (
+          <nav className="areas" aria-label="Show">
+            {(
+              [
+                ["model", "Model"],
+                ["drawings", "Drawings"],
+                ["layouts", "Stock & layouts"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                className={area === key ? "active" : undefined}
+                onClick={() => setArea(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        ) : null}
         {!open ? (
           <p className="empty">Open a project or create a new one.</p>
+        ) : area === "drawings" && !sketch ? (
+          <DrawingsView
+            document={document}
+            model={model}
+            variables={solved.variables}
+            apply={change}
+            project={open.id}
+            dirty={dirty}
+          />
+        ) : area === "layouts" && !sketch ? (
+          <LayoutsView
+            document={document}
+            model={model}
+            apply={change}
+            project={open.id}
+            dirty={dirty}
+          />
         ) : sketch ? (
           <>
             <div className="mode-bar">
@@ -822,7 +864,7 @@ export function App() {
           </>
         )}
       </main>
-      {open ? (
+      {open && (area === "model" || sketch) ? (
         <aside className="inspector">
           <nav className="tabs">
             {feature ? (
