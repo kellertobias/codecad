@@ -473,7 +473,9 @@ number of views:
 - details that enlarge a circle of another view
 - exploded views, and blanks as cut.
 
-Views are placed and scaled automatically unless given a scale. The preview
+Views are placed and scaled automatically unless given a scale. A section's
+cut line, marked with its letter, is drawn on the views that see its plane
+edge-on. The preview
 follows every edit. PDF, DXF and SVG files are made by the server from the
 saved project.
 
@@ -484,9 +486,14 @@ piece: drag them, turn them by 90° or any angle, or mirror them. As parts
 move, the layout checks for parts off the piece or inside its margin,
 overlaps, gaps narrower than the kerf, strips thinner than a minimum, and
 grain running the wrong way. **Auto-nest** fills the piece with the parts
-still to place, using the guillotine nesting; on an offcut it uses the
-largest rectangles inside it. A layout downloads as one DXF with every part
-where the layout shows it.
+still to place: in rectangles cut straight through (for a panel saw; on an
+offcut, in the largest rectangles inside it), by the parts' true outlines
+(for a CNC: L-shaped parts interlock, offcuts of any outline fill up), or
+whichever places more. A layout downloads as one DXF with every part where
+the layout shows it. Give stock pieces a price and a count on hand: the
+layouts show what the stock they use costs, warn when more layouts use a
+piece than there are, and the bill of materials lists the stock with its
+cost.
 
 **Library** keeps parts and assemblies to use again, such as a hinge plate, a
 drawer runner or a leg.
@@ -506,6 +513,9 @@ drawer runner or a leg.
   library.
 - **Files:** items export to one file and import from one, with all their
   versions (`/api/library/<id>/file`).
+- **Items of items:** a project that places library items can itself be
+  saved as an item (a door with its hinge plates, a cabinet with its
+  drawers), a few levels deep. An item cannot be saved into itself.
 
 **Code parts** are library items written in TypeScript instead of drawn.
 **Library → Code part** opens an editor with the part API's types:
@@ -558,6 +568,11 @@ export default definePart({
   structure, and the geometry parsed in a worker thread with a time and
   memory limit), stores it, and builds drawings, exports and the phone
   viewer from it. It never runs the code.
+- **More than boxes:** `fillet(shape, r, ["top", "front"])` and `chamfer`
+  round or bevel the edges where the named faces meet. STEP files added to
+  the code part (hinges, handles, fittings) are placed with
+  `new Shapes.ImportedStep({ path: "hinge.step" })`; they travel with the
+  code part and its library file (4 MB at most).
 - **Using one:** a code part is inserted, placed, mated by its interfaces,
   joined and exported like any other library item. Its parameters are the
   values an instance can set. A box or an extruded profile becomes a sheet
