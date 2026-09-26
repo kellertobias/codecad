@@ -507,6 +507,67 @@ drawer runner or a leg.
 - **Files:** items export to one file and import from one, with all their
   versions (`/api/library/<id>/file`).
 
+**Code parts** are library items written in TypeScript instead of drawn.
+**Library → Code part** opens an editor with the part API's types:
+
+```ts
+import { definePart, Shapes, cut, plane } from "codecad/part";
+
+export default definePart({
+  parameters: { width: { default: 600, min: 100 }, holes: { default: 2 } },
+  build({ width, holes }) {
+    let board = new Shapes.Box({ width, depth: 250, height: 18 });
+    for (let i = 0; i < holes; i++)
+      board = cut(
+        board,
+        new Shapes.Cylinder({
+          diameter: 35,
+          length: 40,
+          x: (width * (i + 1)) / (holes + 1),
+          y: 210,
+          z: 9,
+        }),
+      );
+    return {
+      bodies: [{ name: "Shelf", shape: board }],
+      interfaces: [
+        {
+          id: "underside",
+          kind: "screw",
+          plane: plane(),
+          points: [
+            { x: 30, y: -125 },
+            { x: width - 30, y: -125 },
+          ],
+          diameter: 4,
+        },
+      ],
+    };
+  },
+});
+```
+
+- **Where code runs:** only in the editor's browser. esbuild (WebAssembly)
+  compiles it, and it runs in a Web Worker inside a sandboxed iframe: no
+  origin of its own, no network, no access to the editor's session. Code
+  that runs longer than 10 s is stopped without freezing the editor.
+- **What the server keeps:** the code returns shapes as recipes (plain data).
+  The editor's kernel builds them into exact geometry (BREP), and uploads
+  that as a result, keyed by the code and its parameter values
+  (`GET/PUT /api/code-results/<key>`). The server checks each upload (size,
+  structure, and the geometry parsed in a worker thread with a time and
+  memory limit), stores it, and builds drawings, exports and the phone
+  viewer from it. It never runs the code.
+- **Using one:** a code part is inserted, placed, mated by its interfaces,
+  joined and exported like any other library item. Its parameters are the
+  values an instance can set. A box or an extruded profile becomes a sheet
+  blank; cylinders cut square into it become drillings.
+- **Regenerating:** the code runs again only when there is no stored result
+  for its code and values: after a parameter changes, or with
+  **Regenerate**. Until an editor has made a result, exports answer `409`
+  with "needs regeneration in the editor", and the phone viewer says so.
+  Opening the project in the editor makes the missing results.
+
 **Phone viewer:** `/p/<id>/view` (the phone icon in the editor's top bar)
 shows the saved project on a phone, for the workshop. It never loads the CAD
 kernel: every save starts a server job that prebuilds the model as GLB, every
