@@ -129,6 +129,8 @@ interface Tool {
   readonly blank?: Blank;
   /** `new` tools become bodies with these ids. */
   readonly body?: string;
+  /** The part of the tool that has to reach into a body to change it. */
+  readonly probe?: b.Shape3D;
 }
 
 interface Made {
@@ -519,6 +521,10 @@ function targets(
   model: Model,
   listed: readonly string[] | undefined,
   tool: b.Shape3D,
+  operation: "add" | "cut" | "intersect",
+  /** What must really reach into a body for the tool to change it: the
+   * tool without the bit that reaches past the surface it starts on. */
+  probe: b.Shape3D = tool,
 ): Body[] {
   if (listed?.length)
     return listed.map((id) => {
@@ -527,10 +533,22 @@ function targets(
         throw new FeatureError(`The body ${id} no longer exists`, true);
       return body;
     });
-  const bounds = b.getBounds(tool);
-  return [...model.bodies.values()].filter((body) =>
+  const bounds = b.getBounds(probe);
+  const near = [...model.bodies.values()].filter((body) =>
     overlaps(b.getBounds(body.shape), bounds),
   );
+  // Material is added to what it touches; a cut only changes what it
+  // really cuts into, not a neighbour its box happens to reach.
+  if (operation === "add") return near;
+  return near.filter((body) => {
+    const common = b.intersect(body.shape, probe);
+    if (!common.ok) return true;
+    try {
+      return b.unwrap(b.measureVolume(common.value)) > 1e-6;
+    } finally {
+      common.value[Symbol.dispose]();
+    }
+  });
 }
 
 function solidCount(shape: b.Shape3D): number {
@@ -899,7 +917,13 @@ function apply(
   const operation = made.operation;
   let changed = 0;
   for (const tool of made.tools) {
-    const reached = targets(model, listed, tool.shape);
+    const reached = targets(
+      model,
+      listed,
+      tool.shape,
+      made.operation,
+      tool.probe,
+    );
     if (!reached.length) continue;
     if (operation === "add") {
       // The tool joins the first body it reaches; the other bodies it
@@ -1145,8 +1169,17 @@ function hole(feature: HoleFeature, context: Context): Result {
       ? { kind: "union", left: drill, right: headRecipe }
       : drill;
     const shape = build(context, recipe);
+    // Only what lies below the surface decides which bodies it drills.
+    const probe = build(
+      context,
+      transformRecipe(
+        { kind: "cylinder", diameter, length: depth },
+        at.clone().multiply(new Matrix4().makeTranslation(0, 0, depth / 2)),
+      ),
+    );
     return {
       shape,
+      probe,
       roles: holeRoles(shape, frame, point.id),
       machining: [
         { kind: "drill", recipe: drill, diameter, depth },
@@ -1462,6 +1495,7 @@ function repeat(
               : {}),
             ...(tool.blank ? { blank: moveBlank(tool.blank, m) } : {}),
             ...(tool.body ? { body: tool.body } : {}),
+            ...(tool.probe ? { probe: place(context, tool.probe, m) } : {}),
           };
         }),
       };

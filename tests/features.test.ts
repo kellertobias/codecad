@@ -560,3 +560,36 @@ test("a single edit on a cabinet regenerates in under 300 ms", () => {
   assert.ok(times[1]! < 300, `median ${times[1]} ms`);
   evaluator.dispose();
 });
+
+test("a hole next to a touching part leaves that part alone", () => {
+  // Shelf-pin holes in a side, one of them right at a shelf's edge: the
+  // drill reaches a hair past the side's face and so touches the shelf,
+  // which must not count as drilling it.
+  const inner = { body: "side:0", origin: "side", role: "end" } as const;
+  const evaluator = new DocumentEvaluator();
+  const result = evaluator.evaluate(
+    document({}, [
+      rectangle("side-s", "YZ", "0", "0", "300", "400"),
+      extrude("side", "side-s"),
+      rectangle("shelf-s", "YZ", "0", "150", "300", "18", { face: inner }),
+      extrude("shelf", "shelf-s", { distance: "400" }),
+      points("pins", [["100", "150"]], { plane: "YZ", face: inner }),
+      {
+        id: "pin",
+        type: "hole",
+        name: "pin",
+        sketch: "pins",
+        kind: "simple",
+        diameter: "5",
+        depth: "12",
+      },
+    ]),
+  );
+  ok(result);
+  const shelf = result.bodies.find((body) => body.id === "shelf:0")!;
+  const side = result.bodies.find((body) => body.id === "side:0")!;
+  assert.deepEqual(shelf.machining, []);
+  near(volume(shelf), 300 * 18 * 400);
+  assert.equal(side.machining.length, 1);
+  evaluator.dispose();
+});
