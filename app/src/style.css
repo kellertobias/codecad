@@ -1284,3 +1284,77 @@ dialog.shortcut-help > .hint {
 .code-status span {
   flex: 1;
 }
+
+/* Accounts and view links. */
+.sign-in {
+  max-width: 420px;
+  margin: 10vh auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sign-in h1 {
+  margin: 0;
+}
+.sign-in h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.sign-in form {
+  display: flex;
+  gap: 8px;
+}
+.sign-in form input {
+  flex: 1;
+}
+.sign-in button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.account {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.account-name {
+  color: var(--muted);
+  margin: 0 4px;
+}
+dialog.share-dialog {
+  width: min(560px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+dialog.share-dialog::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+dialog.share-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+dialog.share-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.share-links {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.share-links li {
+  display: flex;
+  gap: 4px;
+}
+.share-links input {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}

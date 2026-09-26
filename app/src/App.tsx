@@ -32,6 +32,7 @@ import {
 import { updateInstance } from "../../src/document/library.ts";
 import { LibraryView } from "./LibraryView.tsx";
 import { useCodeResults } from "./code/results.ts";
+import { AccountMenu, ShareDialog, SignIn, useAccount } from "./Account.tsx";
 import { useDocumentHistory } from "./history.ts";
 import { loadSolver } from "./solver.ts";
 import { kernel, useModel } from "./kernel.ts";
@@ -79,7 +80,16 @@ const sameEdge = (a: EdgeReference, b: EdgeReference) =>
   (sameFace(a.a, b.a) && sameFace(a.b, b.b)) ||
   (sameFace(a.a, b.b) && sameFace(a.b, b.a));
 
+/** The editor, behind sign-in when the server has accounts. */
 export function App() {
+  const state = useAccount();
+  if (!state) return <p className="empty">Loading…</p>;
+  if (state.accounts && !state.user) return <SignIn />;
+  return <Editor {...(state.user ? { user: state.user } : {})} />;
+}
+
+function Editor({ user }: { user?: { id: string; name: string } }) {
+  const [sharing, setSharing] = useState(false);
   const [list, setList] = useState<ProjectSummary[]>([]);
   const [open, setOpen] = useState<Open>();
   const [problem, setProblem] = useState<string>();
@@ -772,6 +782,13 @@ export function App() {
           disabled={!open || !dirty}
         />
         {open ? (
+          <ToolButton
+            icon="share"
+            label="View links: share the saved project, read-only"
+            onClick={() => setSharing(true)}
+          />
+        ) : null}
+        {open ? (
           <a
             className="button tool"
             href={`/p/${open.id}/view`}
@@ -789,8 +806,12 @@ export function App() {
           shortcut="help"
           onClick={() => setHelp(true)}
         />
+        {user ? <AccountMenu name={user.name} /> : null}
       </header>
       {help ? <ShortcutHelp close={() => setHelp(false)} /> : null}
+      {sharing && open ? (
+        <ShareDialog project={open.id} close={() => setSharing(false)} />
+      ) : null}
       <aside className="sidebar">
         <section>
           <header>

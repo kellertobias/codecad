@@ -15,6 +15,9 @@ import {
   keepOffline,
   loadManifest,
   manifestFiles,
+  readOnly,
+  useSource,
+  type ViewerSource,
   useOnline,
   useProgress,
   type Progress,
@@ -50,7 +53,8 @@ const remembered = (): Tab => {
 const mm = (value: number | undefined) =>
   value === undefined ? "" : String(Math.round(value * 10) / 10);
 
-export function Viewer({ project }: { project: string }) {
+export function Viewer({ source }: { source: ViewerSource }) {
+  useSource(source);
   const [manifest, setManifest] = useState<ViewerManifest>();
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<Tab>(remembered);
@@ -60,7 +64,7 @@ export function Viewer({ project }: { project: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    loadManifest(project).then(
+    loadManifest().then(
       (loaded) => {
         if (cancelled) return;
         setManifest(loaded);
@@ -76,7 +80,7 @@ export function Viewer({ project }: { project: string }) {
     return () => {
       cancelled = true;
     };
-  }, [project, online]);
+  }, [source, online]);
 
   // When the project is on screen and the tabs answer: what the "under two
   // seconds" budget is measured to.
@@ -116,6 +120,11 @@ export function Viewer({ project }: { project: string }) {
         {!online ? (
           <span className="badge offline" title="Shown from this phone">
             <Icon name="offline" size={14} /> offline
+          </span>
+        ) : null}
+        {readOnly ? (
+          <span className="badge" title="Opened with a view link">
+            view only
           </span>
         ) : null}
         {progress.pending ? (
@@ -415,6 +424,7 @@ function CutsTab({
                       <label key={key} className="copy">
                         <input
                           type="checkbox"
+                          disabled={readOnly}
                           checked={progress.done.has(key)}
                           onChange={(event) =>
                             progress.set(key, event.target.checked)
@@ -492,6 +502,7 @@ function LayoutsTab({
           <label className="copy">
             <input
               type="checkbox"
+              disabled={readOnly}
               checked={progress.done.has(copyKey(chosen.part, chosen.copy!))}
               onChange={(event) =>
                 progress.set(

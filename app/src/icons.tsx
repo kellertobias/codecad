@@ -323,6 +323,32 @@ const icons = {
       <path d="M11 18.5h2" />
     </>
   ),
+  key: (
+    <>
+      <circle cx="8" cy="15" r="4" />
+      <path d="m11 12 9-9M17 6l3 3M14 9l2 2" />
+    </>
+  ),
+  signout: (
+    <>
+      <path d="M10 4H5v16h5" />
+      <path d="M14 8l4 4-4 4M8 12h10" />
+    </>
+  ),
+  share: (
+    <>
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="18" cy="18" r="2.5" />
+      <path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof icons;

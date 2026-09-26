@@ -11,7 +11,7 @@ const filesCache = `codecad-viewer-files-${version}`;
 const dataCache = `codecad-viewer-data-${version}`;
 const caches_ = [shellCache, filesCache, dataCache];
 /** Any viewer page stands in for another offline: it routes itself. */
-const shellKey = "/p/offline-shell";
+const shellKey = `${new URL(self.registration.scope).pathname}offline-shell`;
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
@@ -25,12 +25,12 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// A project of the signed-in owner, or one shared by a view link.
+const source = String.raw`\/api\/(?:projects\/[0-9a-f-]{36}|shared\/[A-Za-z0-9_-]{32})`;
 const isRevisionFile = (path) =>
-  /^\/api\/projects\/[0-9a-f-]{36}\/viewer\/\d+\/[a-z0-9-]+\.[a-z]+$/.test(
-    path,
-  );
+  new RegExp(`^${source}\\/viewer\\/\\d+\\/[a-z0-9-]+\\.[a-z]+$`).test(path);
 const isData = (path) =>
-  /^\/api\/projects\/[0-9a-f-]{36}\/(viewer|progress\/\d+)$/.test(path) ||
+  new RegExp(`^${source}\\/(viewer|progress\\/\\d+)$`).test(path) ||
   path === "/api/session";
 
 /** The network, with a time limit so a dead wifi falls back quickly. */
@@ -76,7 +76,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== location.origin || request.method !== "GET") return;
   const path = url.pathname;
-  if (request.mode === "navigate" && /^\/p\/[0-9a-f-]{36}\/view/.test(path))
+  if (
+    request.mode === "navigate" &&
+    /^\/(p\/[0-9a-f-]{36}\/view|s\/[A-Za-z0-9_-]{32})/.test(path)
+  )
     event.respondWith(networkFirst(request, shellCache, shellKey));
   else if (path.startsWith("/app/assets/"))
     event.respondWith(cacheFirst(request, shellCache));

@@ -20,17 +20,21 @@ const forward = {
   }) => proxy.on("proxyReq", (request) => request.setHeader("origin", server)),
 };
 
-// The mobile viewer lives at /p/<id>/view with its service worker at
-// /p/sw.js, as the CodeCAD server serves it; the dev server maps both onto
-// this build's pages.
+// The mobile viewer lives at /p/<id>/view (and /s/<token> for view links)
+// with its service worker at /p/sw.js (/s/sw.js), as the CodeCAD server
+// serves it; the dev server maps them onto this build's pages.
 const viewerRoutes: Plugin = {
   name: "codecad-viewer-routes",
   configureServer(server) {
     server.middlewares.use((request, _response, next) => {
       const path = request.url?.split("?")[0] ?? "";
-      if (/^\/p\/[0-9a-f-]{36}\/view\/?$/.test(path))
+      if (
+        /^\/p\/[0-9a-f-]{36}\/view\/?$/.test(path) ||
+        /^\/s\/[A-Za-z0-9_-]{32}\/?$/.test(path)
+      )
         request.url = "/app/viewer.html";
-      else if (path === "/p/sw.js") request.url = "/app/viewer-sw.js";
+      else if (path === "/p/sw.js" || path === "/s/sw.js")
+        request.url = "/app/viewer-sw.js";
       next();
     });
   },

@@ -4,11 +4,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ViewerManifest } from "../../../src/document/viewer.ts";
 
-export const fileUrl = (manifest: ViewerManifest, name: string) =>
-  `/api/projects/${manifest.project}/viewer/${manifest.revision}/${name}`;
+/** What the viewer shows: one of the signed-in owner's projects, or a
+ * project shared by a view link (read-only, no account needed). */
+export type ViewerSource =
+  | { readonly kind: "project"; readonly id: string }
+  | { readonly kind: "shared"; readonly token: string };
 
-export async function loadManifest(project: string): Promise<ViewerManifest> {
-  const response = await fetch(`/api/projects/${project}/viewer`);
+let base = "";
+let scope = "/p/";
+/** A view link: nothing can be ticked off. */
+export let readOnly = false;
+
+export function useSource(source: ViewerSource): void {
+  base =
+    source.kind === "project"
+      ? `/api/projects/${source.id}`
+      : `/api/shared/${source.token}`;
+  scope = source.kind === "project" ? "/p/" : "/s/";
+  readOnly = source.kind === "shared";
+}
+
+export const fileUrl = (manifest: ViewerManifest, name: string) =>
+  `${base}/viewer/${manifest.revision}/${name}`;
+
+export async function loadManifest(): Promise<ViewerManifest> {
+  const response = await fetch(`${base}/viewer`);
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as {
       error?: string;
@@ -99,7 +119,7 @@ export interface Progress {
  * server as soon as it can be, and merged with what others ticked. */
 export function useProgress(manifest: ViewerManifest | undefined): Progress {
   const storageKey = manifest
-    ? `codecad-progress:${manifest.project}:${manifest.revision}`
+    ? `codecad-progress:${base}:${manifest.revision}`
     : undefined;
   const [state, setState] = useState<Stored>({ done: [], queue: [] });
   const sending = useRef(false);
@@ -117,9 +137,9 @@ export function useProgress(manifest: ViewerManifest | undefined): Progress {
     if (!manifest || !storageKey || sending.current) return;
     sending.current = true;
     let more = false;
-    const path = `/api/projects/${manifest.project}/progress/${manifest.revision}`;
+    const path = `${base}/progress/${manifest.revision}`;
     try {
-      const queue = read(storageKey).queue;
+      const queue = readOnly ? [] : read(storageKey).queue;
       let done: string[];
       if (queue.length) {
         const post = async (fresh: boolean) =>
@@ -168,7 +188,7 @@ export function useProgress(manifest: ViewerManifest | undefined): Progress {
     done,
     pending: state.queue.length,
     set(key, value) {
-      if (!storageKey) return;
+      if (!storageKey || readOnly) return;
       const current = read(storageKey);
       const queue = [...current.queue, { key, done: value }];
       store({
@@ -186,7 +206,7 @@ export function useProgress(manifest: ViewerManifest | undefined): Progress {
 export async function keepOffline(urls: readonly string[]): Promise<void> {
   if (!("serviceWorker" in navigator)) return;
   try {
-    await navigator.serviceWorker.register("/p/sw.js", { scope: "/p/" });
+    await navigator.serviceWorker.register(`${scope}sw.js`, { scope });
     const registration = await navigator.serviceWorker.ready;
     const loaded = performance
       .getEntriesByType("resource")
