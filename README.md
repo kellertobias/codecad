@@ -360,7 +360,9 @@ npm run app:build  # or build it once; the server then serves /app/
   be grouped.
 - Renaming a variable renames every use of it.
 
-**Sketches** are drawn on the XY, XZ or YZ plane.
+**Sketches** are drawn on the XY, XZ or YZ plane, or on a flat face of a
+body: click the face in the 3D view, then **Sketch on face**. The face's edges
+are drawn in the sketch as dashed reference lines, and points snap to them.
 
 - **Tools:**
   - Line (L), Rectangle (R), Circle (C), Arc (A) and Slot (S) draw geometry.
@@ -384,6 +386,40 @@ npm run app:build  # or build it once; the server then serves /app/
   holes; these are the profiles a later extrude will use.
 - **Keys:** Ctrl/⌘+Z and Shift+Ctrl/⌘+Z undo and redo any change, to variables
   or sketches alike, and Ctrl/⌘+S saves.
+
+**Bodies** come from features, which are built in the order the feature list
+shows. The toolbar above the 3D view adds them where the rollback bar is:
+
+- **Extrude** sweeps regions of a sketch. It can make new bodies (one per
+  region), add to bodies, cut them, or keep only the overlap. It goes a
+  distance, symmetrically both ways, through everything, or up to a picked
+  face.
+- **Hole** drills at the points of a sketch that belong to no line or curve:
+  simple, counterbored or countersunk, to a depth or through.
+- **Fillet** and **Chamfer** round or bevel edges picked in the 3D view.
+  **Shell** hollows a body, leaving the picked faces open.
+- **Pattern** repeats extrudes, holes or whole bodies in a row or around an
+  axis, and **Mirror** repeats them across a plane.
+
+Every number is an expression, so features follow the variables. Faces and
+edges are remembered by the feature and the sketch line that made them (the
+face swept by line `l3` of an extrude, the top of a cut), not by position:
+after a dimension changes, a sketch on a face stays on that face. A face that
+no longer exists is never replaced by another one. The feature that used it
+shows "broken reference" instead, and you pick the face again.
+
+- **Feature list:** select a feature to edit its form, double-click a sketch to
+  draw in it, move features up or down (a feature cannot move before what it
+  uses), suppress them, or roll back to one. Only the features after an edit
+  are rebuilt.
+- **Measure** gives the distance or angle between two points, edges or faces.
+- **Parts:** each body is a part with a name, a quantity, a material and a
+  stock kind. Add the sheet materials you have under **Materials**. A body
+  extruded exactly as deep as a sheet material is thick is sheet stock without
+  being told, and so is a rectangular panel drawn edge-on whose other side has
+  that thickness. Sheet parts go through the cut list, nesting and DXF output:
+  holes become circles on drill layers, and pockets become contours at their
+  depth.
 
 The CAD kernel runs in the browser, in a Web Worker. `/kernel-probe` shows
 how long it takes to load and build a part on the current machine. The API
@@ -1067,7 +1103,10 @@ measured or supplier STEP geometry and mounting dimensions for your hardware.
 - `src/manufacturing.ts`: cut lists, nesting, DXF.
 - `src/drawing.ts`, `exporters.ts`: projections, PDF, glTF and clearance results.
 - `src/server.ts`, `worker.ts`: local server and isolated rebuild/export process.
-- `web/`: editor, Three.js viewer, registry, output browser.
+- `src/document/`: the browser editor's document: schema, expressions, variables, sketch solving, profiles, feature-list edits.
+- `src/kernel/`: the document evaluator (features into bodies, stable face names) and bodies as parts.
+- `app/`: the browser editor.
+- `web/`: editor, Three.js viewer, registry, output browser, and the kernel worker.
 - `tests/`: numerical geometry, construction semantics and export integration checks.
 
 ## Dependencies
