@@ -4,11 +4,20 @@ import {
   emptyDocument,
   readDocument,
   type CadDocument,
+  type EdgeReference,
+  type FaceReference,
+  type Feature,
   type Plane,
   type SketchFeature,
 } from "../../src/document/schema.ts";
 import { evaluateVariables } from "../../src/document/variables.ts";
-import { newId, solveDocument } from "../../src/document/sketch-edit.ts";
+import { solveDocument } from "../../src/document/sketch-edit.ts";
+import { detectProfiles } from "../../src/document/profiles.ts";
+import {
+  insertFeature,
+  newFeatureId,
+  nextName,
+} from "../../src/document/features.ts";
 import type {
   SketchSolution,
   SketchSolver,
@@ -16,8 +25,20 @@ import type {
 import { Conflict, projects, type ProjectSummary } from "./api.ts";
 import { useDocumentHistory } from "./history.ts";
 import { loadSolver } from "./solver.ts";
+import { kernel, useModel } from "./kernel.ts";
 import { VariablesPanel } from "./VariablesPanel.tsx";
+import { PartsPanel } from "./PartsPanel.tsx";
 import { SketchEditor } from "./sketch/SketchEditor.tsx";
+import { sketchSegments } from "./sketch/geometry.ts";
+import {
+  Viewport,
+  type Highlight,
+  type Pick,
+  type PickMode,
+  type SketchOverlay,
+} from "./Viewport.tsx";
+import { FeatureTree } from "./features/FeatureTree.tsx";
+import { FeatureEditor, type PickField } from "./features/FeatureEditor.tsx";
 
 interface Open {
   readonly id: string;
@@ -27,23 +48,18 @@ interface Open {
   readonly saved: string;
 }
 
-const newSketch = (document: CadDocument, plane: Plane): SketchFeature => {
-  let n = document.features.length + 1;
-  while (document.features.some((f) => f.name === `Sketch ${n}`)) n++;
-  return {
-    id: newId("s"),
-    type: "sketch",
-    name: `Sketch ${n}`,
-    plane,
-    entities: [],
-    constraints: [],
-  };
-};
-
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLInputElement ||
   target instanceof HTMLTextAreaElement ||
   target instanceof HTMLSelectElement;
+
+type Tab = "feature" | "variables" | "parts";
+
+const sameFace = (a: FaceReference, b: FaceReference) =>
+  a.body === b.body && a.origin === b.origin && a.role === b.role;
+const sameEdge = (a: EdgeReference, b: EdgeReference) =>
+  (sameFace(a.a, b.a) && sameFace(a.b, b.b)) ||
+  (sameFace(a.a, b.b) && sameFace(a.b, b.a));
 
 export function App() {
   const [list, setList] = useState<ProjectSummary[]>([]);
@@ -51,8 +67,18 @@ export function App() {
   const [problem, setProblem] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [solver, setSolver] = useState<SketchSolver>();
-  const [active, setActive] = useState<string>();
+  /** The feature shown in the inspector. */
+  const [selected, setSelected] = useState<string>();
+  /** The sketch open in the sketch editor. */
+  const [sketching, setSketching] = useState<string>();
+  const [rollbackAt, setRollback] = useState<number>();
+  const [picking, setPicking] = useState<PickField>();
+  const [measuring, setMeasuring] = useState(false);
   const [plane, setPlane] = useState<Plane>("XY");
+  const [tab, setTab] = useState<Tab>("variables");
+  /** The face last clicked in the 3D view, for a new sketch. */
+  const [face, setFace] = useState<Extract<Pick, { kind: "face" }>>();
+  const [body, setBody] = useState<string>();
   const history = useDocumentHistory<CadDocument>(emptyDocument());
   const document = history.current;
 
@@ -93,6 +119,22 @@ export function App() {
     [document, solver],
   );
 
+  const features = document.features;
+  const rollback =
+    rollbackAt === undefined || rollbackAt >= features.length - 1
+      ? undefined
+      : rollbackAt;
+  const selectedIndex = features.findIndex((f) => f.id === selected);
+  const feature = features[selectedIndex];
+  // While picking a reference for a feature, show the model as it is
+  // before that feature: its references can only name what came before.
+  const until = picking && selectedIndex >= 0 ? selectedIndex - 1 : rollback;
+  const {
+    model,
+    busy,
+    error: kernelError,
+  } = useModel(open && solver ? document : undefined, until);
+
   const dirty = open !== undefined && JSON.stringify(document) !== open.saved;
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -102,10 +144,19 @@ export function App() {
     return () => removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  const forget = () => {
+    setSelected(undefined);
+    setSketching(undefined);
+    setRollback(undefined);
+    setPicking(undefined);
+    setFace(undefined);
+    setBody(undefined);
+  };
   const load = async (id: string) => {
     if (dirty && !confirm("Discard the unsaved changes to this project?"))
       return;
     const project = await projects.get<unknown>(id);
+    forget();
     try {
       const loaded = solve(readDocument(project.document));
       history.reset(loaded);
@@ -115,7 +166,6 @@ export function App() {
         revision: project.revision,
         saved: JSON.stringify(loaded),
       });
-      setActive(loaded.features[0]?.id);
       setProblem(undefined);
       setMessage(undefined);
     } catch (error) {
@@ -126,7 +176,6 @@ export function App() {
         revision: project.revision,
         saved: "",
       });
-      setActive(undefined);
       setMessage(undefined);
       setProblem(
         error instanceof DocumentError
@@ -136,11 +185,10 @@ export function App() {
     }
   };
   const create = async () => {
-    const start = emptyDocument();
-    const project = await projects.create(`Project ${list.length + 1}`, {
-      ...start,
-      features: [newSketch(start, "XY")],
-    });
+    const project = await projects.create(
+      `Project ${list.length + 1}`,
+      emptyDocument(),
+    );
     await refresh();
     await load(project.id);
   };
@@ -166,9 +214,13 @@ export function App() {
   }, [open, document, refresh]);
 
   // Undo, redo and save from the keyboard, unless a field is being typed in
-  // (fields keep their own undo).
+  // (fields keep their own undo). Escape ends picking and measuring.
   useEffect(() => {
     const keys = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isTyping(event.target)) {
+        setPicking(undefined);
+        setMeasuring(false);
+      }
       if (!(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
       if (key === "s") {
@@ -184,10 +236,7 @@ export function App() {
     return () => removeEventListener("keydown", keys);
   }, [history, save]);
 
-  const sketch = document.features.find(
-    (f): f is SketchFeature => f.id === active && f.type === "sketch",
-  );
-  const editSketch = (next: SketchFeature, merge?: string) =>
+  const replace = (next: Feature, merge?: string) =>
     change(
       (d) => ({
         ...d,
@@ -195,6 +244,9 @@ export function App() {
       }),
       merge,
     );
+  const sketch = features.find(
+    (f): f is SketchFeature => f.id === sketching && f.type === "sketch",
+  );
   const drag = (point: string, x: number, y: number, session: string) => {
     if (!solver || !sketch) return;
     history.apply(
@@ -203,6 +255,236 @@ export function App() {
       `drag:${session}`,
     );
   };
+
+  /** Adds a feature at the rollback bar and selects it. */
+  const add = <F extends Feature>(
+    type: F["type"],
+    make: (id: string, name: string) => F,
+  ): F => {
+    const next = make(newFeatureId(document, type), nextName(document, type));
+    change((d) => insertFeature(d, next, rollback));
+    if (rollback !== undefined) setRollback(rollback + 1);
+    setSelected(next.id);
+    setTab("feature");
+    return next;
+  };
+  /** The sketch a new extrude or hole uses: the selected one, or the last
+   * one before the rollback bar. */
+  const baseSketch = () => {
+    if (feature?.type === "sketch") return feature;
+    const upTo = rollback ?? features.length - 1;
+    return features
+      .slice(0, upTo + 1)
+      .reverse()
+      .find((f): f is SketchFeature => f.type === "sketch");
+  };
+
+  const newSketch = async () => {
+    let on: FaceReference | undefined;
+    if (face) {
+      try {
+        const answer = await kernel().pickFace(face.body, face.face);
+        if (!answer.planar) return setMessage("Sketches go on flat faces.");
+        if (!answer.ref) return setMessage(answer.reason);
+        on = answer.ref;
+      } catch (error) {
+        return setMessage(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    const created = add("sketch", (id, name) => ({
+      id,
+      type: "sketch",
+      name,
+      plane,
+      ...(on ? { face: on } : {}),
+      entities: [],
+      constraints: [],
+    }));
+    setFace(undefined);
+    setSketching(created.id);
+  };
+  const newExtrude = () => {
+    const from = baseSketch();
+    if (!from) return setMessage("Draw a sketch first.");
+    const regions = [...detectProfiles(from).regions]
+      .sort((p, q) => (p.id < q.id ? -1 : 1))
+      .map((r) => r.id);
+    add("extrude", (id, name) => ({
+      id,
+      type: "extrude",
+      name,
+      sketch: from.id,
+      ...(regions.length ? { regions } : {}),
+      extent: "blind",
+      // On a face, the usual next step is a pocket into it.
+      ...(from.face
+        ? { operation: "cut", distance: "5", reverse: true }
+        : { operation: "new", distance: "18" }),
+    }));
+  };
+  const newHole = () => {
+    const from = baseSketch();
+    if (!from) return setMessage("Draw a sketch with points first.");
+    add("hole", (id, name) => ({
+      id,
+      type: "hole",
+      name,
+      sketch: from.id,
+      kind: "simple",
+      diameter: "5",
+    }));
+  };
+  const newRound = (type: "fillet" | "chamfer") => {
+    if (type === "fillet")
+      add("fillet", (id, name) => ({
+        id,
+        type,
+        name,
+        edges: [],
+        radius: "3",
+      }));
+    else
+      add("chamfer", (id, name) => ({
+        id,
+        type,
+        name,
+        edges: [],
+        distance: "2",
+      }));
+    setPicking("edges");
+  };
+  const newShell = () => {
+    add("shell", (id, name) => ({
+      id,
+      type: "shell",
+      name,
+      faces: [],
+      thickness: "3",
+    }));
+    setPicking("faces");
+  };
+  const newRepeat = (type: "pattern" | "mirror") => {
+    const repeat =
+      feature?.type === "extrude" || feature?.type === "hole"
+        ? [feature.id]
+        : [];
+    const chosen = body ?? face?.body;
+    const bodies = chosen ? { bodies: [chosen] } : {};
+    if (type === "pattern")
+      add("pattern", (id, name) => ({
+        id,
+        type,
+        name,
+        kind: "linear",
+        axis: "X",
+        count: "3",
+        spacing: "32",
+        features: repeat,
+        ...bodies,
+      }));
+    else
+      add("mirror", (id, name) => ({
+        id,
+        type,
+        name,
+        plane: "YZ",
+        features: repeat,
+        ...bodies,
+      }));
+  };
+
+  /** A click in the 3D view: fills the field being picked, or selects. */
+  const onPick = async (pick: Pick | undefined) => {
+    if (!picking || !feature) {
+      // A click selects a face; the body highlight is the parts list's.
+      setFace(pick?.kind === "face" ? pick : undefined);
+      setBody(undefined);
+      return;
+    }
+    try {
+      if (picking === "edges") {
+        if (pick?.kind !== "edge") return;
+        if (feature.type !== "fillet" && feature.type !== "chamfer") return;
+        const answer = await kernel().pickEdge(pick.body, pick.edge);
+        if (!answer.ref) return setMessage(answer.reason);
+        const ref = answer.ref;
+        replace({
+          ...feature,
+          edges: feature.edges.some((e) => sameEdge(e, ref))
+            ? feature.edges.filter((e) => !sameEdge(e, ref))
+            : [...feature.edges, ref],
+        });
+        setMessage(undefined);
+        return;
+      }
+      if (pick?.kind !== "face") return;
+      const answer = await kernel().pickFace(pick.body, pick.face);
+      if (!answer.ref) return setMessage(answer.reason);
+      const ref = answer.ref;
+      if (picking === "faces" && feature.type === "shell")
+        replace({
+          ...feature,
+          faces: feature.faces.some((f) => sameFace(f, ref))
+            ? feature.faces.filter((f) => !sameFace(f, ref))
+            : [...feature.faces, ref],
+        });
+      else if (picking === "upTo" && feature.type === "extrude") {
+        if (!answer.planar) return setMessage("Extrude up to a flat face.");
+        replace({ ...feature, upTo: ref });
+        setPicking(undefined);
+      } else if (picking === "face" && feature.type === "sketch") {
+        if (!answer.planar) return setMessage("Sketches go on flat faces.");
+        replace({ ...feature, face: ref });
+        setPicking(undefined);
+      }
+      setMessage(undefined);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const mode: PickMode = measuring
+    ? "measure"
+    : picking === "edges"
+      ? "edge"
+      : "face";
+  const highlight = useMemo((): Highlight => {
+    const faces = new Map<string, Set<number>>();
+    if (face && !picking) faces.set(face.body, new Set([face.face]));
+    return {
+      faces,
+      ...(body && !face && !picking ? { bodies: new Set([body]) } : {}),
+    };
+  }, [face, body, picking]);
+
+  // Sketches shown in 3D: the selected one, and those nothing uses yet.
+  const overlays = useMemo((): SketchOverlay[] => {
+    if (!model) return [];
+    const used = new Set(
+      features.flatMap((f) =>
+        f.type === "extrude" || f.type === "hole" ? [f.sketch] : [],
+      ),
+    );
+    return features.flatMap((f) => {
+      if (f.type !== "sketch") return [];
+      const frame = model.frames.get(f.id);
+      if (!frame || (used.has(f.id) && f.id !== selected)) return [];
+      return [
+        {
+          id: f.id,
+          frame,
+          segments: sketchSegments(f),
+          active: f.id === selected,
+        },
+      ];
+    });
+  }, [model, features, selected]);
+
+  const failed = model
+    ? [...model.status.values()].filter((s) => s.state === "error").length
+    : 0;
 
   return (
     <div className="shell">
@@ -256,156 +538,200 @@ export function App() {
         {open ? (
           <section>
             <header>
-              <h2>Sketches</h2>
+              <h2>Features</h2>
+            </header>
+            <FeatureTree
+              document={document}
+              status={model?.status}
+              selected={selected}
+              rollback={rollback}
+              select={(id) => {
+                setSelected(id);
+                setPicking(undefined);
+                setTab("feature");
+              }}
+              open={(id) => {
+                setSelected(id);
+                setSketching(id);
+              }}
+              setRollback={setRollback}
+              apply={change}
+              report={setMessage}
+            />
+          </section>
+        ) : null}
+      </aside>
+      <main>
+        {problem ? <p className="banner error">{problem}</p> : null}
+        {message ? (
+          <p className="banner">
+            {message}{" "}
+            <button className="link" onClick={() => setMessage(undefined)}>
+              dismiss
+            </button>
+          </p>
+        ) : null}
+        {!open ? (
+          <p className="empty">Open a project or create a new one.</p>
+        ) : sketch ? (
+          <>
+            <div className="mode-bar">
+              <strong>{sketch.name}</strong>
+              <span className="hint">
+                {sketch.face ? "on a face" : `${sketch.plane} plane`}
+              </span>
+              <span className="spacer" />
+              <button
+                className="primary"
+                onClick={() => setSketching(undefined)}
+              >
+                Close sketch
+              </button>
+            </div>
+            <SketchEditor
+              sketch={sketch}
+              solution={solved.solutions.get(sketch.id)}
+              variables={solved.variables}
+              edit={(next, merge) => replace(next, merge)}
+              drag={drag}
+              reference={model?.projections.get(sketch.id)}
+            />
+          </>
+        ) : (
+          <>
+            <div className="model-toolbar">
               <select
                 aria-label="Plane for a new sketch"
                 value={plane}
                 onChange={(event) => setPlane(event.target.value as Plane)}
+                disabled={!!face}
               >
                 <option value="XY">XY (top)</option>
                 <option value="XZ">XZ (front)</option>
                 <option value="YZ">YZ (side)</option>
               </select>
               <button
-                onClick={() => {
-                  const created = newSketch(document, plane);
-                  change((d) => ({ ...d, features: [...d.features, created] }));
-                  setActive(created.id);
-                }}
+                onClick={() => void newSketch()}
+                title="A new sketch on the selected face, or on the plane"
               >
-                New
+                {face ? "Sketch on face" : "Sketch"}
               </button>
-            </header>
-            <ul className="list">
-              {document.features.flatMap((feature) =>
-                feature.type !== "sketch"
-                  ? []
-                  : [
-                      <FeatureRow
-                        key={feature.id}
-                        feature={feature}
-                        current={feature.id === active}
-                        solution={solved.solutions.get(feature.id)}
-                        open={() => setActive(feature.id)}
-                        rename={(name) =>
-                          change((d) => ({
-                            ...d,
-                            features: d.features.map((f) =>
-                              f.id === feature.id ? { ...f, name } : f,
-                            ),
-                          }))
-                        }
-                        remove={() =>
-                          change((d) => ({
-                            ...d,
-                            features: d.features.filter(
-                              (f) => f.id !== feature.id,
-                            ),
-                          }))
-                        }
-                      />,
-                    ],
-              )}
-            </ul>
-          </section>
-        ) : null}
-      </aside>
-      <main>
-        {problem ? <p className="banner error">{problem}</p> : null}
-        {message ? <p className="banner">{message}</p> : null}
-        {!open ? (
-          <p className="empty">Open a project or create a new one.</p>
-        ) : !sketch ? (
-          <p className="empty">Choose a sketch, or create one.</p>
-        ) : (
-          <SketchEditor
-            sketch={sketch}
-            solution={solved.solutions.get(sketch.id)}
-            variables={solved.variables}
-            edit={editSketch}
-            drag={drag}
-          />
+              <span className="separator" />
+              <button onClick={newExtrude}>Extrude</button>
+              <button onClick={newHole}>Hole</button>
+              <button onClick={() => newRound("fillet")}>Fillet</button>
+              <button onClick={() => newRound("chamfer")}>Chamfer</button>
+              <button onClick={newShell}>Shell</button>
+              <button onClick={() => newRepeat("pattern")}>Pattern</button>
+              <button onClick={() => newRepeat("mirror")}>Mirror</button>
+              <span className="separator" />
+              <button
+                className={measuring ? "active" : undefined}
+                onClick={() => setMeasuring((m) => !m)}
+              >
+                Measure
+              </button>
+            </div>
+            <Viewport
+              bodies={model?.bodies ?? []}
+              sketches={overlays}
+              mode={mode}
+              highlight={highlight}
+              onPick={(pick) => void onPick(pick)}
+            />
+            <div className="model-status">
+              {picking ? (
+                <span className="ok">
+                  Click {picking === "edges" ? "edges" : "a face"} in the view
+                  {until !== undefined && until < features.length - 1
+                    ? " (the model is shown as it is before this feature)"
+                    : ""}
+                  . Esc ends.
+                </span>
+              ) : face ? (
+                <span>
+                  Face selected: “Sketch on face” starts a sketch there.
+                </span>
+              ) : null}
+              <span className="spacer" />
+              {kernelError ? (
+                <span className="error">{kernelError}</span>
+              ) : null}
+              {failed ? (
+                <span className="error">
+                  {failed} feature{failed === 1 ? "" : "s"} failed
+                </span>
+              ) : null}
+              <span className="hint">
+                {busy
+                  ? "Building…"
+                  : model
+                    ? `${model.bodies.length} bod${model.bodies.length === 1 ? "y" : "ies"} · ${Math.round(model.ms)} ms`
+                    : "Loading the kernel…"}
+              </span>
+            </div>
+          </>
         )}
       </main>
       {open ? (
         <aside className="inspector">
-          <VariablesPanel
-            document={document}
-            values={solved.variables}
-            apply={change}
-          />
+          <nav className="tabs">
+            {feature ? (
+              <button
+                className={tab === "feature" ? "active" : undefined}
+                onClick={() => setTab("feature")}
+              >
+                {feature.name}
+              </button>
+            ) : null}
+            <button
+              className={tab === "variables" ? "active" : undefined}
+              onClick={() => setTab("variables")}
+            >
+              Variables
+            </button>
+            <button
+              className={tab === "parts" ? "active" : undefined}
+              onClick={() => setTab("parts")}
+            >
+              Parts
+            </button>
+          </nav>
+          {tab === "feature" && feature ? (
+            <FeatureEditor
+              document={document}
+              feature={feature}
+              status={model?.status.get(feature.id)}
+              variables={solved.variables}
+              model={model}
+              picking={picking}
+              setPicking={setPicking}
+              update={replace}
+              editSketch={(id) => setSketching(id)}
+              close={() => {
+                setSelected(undefined);
+                setPicking(undefined);
+                setTab("variables");
+              }}
+            />
+          ) : tab === "parts" ? (
+            <PartsPanel
+              document={document}
+              model={model}
+              variables={solved.variables}
+              apply={change}
+              selected={body}
+              select={setBody}
+            />
+          ) : (
+            <VariablesPanel
+              document={document}
+              values={solved.variables}
+              apply={change}
+            />
+          )}
         </aside>
       ) : null}
     </div>
-  );
-}
-
-function FeatureRow({
-  feature,
-  current,
-  solution,
-  open,
-  rename,
-  remove,
-}: {
-  feature: SketchFeature;
-  current: boolean;
-  solution: SketchSolution | undefined;
-  open: () => void;
-  rename: (name: string) => void;
-  remove: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const state = !solution
-    ? ""
-    : solution.status === "failed" || solution.conflicting.length
-      ? "problem"
-      : solution.dof === 0
-        ? "constrained"
-        : "";
-  return (
-    <li>
-      {editing ? (
-        <input
-          autoFocus
-          aria-label="Sketch name"
-          defaultValue={feature.name}
-          onBlur={(event) => {
-            setEditing(false);
-            if (event.target.value.trim()) rename(event.target.value.trim());
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-            if (event.key === "Escape") setEditing(false);
-          }}
-        />
-      ) : (
-        <button
-          className={`${current ? "current" : ""} ${state}`}
-          onClick={open}
-          onDoubleClick={() => setEditing(true)}
-          title="Double-click to rename"
-        >
-          {feature.name}
-          <small>
-            {feature.plane} ·{" "}
-            {!solution
-              ? "…"
-              : state === "problem"
-                ? "needs attention"
-                : solution.dof === 0
-                  ? "fully constrained"
-                  : `${solution.dof} free`}
-          </small>
-        </button>
-      )}
-      <button
-        className="icon"
-        aria-label={`Delete ${feature.name}`}
-        onClick={remove}
-      >
-        ×
-      </button>
-    </li>
   );
 }

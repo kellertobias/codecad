@@ -9,7 +9,7 @@
 import { Matrix4 } from "three";
 import { Assembly, Shapes, construction, type Recipe } from "../model.js";
 import { SheetMaterial, SheetPart } from "../stock.js";
-import { frameMatrix } from "../document/frames.js";
+import { cross, frameMatrix, normalize, toWorld } from "../document/frames.js";
 import type {
   CadDocument,
   MaterialDefinition,
@@ -20,7 +20,7 @@ import {
   evaluateWith,
   type VariableValues,
 } from "../document/variables.js";
-import type { Body } from "./evaluator.js";
+import type { Blank, Body } from "./evaluator.js";
 
 export type BodyShape = Pick<
   Body,
@@ -33,14 +33,69 @@ export interface PartInfo {
   readonly quantity: number;
   readonly material?: MaterialDefinition;
   readonly stock: "sheet" | "solid";
-  /** Sheet parts: the material's thickness. */
+  /** Sheet parts: the material's thickness, and the blank's size. */
   readonly thickness?: number;
+  readonly width?: number;
+  readonly height?: number;
   /** Why a body set to sheet stock is not one, or why its DXF would miss
    * something. */
   readonly problem?: string;
 }
 
 const close = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+
+/** The blank as a sheet `thickness` thick: as it is when it was extruded
+ * that deep, or turned on its edge when it is a rectangle one of whose
+ * sides is that long (a panel sketched edge-on and extruded across). */
+export function sheetBlank(blank: Blank, thickness: number): Blank | undefined {
+  if (close(blank.depth, thickness)) return blank;
+  const o = blank.outline;
+  if (o.length !== 4 || blank.openings.length || blank.curved) return undefined;
+  const side = (i: number) => ({
+    x: o[(i + 1) % 4]!.x - o[i % 4]!.x,
+    y: o[(i + 1) % 4]!.y - o[i % 4]!.y,
+  });
+  for (let i = 0; i < 4; i++) {
+    const a = side(i);
+    const b = side(i + 1);
+    if (Math.abs(a.x * b.x + a.y * b.y) > 1e-6 * Math.hypot(a.x, a.y, b.x, b.y))
+      return undefined;
+  }
+  for (let i = 0; i < 2; i++) {
+    const along = side(i);
+    const across = side(i + 1);
+    if (!close(Math.hypot(across.x, across.y), thickness)) continue;
+    // The panel lies in the plane of `along` and the extrude direction.
+    // The outline runs counter-clockwise, so `across` is normal × `along`
+    // and the new normal, along × normal, points back across the
+    // rectangle: the far side is where the new blank starts.
+    const f = blank.frame;
+    const x = normalize([
+      f.x[0] * along.x + f.y[0] * along.y,
+      f.x[1] * along.x + f.y[1] * along.y,
+      f.x[2] * along.x + f.y[2] * along.y,
+    ]);
+    const far = o[(i + 3) % 4]!;
+    return {
+      frame: {
+        origin: toWorld(f, far.x, far.y),
+        x,
+        y: f.normal,
+        normal: cross(x, f.normal),
+      },
+      depth: thickness,
+      outline: [
+        { x: 0, y: 0 },
+        { x: Math.hypot(along.x, along.y), y: 0 },
+        { x: Math.hypot(along.x, along.y), y: blank.depth },
+        { x: 0, y: blank.depth },
+      ],
+      openings: [],
+      curved: false,
+    };
+  }
+  return undefined;
+}
 
 function thicknessOf(
   material: MaterialDefinition,
@@ -72,12 +127,13 @@ export function describeParts(
     let material = props?.material
       ? materials.find((m) => m.id === props.material)
       : undefined;
-    // With no material chosen, a blank takes the first sheet material
-    // exactly as thick as it is deep.
-    if (!props?.material && stock !== "solid" && depth !== undefined)
+    // With no material chosen, a blank takes the first sheet material it
+    // can be cut from: one as thick as the blank is deep, or as a
+    // rectangular blank's side is long.
+    if (!props?.material && stock !== "solid" && body.blank)
       material = materials.find((m) => {
         const t = thicknessOf(m, variables);
-        return t !== undefined && close(t, depth);
+        return t !== undefined && !!sheetBlank(body.blank!, t);
       });
     const thickness = material && thicknessOf(material, variables);
     const base = {
@@ -86,11 +142,13 @@ export function describeParts(
       quantity: props?.quantity ?? 1,
       ...(material ? { material } : {}),
     };
-    const fits =
-      thickness !== undefined && depth !== undefined && close(thickness, depth);
-    if (stock === "solid" || (stock === "auto" && !fits))
+    const blank =
+      thickness !== undefined && body.blank
+        ? sheetBlank(body.blank, thickness)
+        : undefined;
+    if (stock === "solid" || (stock === "auto" && !blank))
       return { ...base, stock: "solid" as const };
-    if (!fits)
+    if (!blank || thickness === undefined)
       return {
         ...base,
         stock: "solid" as const,
@@ -102,10 +160,14 @@ export function describeParts(
               ? `${material.name} has no thickness`
               : `It is ${round(depth!)} mm deep, but ${material.name} is ${round(thickness)} mm thick`,
       };
+    const xs = blank.outline.map((p) => p.x);
+    const ys = blank.outline.map((p) => p.y);
     return {
       ...base,
       stock: "sheet" as const,
       thickness,
+      width: round(Math.max(...xs) - Math.min(...xs)),
+      height: round(Math.max(...ys) - Math.min(...ys)),
       ...(body.irregular
         ? {
             problem: `Its DXF shows the blank and its cuts only: ${body.irregular}`,
@@ -169,7 +231,7 @@ export function sheetProject(
     for (const part of info) {
       if (part.stock !== "sheet") continue;
       const body = byId.get(part.body)!;
-      const blank = body.blank!;
+      const blank = sheetBlank(body.blank!, part.thickness!)!;
       const outline = new Shapes.Polygon({ points: blank.outline });
       if (blank.curved) outline.fitArcs(0.01);
       const sheet = new SheetPart(

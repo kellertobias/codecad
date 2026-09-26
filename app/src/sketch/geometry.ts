@@ -161,7 +161,14 @@ export type Snap =
   | { readonly kind: "curve"; readonly id: string; readonly at: Vec }
   | { readonly kind: "free"; readonly at: Vec };
 
-export function snap(sketch: SketchFeature, view: View, world: Vec): Snap {
+export function snap(
+  sketch: SketchFeature,
+  view: View,
+  world: Vec,
+  /** Edges of the face the sketch is on, as x1, y1, x2, y2 runs: their
+   * ends and lines are snapped to, as positions. */
+  reference?: Float32Array,
+): Snap {
   const target = hitTest(sketch, view, world, 9);
   if (target?.type === "point")
     return { kind: "point", id: target.id, at: target };
@@ -171,6 +178,25 @@ export function snap(sketch: SketchFeature, view: View, world: Vec): Snap {
       id: target.id,
       at: projectOnCurve(target, pointsOf(sketch), world),
     };
+  if (reference?.length) {
+    const reach = 9 / view.scale;
+    let best: { at: Vec; distance: number; end: boolean } | undefined;
+    for (let i = 0; i < reference.length; i += 4) {
+      const a = { x: reference[i]!, y: reference[i + 1]! };
+      const b = { x: reference[i + 2]!, y: reference[i + 3]! };
+      for (const end of [a, b]) {
+        const d = Math.hypot(world.x - end.x, world.y - end.y);
+        if (d <= reach && (!best?.end || d < best.distance))
+          best = { at: end, distance: d, end: true };
+      }
+      if (best?.end) continue;
+      const on = projectOnSegment(world, a, b);
+      const d = Math.hypot(world.x - on.x, world.y - on.y);
+      if (d <= reach && (!best || d < best.distance))
+        best = { at: on, distance: d, end: false };
+    }
+    if (best) return { kind: "free", at: best.at };
+  }
   const step = gridStep(view, 8);
   return {
     kind: "free",
@@ -200,9 +226,14 @@ export function fit(
   sketch: SketchFeature,
   width: number,
   height: number,
+  reference?: Float32Array,
 ): View {
   const xs: number[] = [];
   const ys: number[] = [];
+  for (let i = 0; i < (reference?.length ?? 0); i += 2) {
+    xs.push(reference![i]!);
+    ys.push(reference![i + 1]!);
+  }
   for (const e of sketch.entities) {
     if (e.type === "point") {
       xs.push(e.x);
@@ -232,4 +263,43 @@ export function fit(
     ),
   );
   return { scale, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, width, height };
+}
+
+/** A sketch's curves (not its construction geometry) as short straight
+ * segments, x1, y1, x2, y2 runs, for drawing it in 3D. */
+export function sketchSegments(sketch: SketchFeature): Float32Array {
+  const points = pointsOf(sketch);
+  const out: number[] = [];
+  const arc = (c: Vec, r: number, from: number, sweep: number) => {
+    const steps = Math.max(8, Math.ceil((Math.abs(sweep) / Math.PI) * 24));
+    for (let i = 0; i < steps; i++) {
+      const a = from + (sweep * i) / steps;
+      const b = from + (sweep * (i + 1)) / steps;
+      out.push(
+        c.x + r * Math.cos(a),
+        c.y + r * Math.sin(a),
+        c.x + r * Math.cos(b),
+        c.y + r * Math.sin(b),
+      );
+    }
+  };
+  for (const e of sketch.entities) {
+    if (e.type === "point" || e.construction) continue;
+    if (e.type === "line") {
+      const a = points.get(e.start)!;
+      const b = points.get(e.end)!;
+      out.push(a.x, a.y, b.x, b.y);
+    } else if (e.type === "circle")
+      arc(points.get(e.center)!, e.radius, 0, 2 * Math.PI);
+    else {
+      const c = points.get(e.center)!;
+      const s = points.get(e.start)!;
+      const t = points.get(e.end)!;
+      const from = Math.atan2(s.y - c.y, s.x - c.x);
+      const sweep =
+        (Math.atan2(t.y - c.y, t.x - c.x) - from + 4 * Math.PI) % (2 * Math.PI);
+      arc(c, Math.hypot(s.x - c.x, s.y - c.y), from, sweep);
+    }
+  }
+  return new Float32Array(out);
 }

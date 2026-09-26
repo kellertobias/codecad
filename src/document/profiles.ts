@@ -377,3 +377,24 @@ function contains(polygon: readonly Point[], point: Point): boolean {
   }
   return inside;
 }
+
+/** Matches regions saved in a feature to the sketch's current regions. A
+ * region id lists the curves around it, so a region keeps matching when a
+ * curve is added to or taken from its boundary. */
+export function matchRegions(
+  saved: readonly string[],
+  current: readonly Region[],
+): (Region | undefined)[] {
+  const curves = (id: string) => new Set(id.split("+"));
+  return saved.map((id) => {
+    const wanted = curves(id);
+    let best: { region: Region; score: number } | undefined;
+    for (const region of current) {
+      const have = curves(region.id);
+      const shared = [...wanted].filter((c) => have.has(c)).length;
+      const score = shared / (wanted.size + have.size - shared);
+      if (!best || score > best.score) best = { region, score };
+    }
+    return best && best.score >= 0.5 ? best.region : undefined;
+  });
+}

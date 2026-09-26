@@ -470,12 +470,321 @@ main {
   font-size: 12px;
 }
 
+/* 3D view and the model toolbar. */
+.model-toolbar,
+.mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.model-toolbar button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.model-toolbar .separator {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+}
+.model-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+}
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.viewport canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.viewport canvas.pick-face,
+.viewport canvas.pick-edge,
+.viewport canvas.pick-measure {
+  cursor: crosshair;
+}
+.view-buttons {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+.view-buttons button {
+  font-size: 12px;
+  padding: 2px 8px;
+  opacity: 0.9;
+}
+.measure-result {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.sketch-canvas .reference {
+  fill: none;
+  stroke: var(--construction);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+/* The feature list. */
+.feature-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.feature-tree li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+}
+.feature-tree li.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.feature-tree .symbol {
+  width: 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.feature-tree .name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: 0;
+  background: none;
+  padding: 4px 4px;
+  text-align: left;
+}
+.feature-tree .name small {
+  color: var(--muted);
+}
+.feature-tree li.problem .name,
+.feature-tree li.problem .name small {
+  color: var(--problem);
+}
+.feature-tree li.suppressed .name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.feature-tree li.after-rollback {
+  opacity: 0.45;
+}
+.feature-tree .row-actions {
+  display: flex;
+  visibility: hidden;
+}
+.feature-tree li:hover .row-actions,
+.feature-tree li.selected .row-actions,
+.feature-tree li:focus-within .row-actions {
+  visibility: visible;
+}
+.feature-tree .row-actions button.icon {
+  padding: 2px 3px;
+}
+.feature-tree li.rollback {
+  justify-content: space-between;
+  margin: 4px 0;
+  padding: 2px 6px;
+  border-top: 2px solid var(--accent);
+  border-radius: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* The inspector: tabs, feature forms, parts. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  white-space: nowrap;
+}
+.tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+.feature-editor,
+.parts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+.feature-editor header,
+.parts-panel header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 0;
+}
+.feature-editor header h2,
+.parts-panel header h2 {
+  flex: 1;
+}
+.feature-problem {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--problem) 10%, transparent);
+}
+.field {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 8px;
+}
+.field-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.field-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+.field-input input,
+.field-input select {
+  min-width: 0;
+  flex: 1;
+}
+.field-hint {
+  grid-column: 2;
+  font-size: 12px;
+}
+input.expression {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.checklist {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.checklist legend {
+  color: var(--muted);
+  font-size: 13px;
+}
+.checklist > label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0;
+}
+.checklist .hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.ref-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+.ref-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.part-list,
+.material-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.part-list li,
+.material-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.part-list li.selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.part-main {
+  display: flex;
+  gap: 4px;
+}
+.part-main input:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.part-main .quantity {
+  width: 56px;
+}
+.part-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+}
+.part-problem {
+  margin: 0;
+  font-size: 12px;
+}
+.size {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.size input {
+  width: 70px;
+}
+
 /* Editing sketches is for large screens; on a phone the panels stack. */
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto minmax(420px, 1fr) auto;
-    grid-template-areas: "top" "side" "main" "inspector";
+    grid-template-rows: auto minmax(420px, 70vh) auto auto;
+    grid-template-areas: "top" "main" "side" "inspector";
     height: auto;
     min-height: 100vh;
   }

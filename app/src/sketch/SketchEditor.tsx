@@ -105,6 +105,9 @@ export interface SketchEditorProps {
   /** Replaces the sketch with an edited one, computed from `sketch`. */
   edit(next: SketchFeature, merge?: string): void;
   drag(point: string, x: number, y: number, session: string): void;
+  /** For a sketch on a face: the face's edges, x1, y1, x2, y2 runs in
+   * sketch coordinates, drawn and snapped to. */
+  reference?: Float32Array | undefined;
 }
 
 interface Editing {
@@ -118,6 +121,7 @@ export function SketchEditor({
   variables,
   edit,
   drag,
+  reference,
 }: SketchEditorProps) {
   const wrapper = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
@@ -166,7 +170,7 @@ export function SketchEditor({
 
   const current: View = view
     ? { ...view, ...size }
-    : fit(sketch, size.width, size.height);
+    : fit(sketch, size.width, size.height, reference);
   const points = useMemo(() => pointsOf(sketch), [sketch]);
   const profiles = useMemo(() => detectProfiles(sketch), [sketch]);
   const glyphList = useMemo(
@@ -322,7 +326,7 @@ export function SketchEditor({
       if (target?.type === "line") edit(trim(sketch, target.id, world));
       return;
     }
-    if (event.button === 0) place(snap(sketch, current, world));
+    if (event.button === 0) place(snap(sketch, current, world, reference));
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -340,7 +344,9 @@ export function SketchEditor({
       drag(g.point, world.x, world.y, g.session);
       return;
     }
-    setHover(tool === "select" ? undefined : snap(sketch, current, world));
+    setHover(
+      tool === "select" ? undefined : snap(sketch, current, world, reference),
+    );
   };
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -542,6 +548,22 @@ export function SketchEditor({
       >
         <svg width={size.width} height={size.height}>
           <Grid view={current} step={step} />
+          {reference?.length ? (
+            <path
+              className="reference"
+              d={Array.from({ length: reference.length / 4 }, (_, i) => {
+                const a = toScreen(current, {
+                  x: reference[4 * i]!,
+                  y: reference[4 * i + 1]!,
+                });
+                const b = toScreen(current, {
+                  x: reference[4 * i + 2]!,
+                  y: reference[4 * i + 3]!,
+                });
+                return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+              }).join(" ")}
+            />
+          ) : null}
           {profiles.regions.map((region) => (
             <path
               key={region.id}

@@ -73,10 +73,10 @@ test("a blank as deep as a sheet material is thick is a sheet part", () => {
   const { bodies } = evaluator.evaluate(document);
   const info = describeParts(document, bodies);
   assert.deepEqual(
-    info.map((p) => [p.name, p.stock, p.material?.id, p.thickness]),
+    info.map((p) => [p.name, p.stock, p.material?.id, p.thickness, p.width]),
     [
-      ["Shelf", "sheet", "birch", 18],
-      ["Block", "solid", undefined, undefined],
+      ["Shelf", "sheet", "birch", 18, 800],
+      ["Block", "solid", undefined, undefined, undefined],
     ],
   );
   evaluator.dispose();
@@ -143,3 +143,47 @@ test("sheet bodies go through the cut list, nesting and DXF output", async () =>
 
 const roundish = (value: string | number | undefined) =>
   typeof value === "number" ? Math.round(value * 1000) / 1000 : value;
+
+test("a panel sketched edge-on and extruded across is a sheet part too", async () => {
+  // An 18 mm shelf drawn as its end profile on the side plane and extruded
+  // 500 mm along X, with a hole drilled down through it from its top.
+  const top = { body: "shelf:0", origin: "shelf", role: "side:s.top" } as const;
+  const document = solvedDocument(
+    solver,
+    { t: "18" },
+    [
+      rectangle("s", "YZ", "0", "100", "300", "t"),
+      extrude("shelf", "s", { distance: "500", name: "Shelf" }),
+      points("at", [["250", "150"]], { face: top }),
+      {
+        id: "hole",
+        type: "hole",
+        name: "hole",
+        sketch: "at",
+        kind: "simple",
+        diameter: "5",
+      },
+    ],
+    { materials: [birch] },
+  );
+  const evaluator = new DocumentEvaluator();
+  const { bodies } = evaluator.evaluate(document);
+  const [shelf] = describeParts(document, bodies);
+  assert.deepEqual(
+    [shelf!.stock, shelf!.material?.id, shelf!.width, shelf!.height],
+    ["sheet", "birch", 300, 500],
+  );
+  const { parts } = sheetProject(document, bodies);
+  const engine = new OpenCascadeEngine();
+  try {
+    const entities = await partEntities(engine, parts.get("shelf:0")!);
+    const circles = entities.filter((e) => e.kind === "circle");
+    assert.deepEqual(
+      circles.map((c) => [c.layer, c.x, c.y, c.radius].map(roundish)),
+      [["DRILL_THROUGH_D18.000", 150, 250, 2.5]],
+    );
+  } finally {
+    engine.dispose();
+    evaluator.dispose();
+  }
+});
