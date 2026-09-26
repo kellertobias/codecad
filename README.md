@@ -442,6 +442,40 @@ shows "broken reference" instead, and you pick the face again.
   the dominos, dowels and screws the joints need, and downloads the bill of
   materials as CSV.
 
+**Drawings** lists the project's drawing sheets, and a manufacturing sheet for
+every sheet part (its blank as cut, and the part itself). A sheet holds any
+number of views:
+
+- views from the front, top, sides, back, below, in isometric, or from any
+  direction
+- sections cut by any plane, with the cut faces hatched by material (sheet
+  stock hatched once, solid material crossed)
+- details that enlarge a circle of another view
+- exploded views, and blanks as cut.
+
+Views are placed and scaled automatically unless given a scale. The preview
+follows every edit. PDF, DXF and SVG files are made by the server from the
+saved project.
+
+**Stock & layouts** keeps the pieces of material you have: full sheets, and
+offcuts of any outline, written as their corners (`0,0 1000,0 1000,300 …`),
+each with its material and grain direction. A layout places part blanks on a
+piece: drag them, turn them by 90° or any angle, or mirror them. As parts
+move, the layout checks for parts off the piece or inside its margin,
+overlaps, gaps narrower than the kerf, strips thinner than a minimum, and
+grain running the wrong way. **Auto-nest** fills the piece with the parts
+still to place, using the guillotine nesting; on an offcut it uses the
+largest rectangles inside it. A layout downloads as one DXF with every part
+where the layout shows it.
+
+The server makes these files from the saved project as jobs:
+`GET /api/projects/<id>/outputs/<kind>?format=…&target=…`:
+
+- `drawing` (`svg`, `pdf` or `dxf`; `target` is a sheet, or `part:<body>`)
+- `layout` and `part` (`dxf`)
+- `cutlist` (`csv` or `pdf`)
+- `bom` (`csv`).
+
 The CAD kernel runs in the browser, in a Web Worker. `/kernel-probe` shows
 how long it takes to load and build a part on the current machine. The API
 is `GET/POST /api/projects` and `GET/PUT/DELETE /api/projects/<id>`. A `PUT`
@@ -1125,7 +1159,7 @@ measured or supplier STEP geometry and mounting dimensions for your hardware.
 - `src/drawing.ts`, `exporters.ts`: projections, PDF, glTF and clearance results.
 - `src/server.ts`, `worker.ts`: local server and isolated rebuild/export process.
 - `src/document/`: the browser editor's document: schema, expressions, variables, sketch solving, profiles, feature-list edits.
-- `src/kernel/`: the document evaluator (features into bodies, stable face names), joints between panels, bodies as parts and the bill of materials.
+- `src/kernel/`: the document evaluator (features into bodies, stable face names), joints between panels, bodies as parts, the bill of materials, drawings, layouts and the files made from a document.
 - `app/`: the browser editor.
 - `web/`: editor, Three.js viewer, registry, output browser, and the kernel worker.
 - `tests/`: numerical geometry, construction semantics and export integration checks.
