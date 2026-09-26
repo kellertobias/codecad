@@ -80,7 +80,7 @@ export function pageSvg(page: ReportPage): Uint8Array {
         return `<text x="${e.x}" y="${e.y}" font-size="${e.height}" fill="#20252a" text-anchor="${e.align ?? "start"}" transform="rotate(${e.rotation ?? 0},${e.x},${e.y})">${escapeXml(e.text)}</text>`;
       if (e.kind === "circle")
         return `<circle cx="${e.x}" cy="${e.y}" r="${e.radius}" fill="none" stroke="#53616a" stroke-width="0.2"/>`;
-      const dashed = /HIDDEN|BEND_|TANGENT/.test(e.layer);
+      const dashed = /HIDDEN|BEND_|TANGENT|SECTION_LINE/.test(e.layer);
       const weight =
         e.style?.lineWidth ??
         (/BORDER|VISIBLE|BLANK_OUTLINE|PART_OUTLINE/.test(e.layer)

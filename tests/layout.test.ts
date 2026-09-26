@@ -226,13 +226,8 @@ test("what the layouts cost in stock, and pieces used too often", async () => {
     cost: 89.5,
     quantity: 1,
   };
-  const offcut = {
-    ...sheet,
-    id: "o",
-    name: "Offcut",
-    cost: undefined,
-    quantity: 3,
-  };
+  const { cost: _cost, ...unpriced } = sheet;
+  const offcut = { ...unpriced, id: "o", name: "Offcut", quantity: 3 };
   const placed = [{ part: "a", x: 0, y: 0, rotation: 0 }];
   const usage = stockUsage({
     stock: [sheet, offcut],

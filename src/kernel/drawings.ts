@@ -54,6 +54,8 @@ interface Prepared {
   readonly flat?: DxfEntity[];
   readonly min: Point;
   readonly max: Point;
+  /** How model points map onto the view (projections only). */
+  readonly camera?: b.Camera;
 }
 
 const hatchAngles = [45, 135, 0, 90];
@@ -145,6 +147,7 @@ function prepare(
         ...lines,
         hatches: [],
         ...bounds([lines.visible, lines.hidden]),
+        camera: cam,
       };
     }
     case "exploded": {
@@ -409,6 +412,22 @@ export async function renderSheet(
         (view.kind === "detail" ? (scales.get(view.of) ?? common) * 2 : common),
     );
 
+  // Sections, with the letter their line is marked by: "A" of "A-A".
+  const sections = views.flatMap((view, i) => {
+    if (view.kind !== "section") return [];
+    const letter =
+      /^([A-Z])\b/.exec(view.label ?? "")?.[1] ??
+      String.fromCharCode(
+        65 + views.slice(0, i).filter((v) => v.kind === "section").length,
+      );
+    return [
+      {
+        letter,
+        origin: new Vector3(...view.origin.map((e) => context.value(e))),
+        normal: new Vector3(...(view.normal as unknown as Vec3)).normalize(),
+      },
+    ];
+  });
   views.forEach((view, i) => {
     const p = prepared.get(view.id)!;
     const scale = scales.get(view.id)!;
@@ -471,6 +490,41 @@ export async function renderSheet(
           height: 2.5,
         });
     }
+    // Where each section of the sheet cuts this view: its plane seen
+    // edge-on, as a chain line with the section's letter at both ends.
+    if (p.camera)
+      sections.forEach((section) => {
+        const x = new Vector3(...p.camera!.xAxis);
+        const y = new Vector3(...p.camera!.yAxis);
+        const toward = new Vector3().crossVectors(x, y);
+        const n = section.normal;
+        if (Math.abs(n.dot(toward)) > 1e-6) return;
+        const along = new Vector3().crossVectors(n, toward);
+        const d = { x: along.dot(x), y: along.dot(y) };
+        const o = { x: section.origin.dot(x), y: section.origin.dot(y) };
+        // The line across the view's extent, a little beyond it.
+        const pad = Math.max(p.max.x - p.min.x, p.max.y - p.min.y) * 0.06 + 2;
+        const lo = { x: p.min.x - pad, y: p.min.y - pad };
+        const hi = { x: p.max.x + pad, y: p.max.y + pad };
+        let t0 = -Infinity;
+        let t1 = Infinity;
+        for (const axis of ["x", "y"] as const) {
+          if (Math.abs(d[axis]) < 1e-12) {
+            if (o[axis] < lo[axis] || o[axis] > hi[axis]) return;
+            continue;
+          }
+          const a = (lo[axis] - o[axis]) / d[axis];
+          const c = (hi[axis] - o[axis]) / d[axis];
+          t0 = Math.max(t0, Math.min(a, c));
+          t1 = Math.min(t1, Math.max(a, c));
+        }
+        if (!(t1 > t0)) return;
+        const start = paperAt(o.x + d.x * t0, o.y + d.y * t0);
+        const end = paperAt(o.x + d.x * t1, o.y + d.y * t1);
+        line(page, start.x, start.y, end.x, end.y, "SECTION_LINE");
+        for (const at of [start, end])
+          text(page, section.letter, at.x, at.y - 1.5, 3.5, "SECTION_LINE");
+      });
     if (view.kind === "detail") {
       // The circle on the view it enlarges, and on the detail itself.
       const parent = prepared.get(view.of)!;

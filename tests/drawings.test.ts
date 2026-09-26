@@ -127,3 +127,46 @@ test("every sheet part gets a manufacturing sheet", async () => {
     evaluator.dispose();
   }
 });
+
+test("a section's cut line is drawn on the views that see its plane edge-on", async () => {
+  const { document, evaluator, bodies, info } = model();
+  const sheet: DrawingSheet = {
+    id: "s",
+    name: "Sections",
+    size: "A3",
+    views: [
+      { id: "top", kind: "view", angle: "top" },
+      { id: "front", kind: "view", angle: "front" },
+      {
+        id: "cut",
+        kind: "section",
+        label: "B-B",
+        origin: ["0", "150", "0"],
+        normal: [0, 1, 0],
+      },
+    ],
+  };
+  const engine = new OpenCascadeEngine();
+  try {
+    const page = await renderSheet(engine, document, bodies, info, sheet);
+    const marks = page.entities.filter((e) => e.layer === "SECTION_LINE");
+    // One line on the top view (the front view looks along the normal)
+    // and the letter at both of its ends.
+    const lines = marks.filter((e) => e.kind !== "text");
+    const letters = marks.filter((e) => e.kind === "text");
+    assert.equal(lines.length, 1);
+    assert.deepEqual(
+      letters.map((e) => (e.kind === "text" ? e.text : "")),
+      ["B", "B"],
+    );
+    // Across the top view, level: y = 150 is a horizontal line there.
+    const [line] = lines;
+    assert.ok(line!.kind === "polyline");
+    const ys = line!.kind === "polyline" ? line!.points.map((p) => p.y) : [];
+    assert.ok(Math.abs(ys[0]! - ys[1]!) < 1e-6);
+    assert.match(new TextDecoder().decode(pageSvg(page)), /stroke-dasharray/);
+  } finally {
+    engine.dispose();
+    evaluator.dispose();
+  }
+});
