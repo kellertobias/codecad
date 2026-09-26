@@ -1,6 +1,7 @@
 // The inspector for one feature: its parameters as a form. Faces and edges
 // are picked in the 3D view: a "Pick" button hands the view's clicks to
 // that field until it is pressed again.
+import type { CodeState } from "../code/results.ts";
 import { useEffect, useState } from "react";
 import type {
   Axis,
@@ -64,6 +65,11 @@ export interface FeatureEditorProps {
   library?: {
     readonly latest: ReadonlyMap<string, number>;
     update(instance: string): void;
+  };
+  /** Code parts: how their result stands, and running their code again. */
+  code?: {
+    state(instance: string): CodeState | undefined;
+    regenerate(instance: string): void;
   };
 }
 
@@ -1081,6 +1087,7 @@ function InstanceFields({
   picking,
   setPicking,
   library,
+  code,
 }: Props<InstanceFeature>) {
   const pinned = document.library?.find(
     (p) => p.item === feature.item && p.version === feature.version,
@@ -1092,7 +1099,9 @@ function InstanceFields({
       </p>
     );
   const newest = library?.latest.get(feature.item);
-  const interfaces = pinned.document.interfaces ?? [];
+  const interfaces = pinned.code
+    ? pinned.code.interfaces
+    : (pinned.document.interfaces ?? []);
   const setValue = (name: string, value: string | undefined) => {
     const values = { ...(feature.values ?? {}) };
     if (value === undefined) delete values[name];
@@ -1119,18 +1128,35 @@ function InstanceFields({
           <button onClick={() => library!.update(feature.id)}>Update</button>
         </div>
       ) : null}
+      {pinned.code ? (
+        <CodeStatus
+          state={code?.state(feature.id)}
+          regenerate={() => code?.regenerate(feature.id)}
+        />
+      ) : null}
       {pinned.exposed.length ? <h2>Values</h2> : null}
       {pinned.exposed.map((name) => {
-        const own = pinned.document.variables.find((v) => v.name === name);
+        const own = pinned.code
+          ? undefined
+          : pinned.document.variables.find((v) => v.name === name);
+        const parameter = pinned.code?.parameters.find((p) => p.name === name);
         return (
           <ExpressionField
             key={name}
-            label={name}
+            label={parameter?.label ?? name}
             value={feature.values?.[name]}
             variables={variables}
-            unit={own?.unit === "none" ? "" : (own?.unit ?? "mm")}
+            unit={
+              parameter
+                ? (parameter.unit ?? "mm")
+                : own?.unit === "none"
+                  ? ""
+                  : (own?.unit ?? "mm")
+            }
             optional
-            placeholder={own?.expression ?? ""}
+            placeholder={
+              parameter ? String(parameter.default) : (own?.expression ?? "")
+            }
             commit={(value) => setValue(name, value)}
           />
         );
@@ -1236,5 +1262,42 @@ function InstanceFields({
         </p>
       ) : null}
     </>
+  );
+}
+
+function CodeStatus({
+  state,
+  regenerate,
+}: {
+  state: CodeState | undefined;
+  regenerate(): void;
+}) {
+  return (
+    <div className="code-status">
+      <span
+        className={
+          state?.state === "error"
+            ? "error"
+            : state?.state === "ready"
+              ? "ok"
+              : "hint"
+        }
+      >
+        {!state
+          ? "Code part: its result is on its way."
+          : state.state === "ready"
+            ? state.ran
+              ? "Code part: made here just now, and stored."
+              : "Code part: using its stored result."
+            : state.message}
+      </span>
+      <button
+        disabled={state?.state === "working"}
+        title="Run the code again in this browser and store what it makes"
+        onClick={regenerate}
+      >
+        Regenerate
+      </button>
+    </div>
   );
 }

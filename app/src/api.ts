@@ -1,4 +1,6 @@
 // The editor's view of the server's project API (src/projects-api.ts).
+import type { LibraryVersionData } from "../../src/document/library-file.ts";
+import type { CodePart, CodeResult } from "../../src/document/code-part.ts";
 
 export interface ProjectSummary {
   readonly id: string;
@@ -89,15 +91,10 @@ export interface LibraryItemSummary {
   readonly tags: readonly string[];
   readonly latest: number;
   readonly thumbnail?: string;
+  readonly kind: "document" | "code";
   readonly updatedAt: string;
 }
-export interface LibraryVersion<Document> {
-  readonly version: number;
-  readonly createdAt: string;
-  readonly note?: string;
-  readonly document: Document;
-  readonly exposed: readonly string[];
-}
+export type LibraryVersion = LibraryVersionData;
 
 export const library = {
   list: () =>
@@ -108,7 +105,8 @@ export const library = {
     name: string;
     description?: string;
     tags?: readonly string[];
-    document: D;
+    document?: D;
+    code?: CodePart;
     exposed: readonly string[];
     thumbnail?: string;
     note?: string;
@@ -116,7 +114,8 @@ export const library = {
   addVersion: <D>(
     id: string,
     body: {
-      document: D;
+      document?: D;
+      code?: CodePart;
       exposed: readonly string[];
       thumbnail?: string;
       note?: string;
@@ -126,8 +125,8 @@ export const library = {
       method: "POST",
       body,
     }),
-  version: <D>(id: string, version: number) =>
-    request<LibraryVersion<D>>(`/api/library/${id}/versions/${version}`),
+  version: (id: string, version: number) =>
+    request<LibraryVersion>(`/api/library/${id}/versions/${version}`),
   remove: (id: string) =>
     request<void>(`/api/library/${id}`, { method: "DELETE" }),
   importFile: (file: unknown) =>
@@ -136,4 +135,23 @@ export const library = {
       body: file,
     }),
   fileUrl: (id: string) => `/api/library/${id}/file`,
+};
+
+/** Stored results of code parts (src/code-results-api.ts). */
+export const codeResults = {
+  async get(key: string): Promise<CodeResult | undefined> {
+    const response = await fetch(`/api/code-results/${key}`);
+    if (response.status === 404) return undefined;
+    if (!response.ok)
+      throw new Error(
+        ((await response.json().catch(() => ({}))) as { error?: string })
+          .error ?? `Loading a code result failed (${response.status})`,
+      );
+    return (await response.json()) as CodeResult;
+  },
+  put: (result: CodeResult, replace = false) =>
+    request<{ key: string }>(
+      `/api/code-results/${result.key}${replace ? "?replace" : ""}`,
+      { method: "PUT", body: result },
+    ),
 };

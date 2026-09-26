@@ -41,6 +41,8 @@ export interface Model {
 export function useModel(
   document: CadDocument | undefined,
   until: number | undefined,
+  /** Changes when the kernel has new code-part results to build with. */
+  generation = 0,
 ): { model?: Model; busy: boolean; error?: string } {
   const [model, setModel] = useState<Model>();
   const [busy, setBusy] = useState(false);
@@ -88,7 +90,7 @@ export function useModel(
       running.current = false;
       setBusy(false);
     })();
-  }, [document, until]);
+  }, [document, until, generation]);
 
   return { ...(model ? { model } : {}), busy, ...(error ? { error } : {}) };
 }

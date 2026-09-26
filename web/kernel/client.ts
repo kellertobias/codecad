@@ -6,6 +6,7 @@ import type {
   StockPiece,
 } from "../../src/document/schema.js";
 import type { LayoutPart } from "../../src/document/layout.js";
+import type { CodeResult } from "../../src/document/code-part.js";
 import type { KernelRequest, KernelResponse } from "./protocol.js";
 
 type Answer<T extends KernelResponse["type"]> = Extract<
@@ -82,12 +83,31 @@ export class KernelClient {
     return this.send({ type: "solver", wasm });
   }
 
+  /** Builds a code part's output (recipes from the sandbox) into exact
+   * geometry, to upload and to use. */
+  buildCode(output: unknown, key: string): Promise<Answer<"code-build">> {
+    return this.send({ type: "code-build", output, key });
+  }
+
+  /** Hands the worker stored results of code parts. */
+  useCodeResults(
+    results: readonly CodeResult[],
+  ): Promise<Answer<"code-results">> {
+    return this.send({ type: "code-results", results });
+  }
+
   /** A drawing sheet as SVG. */
   drawing(
     document: CadDocument,
     sheet: DrawingSheet,
+    options: { scratch?: boolean } = {},
   ): Promise<Answer<"drawing">> {
-    return this.send({ type: "drawing", document, sheet });
+    return this.send({
+      type: "drawing",
+      document,
+      sheet,
+      ...(options.scratch ? { scratch: true } : {}),
+    });
   }
 
   /** Fills a stock piece with the parts still to place. */

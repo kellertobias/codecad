@@ -27,6 +27,7 @@ import {
   jointsFor,
   panelOf,
 } from "../../src/kernel/joints.js";
+import { buildCodeResult, CodeResults } from "../../src/kernel/code-parts.js";
 import type { KernelRequest, KernelResponse } from "./protocol.js";
 
 // Only the browser-bundled "brepjs/quick" (src/kernel/browser-brepjs.ts)
@@ -44,7 +45,9 @@ const post = (message: KernelResponse, transfer: Transferable[] = []) =>
 
 post({ type: "ready", initMs, ...heap() });
 
-const evaluator = new DocumentEvaluator();
+const codeResults = new CodeResults();
+let solver: SketchSolver | undefined;
+const evaluator = new DocumentEvaluator({ codeResults });
 let last: Evaluation | undefined;
 /** Meshes of shapes an earlier evaluation already sent, so bodies an edit
  * did not touch are not tessellated again. */
@@ -59,8 +62,22 @@ self.onmessage = async (event: MessageEvent<KernelRequest>) => {
     else if (request.type === "pick-edge") pickEdge(request);
     else if (request.type === "drawing") await drawing(request);
     else if (request.type === "solver") {
-      evaluator.useSolver(await SketchSolver.create({ wasm: request.wasm }));
+      solver = await SketchSolver.create({ wasm: request.wasm });
+      evaluator.useSolver(solver);
       post({ id: request.id, type: "solver" });
+    } else if (request.type === "code-build")
+      post({
+        id: request.id,
+        type: "code-build",
+        result: await buildCodeResult(request.output, request.key),
+      });
+    else if (request.type === "code-results") {
+      for (const result of request.results) codeResults.add(result);
+      post({
+        id: request.id,
+        type: "code-results",
+        keys: request.results.map((r) => r.key),
+      });
     } else if (request.type === "nest")
       post({
         id: request.id,
@@ -244,10 +261,21 @@ function meet(request: Extract<KernelRequest, { type: "contact" }>) {
 }
 
 async function drawing(request: Extract<KernelRequest, { type: "drawing" }>) {
-  // The evaluator's cache makes this cheap for the document on screen.
-  const { bodies } = evaluator.evaluate(request.document);
+  // The evaluator's cache makes this cheap for the document on screen; a
+  // scratch document (a preview) gets an evaluator of its own, so that
+  // cache stays the open document's.
+  const own = request.scratch
+    ? new DocumentEvaluator({
+        codeResults,
+        ...(solver ? { solver } : {}),
+      })
+    : evaluator;
+  const { bodies, status } = own.evaluate(request.document);
   const engine = new OpenCascadeEngine();
   try {
+    const failed = [...status.values()].find((s) => s.state === "error");
+    if (request.scratch && failed?.state === "error")
+      throw new Error(failed.message);
     const page = await renderSheet(
       engine,
       request.document,
@@ -262,6 +290,7 @@ async function drawing(request: Extract<KernelRequest, { type: "drawing" }>) {
     });
   } finally {
     engine.dispose();
+    if (own !== evaluator) own.dispose();
   }
 }
 

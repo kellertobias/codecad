@@ -55,6 +55,7 @@ export default defineConfig({
     proxy: {
       "/api": forward,
       "/kernel.worker.js": forward,
+      "/code-sandbox.js": forward,
       "/occt-wasm.wasm": forward,
     },
   },

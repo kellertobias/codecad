@@ -31,6 +31,7 @@ import {
 } from "./api.ts";
 import { updateInstance } from "../../src/document/library.ts";
 import { LibraryView } from "./LibraryView.tsx";
+import { useCodeResults } from "./code/results.ts";
 import { useDocumentHistory } from "./history.ts";
 import { loadSolver } from "./solver.ts";
 import { kernel, useModel } from "./kernel.ts";
@@ -167,11 +168,13 @@ export function App() {
   // While picking a reference for a feature, show the model as it is
   // before that feature: its references can only name what came before.
   const until = picking && selectedIndex >= 0 ? selectedIndex - 1 : rollback;
+  // Code parts' results: fetched, or made by running their code here.
+  const code = useCodeResults(open ? document : undefined);
   const {
     model,
     busy,
     error: kernelError,
-  } = useModel(open && solver ? document : undefined, until);
+  } = useModel(open && solver ? document : undefined, until, code.generation);
 
   const dirty = open !== undefined && JSON.stringify(document) !== open.saved;
   useEffect(() => {
@@ -555,7 +558,9 @@ export function App() {
         const pinned = document.library?.find(
           (p) => p.item === feature.item && p.version === feature.version,
         );
-        const first = pinned?.document.interfaces?.[0];
+        const first = pinned?.code
+          ? pinned.code.interfaces[0]
+          : pinned?.document.interfaces?.[0];
         if (!first) return setMessage("The item has no interface to mate by.");
         replace({
           ...feature,
@@ -1118,6 +1123,7 @@ export function App() {
               setPicking={setPicking}
               update={replace}
               editSketch={(id) => setSketching(id)}
+              code={{ state: code.stateOf, regenerate: code.regenerate }}
               library={{
                 latest,
                 update: (instance) => {
@@ -1128,7 +1134,7 @@ export function App() {
                   const newest = latest.get(target.item);
                   if (newest === undefined) return;
                   const item = items.find((i) => i.id === target.item)!;
-                  void library.version<CadDocument>(target.item, newest).then(
+                  void library.version(target.item, newest).then(
                     (version) =>
                       change((d) =>
                         updateInstance(

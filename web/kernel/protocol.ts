@@ -14,6 +14,7 @@ import type {
   StockPiece,
 } from "../../src/document/schema.js";
 import type { LayoutPart } from "../../src/document/layout.js";
+import type { CodeResult } from "../../src/document/code-part.js";
 
 /** Messages the page sends to the kernel worker. */
 export type KernelRequest =
@@ -47,6 +48,8 @@ export type KernelRequest =
       readonly type: "drawing";
       readonly document: CadDocument;
       readonly sheet: DrawingSheet;
+      /** Not the open document (a preview): evaluated on its own. */
+      readonly scratch?: boolean;
     }
   /** Fills a stock piece with the parts still to place. */
   | {
@@ -56,6 +59,20 @@ export type KernelRequest =
       readonly piece: StockPiece;
       readonly parts: readonly LayoutPart[];
       readonly others: readonly Layout[];
+    }
+  /** Builds what a code part's code returned (from the sandbox, checked
+   * here) into a result to store under `key`. */
+  | {
+      readonly id: number;
+      readonly type: "code-build";
+      readonly output: unknown;
+      readonly key: string;
+    }
+  /** Results of code parts the documents to evaluate use. */
+  | {
+      readonly id: number;
+      readonly type: "code-results";
+      readonly results: readonly CodeResult[];
     }
   /** How two bodies of the last evaluated model meet, and the joints
    * that fit. */
@@ -133,6 +150,17 @@ export type KernelResponse =
     }
   | { readonly id: number; readonly type: "drawing"; readonly svg: string }
   | { readonly id: number; readonly type: "solver" }
+  | {
+      readonly id: number;
+      readonly type: "code-build";
+      readonly result: CodeResult;
+    }
+  | {
+      readonly id: number;
+      readonly type: "code-results";
+      /** Keys the worker now has. */
+      readonly keys: readonly string[];
+    }
   | {
       readonly id: number;
       readonly type: "nest";

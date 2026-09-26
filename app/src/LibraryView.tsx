@@ -11,6 +11,9 @@ import { insertInstance } from "../../src/document/library.ts";
 import { library, type LibraryItemSummary } from "./api.ts";
 import { kernel } from "./kernel.ts";
 import { Checklist, Choice, Field } from "./features/fields.tsx";
+import { CodePartEditor } from "./code/CodePartEditor.tsx";
+import { starterSource } from "./code/sdk-types.ts";
+import { Icon } from "./icons.tsx";
 
 type Apply = (change: (document: CadDocument) => CadDocument) => void;
 
@@ -35,6 +38,12 @@ export function LibraryView({
   report(message: string): void;
 }) {
   const [filter, setFilter] = useState("");
+  /** A code part open for writing. */
+  const [editing, setEditing] = useState<{
+    item?: string;
+    name: string;
+    source: string;
+  }>();
   const shown = items.filter((item) =>
     `${item.name} ${item.tags.join(" ")} ${item.description}`
       .toLowerCase()
@@ -42,7 +51,7 @@ export function LibraryView({
   );
   const insert = async (item: LibraryItemSummary) => {
     try {
-      const version = await library.version<CadDocument>(item.id, item.latest);
+      const version = await library.version(item.id, item.latest);
       const result = insertInstance(
         document,
         { id: item.id, name: item.name },
@@ -55,11 +64,45 @@ export function LibraryView({
       report(error instanceof Error ? error.message : String(error));
     }
   };
+  if (editing)
+    return (
+      <CodePartEditor
+        initial={editing}
+        items={items}
+        close={() => setEditing(undefined)}
+        saved={(message) => {
+          refresh();
+          report(message);
+          setEditing(undefined);
+        }}
+      />
+    );
+  const editCode = async (item: LibraryItemSummary) => {
+    try {
+      const version = await library.version(item.id, item.latest);
+      if (!version.code) return;
+      setEditing({
+        item: item.id,
+        name: item.name,
+        source: version.code.source,
+      });
+    } catch (error) {
+      report(error instanceof Error ? error.message : String(error));
+    }
+  };
   return (
     <div className="library">
       <section className="library-items">
         <header>
           <h2>Library</h2>
+          <button
+            title="A part written in TypeScript; it runs in this browser only"
+            onClick={() =>
+              setEditing({ name: "Code part", source: starterSource })
+            }
+          >
+            <Icon name="plus" size={16} /> Code part
+          </button>
           <input
             type="search"
             placeholder="Find by name or tag"
@@ -105,13 +148,19 @@ export function LibraryView({
                 )}
                 <strong>{item.name}</strong>
                 <small>
-                  version {item.latest}
+                  {item.kind === "code" ? "code part · " : ""}version{" "}
+                  {item.latest}
                   {item.tags.length ? ` · ${item.tags.join(", ")}` : ""}
                 </small>
                 <div className="button-row">
                   <button className="primary" onClick={() => void insert(item)}>
                     Insert
                   </button>
+                  {item.kind === "code" ? (
+                    <button onClick={() => void editCode(item)}>
+                      Edit code
+                    </button>
+                  ) : null}
                   <a className="button" href={library.fileUrl(item.id)}>
                     Export
                   </a>
