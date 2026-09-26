@@ -17,6 +17,12 @@ import {
   type Evaluation,
 } from "../../src/kernel/evaluator.js";
 import { describeParts } from "../../src/kernel/parts.js";
+import {
+  contact,
+  describeContact,
+  jointsFor,
+  panelOf,
+} from "../../src/kernel/joints.js";
 import type { KernelRequest, KernelResponse } from "./protocol.js";
 
 // Only the browser-bundled "brepjs/quick" (src/kernel/browser-brepjs.ts)
@@ -46,7 +52,8 @@ self.onmessage = async (event: MessageEvent<KernelRequest>) => {
     if (request.type === "evaluate") await evaluate(request);
     else if (request.type === "document") document(request);
     else if (request.type === "pick-face") pickFace(request);
-    else pickEdge(request);
+    else if (request.type === "pick-edge") pickEdge(request);
+    else meet(request);
   } catch (error) {
     post({
       id: request.id,
@@ -123,6 +130,7 @@ function document(request: Extract<KernelRequest, { type: "document" }>) {
       frames: [...evaluation.frames],
       projections,
       parts: describeParts(request.document, evaluation.bodies),
+      hardware: evaluation.hardware,
       ms: evaluation.ms,
       meshMs: performance.now() - started,
       rerunFrom: evaluation.rerunFrom,
@@ -182,6 +190,37 @@ function pickEdge(request: Extract<KernelRequest, { type: "pick-edge" }>) {
           reason:
             "This edge does not join two named faces; pick an edge between faces an extrude or cut made",
         }),
+  });
+}
+
+function meet(request: Extract<KernelRequest, { type: "contact" }>) {
+  // The cache keeps the later features, so this costs little and leaves
+  // the full model ready for the next evaluation.
+  const before = evaluator.evaluate(
+    request.document,
+    request.until === undefined ? {} : { until: request.until },
+  );
+  const find = (id: string) => {
+    const body = before.bodies.find((candidate) => candidate.id === id);
+    if (!body) throw new Error(`The body ${id} is not in the model`);
+    return body;
+  };
+  const [a, c] = [find(request.a), find(request.b)].map(panelOf);
+  if (typeof a === "string" || typeof c === "string") {
+    post({
+      id: request.id,
+      type: "contact",
+      description: typeof a === "string" ? a : (c as string),
+      joints: [],
+    });
+    return;
+  }
+  const found = contact(a!, c!);
+  post({
+    id: request.id,
+    type: "contact",
+    description: describeContact(found),
+    joints: jointsFor(found),
   });
 }
 

@@ -543,7 +543,10 @@ export async function partEntities(
           : z0 <= 1e-5
             ? "BOTTOM"
             : "INTERNAL";
-    if (side === "INTERNAL" && op.kind === "domino") {
+    if (
+      side === "INTERNAL" &&
+      (op.kind === "domino" || op.kind === "edge-drill")
+    ) {
       const setup = edgeSetup(part, bb);
       entities.push({
         kind: "text",
@@ -551,7 +554,10 @@ export async function partEntities(
         x: bb.min.x,
         y: bb.min.y,
         height: 3,
-        text: `Domino: separate ${setup} edge setup, depth ${op.depth} mm`,
+        text:
+          op.kind === "domino"
+            ? `Domino: separate ${setup} edge setup, depth ${op.depth} mm`
+            : `Drill Ø${op.diameter} in the ${setup} edge, depth ${op.depth} mm`,
       });
       continue;
     }
@@ -819,11 +825,12 @@ function edgeSetup(
   if (Math.abs(bb.min.y - outline.y) < eps) return "Y_MIN";
   if (Math.abs(bb.max.y - outline.y - outline.height) < eps) return "Y_MAX";
   throw new Error(
-    `Domino on ${part.path} does not open onto a supported stock edge`,
+    `Edge machining on ${part.path} does not open onto a supported stock edge`,
   );
 }
-/** Edge-facing domino sections are separate machining setups, never XY pockets. */
-async function dominoEdgeFiles(
+/** Edge-facing domino and drill sections are separate machining setups,
+ * never XY pockets: one drawing per edge, looking at that edge. */
+export async function dominoEdgeFiles(
   engine: OpenCascadeEngine,
   part: SheetPart,
 ): Promise<Map<string, DxfEntity[]>> {
@@ -831,7 +838,7 @@ async function dominoEdgeFiles(
     outline = outlineBounds(part),
     t = part.material.thickness;
   for (const op of part.operations) {
-    if (op.kind !== "domino") continue;
+    if (op.kind !== "domino" && op.kind !== "edge-drill") continue;
     const tool = await engine.recipe(op.recipe),
       bb = engine.bounds(tool);
     if (bb.min.z < 1e-5 || bb.max.z > t - 1e-5) continue;
@@ -876,7 +883,7 @@ async function dominoEdgeFiles(
     for (const chain of contourChains(segments))
       result.get(setup)!.push({
         kind: "polyline",
-        layer: `DOMINO_EDGE_${setup}_D${(bb.max[axis] - bb.min[axis]).toFixed(3)}`,
+        layer: `${op.kind === "domino" ? "DOMINO" : "DRILL"}_EDGE_${setup}_D${(bb.max[axis] - bb.min[axis]).toFixed(3)}`,
         ...chain,
       });
   }

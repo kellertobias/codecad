@@ -71,6 +71,22 @@ export class KernelClient {
     return this.send({ type: "pick-edge", body, edge });
   }
 
+  /** How two bodies meet, and the joints that fit. */
+  contact(
+    document: CadDocument,
+    until: number | undefined,
+    a: string,
+    b: string,
+  ): Promise<Answer<"contact">> {
+    return this.send({
+      type: "contact",
+      document,
+      ...(until === undefined ? {} : { until }),
+      a,
+      b,
+    });
+  }
+
   /** Waits for the kernel first: the worker only starts listening once its
    * WASM has loaded, and a message sent before that would be lost. */
   private async send<T>(request: Request): Promise<T> {

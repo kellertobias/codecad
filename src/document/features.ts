@@ -48,6 +48,20 @@ export function dependencies(feature: Feature): Set<string> {
     case "hole":
       used.push(feature.sketch, ...(feature.targets ?? []).map(bodyFeature));
       break;
+    case "joint":
+      used.push(bodyFeature(feature.a), bodyFeature(feature.b));
+      break;
+    case "move":
+      used.push(...feature.bodies.map(bodyFeature));
+      break;
+    case "mate":
+      used.push(
+        ...faceFeatures(feature.moving),
+        ...faceFeatures(feature.target),
+        ...(feature.movingEdge ? edgeFeatures(feature.movingEdge) : []),
+        ...(feature.targetEdge ? edgeFeatures(feature.targetEdge) : []),
+      );
+      break;
     case "pattern":
     case "mirror":
       used.push(
@@ -129,6 +143,9 @@ const labels: Record<FeatureType, string> = {
   hole: "Hole",
   pattern: "Pattern",
   mirror: "Mirror",
+  joint: "Joint",
+  move: "Move",
+  mate: "Mate",
 };
 
 export const featureLabel = (type: FeatureType) => labels[type];

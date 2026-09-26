@@ -286,7 +286,69 @@ export interface MirrorFeature extends FeatureBase {
   readonly offset?: string;
 }
 
+/** A joint between two bodies; how it is cut is worked out from how the
+ * two panels meet each time the model is built. */
+export interface JointFeature extends FeatureBase {
+  readonly type: "joint";
+  readonly kind:
+    | "finger"
+    | "domino"
+    | "dowel"
+    | "screw"
+    | "dado"
+    | "rabbet"
+    | "miter"
+    | "halfLap";
+  readonly a: string;
+  readonly b: string;
+  readonly fingerWidth?: string;
+  readonly clearance?: string;
+  readonly count?: string;
+  readonly edgeOffset?: string;
+  readonly depth?: string;
+  readonly diameter?: string;
+  readonly length?: string;
+  /** Domino size, e.g. "5x30". */
+  readonly domino?: string;
+}
+
+/** Moves bodies, or places moved copies of them. */
+export interface MoveFeature extends FeatureBase {
+  readonly type: "move";
+  readonly bodies: readonly string[];
+  /** Leave the bodies where they are and place copies. */
+  readonly copy?: boolean;
+  readonly translate?: readonly [string, string, string];
+  /** Turned about an axis through `center` first, then moved. */
+  readonly rotate?: {
+    readonly axis: Axis;
+    readonly angle: string;
+    readonly center?: readonly [string, string, string];
+  };
+}
+
+/** Moves the body of `moving` so that face meets `target`. `planar` lays
+ * the faces against each other; `fastened` also centres them; `edge` lays
+ * them against each other and lines `movingEdge` up with `targetEdge`. */
+export interface MateFeature extends FeatureBase {
+  readonly type: "mate";
+  readonly kind: "fastened" | "planar" | "edge";
+  readonly moving: FaceReference;
+  readonly target: FaceReference;
+  readonly movingEdge?: EdgeReference;
+  readonly targetEdge?: EdgeReference;
+  /** Where along the target edge the moving edge lines up. */
+  readonly align?: "start" | "middle" | "end";
+  /** Gap between the faces. */
+  readonly offset?: string;
+  /** The faces point the same way instead of against each other. */
+  readonly flip?: boolean;
+}
+
 export type Feature =
+  | MoveFeature
+  | MateFeature
+  | JointFeature
   | SketchFeature
   | ExtrudeFeature
   | FilletFeature
@@ -312,6 +374,10 @@ const expressionKeys = [
   "count",
   "spacing",
   "offset",
+  "fingerWidth",
+  "clearance",
+  "edgeOffset",
+  "length",
 ] as const;
 
 /** The feature with every expression passed through `map`: dimensions of a
@@ -336,6 +402,17 @@ export function mapExpressions<F extends Feature>(
     if (typeof mapped[key] === "string") mapped[key] = map(mapped[key]);
   if (feature.type === "pattern" && feature.center)
     mapped.center = feature.center.map(map);
+  if (feature.type === "move") {
+    if (feature.translate) mapped.translate = feature.translate.map(map);
+    if (feature.rotate)
+      mapped.rotate = {
+        ...feature.rotate,
+        angle: map(feature.rotate.angle),
+        ...(feature.rotate.center
+          ? { center: feature.rotate.center.map(map) }
+          : {}),
+      };
+  }
   return mapped as unknown as F;
 }
 
@@ -576,6 +653,9 @@ function validate(document: Record<string, unknown>): void {
       "hole",
       "pattern",
       "mirror",
+      "joint",
+      "move",
+      "mate",
     ]);
     featureTypes.set(feature.id as string, feature.type as string);
     string(feature.name, `${path}.name`);
@@ -771,6 +851,64 @@ function validateFeature(
         c.fail(at("headDiameter"), `a ${feature.kind} needs a head diameter`);
       if (feature.kind === "counterbore" && feature.headDepth === undefined)
         c.fail(at("headDepth"), "a counterbore needs a depth");
+      break;
+    case "move": {
+      c.list(feature.bodies, at("bodies")).forEach((id, i) =>
+        c.string(id, `${at("bodies")}[${i}]`),
+      );
+      c.optional(feature.copy, at("copy"), c.boolean);
+      const triple = (value: unknown, path: string) => {
+        const items = c.list(value, path);
+        if (items.length !== 3) c.fail(path, "must list x, y and z");
+        items.forEach((item, i) => c.expression(item, `${path}[${i}]`));
+      };
+      c.optional(feature.translate, at("translate"), triple);
+      c.optional(feature.rotate, at("rotate"), (value, path) => {
+        const rotate = value as Record<string, unknown>;
+        if (!rotate || typeof rotate !== "object")
+          return c.fail(path, "must be an object");
+        c.oneOf(rotate.axis, `${path}.axis`, ["X", "Y", "Z"]);
+        c.expression(rotate.angle, `${path}.angle`);
+        c.optional(rotate.center, `${path}.center`, triple);
+      });
+      break;
+    }
+    case "mate":
+      c.oneOf(feature.kind, at("kind"), ["fastened", "planar", "edge"]);
+      c.face(feature.moving, at("moving"));
+      c.face(feature.target, at("target"));
+      c.optional(feature.movingEdge, at("movingEdge"), c.edge);
+      c.optional(feature.targetEdge, at("targetEdge"), c.edge);
+      c.optional(feature.align, at("align"), (v, q) =>
+        c.oneOf(v, q, ["start", "middle", "end"]),
+      );
+      expressions("offset");
+      c.optional(feature.flip, at("flip"), c.boolean);
+      break;
+    case "joint":
+      c.oneOf(feature.kind, at("kind"), [
+        "finger",
+        "domino",
+        "dowel",
+        "screw",
+        "dado",
+        "rabbet",
+        "miter",
+        "halfLap",
+      ]);
+      c.string(feature.a, at("a"));
+      c.string(feature.b, at("b"));
+      if (feature.a === feature.b) c.fail(at("b"), "a joint needs two bodies");
+      expressions(
+        "fingerWidth",
+        "clearance",
+        "count",
+        "edgeOffset",
+        "depth",
+        "diameter",
+        "length",
+      );
+      c.optional(feature.domino, at("domino"), c.string);
       break;
     case "pattern":
     case "mirror":

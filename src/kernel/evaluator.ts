@@ -11,7 +11,7 @@
 // features after it still run. A reference that no longer resolves exactly
 // is an error, never a guess.
 import * as b from "brepjs/quick";
-import { Matrix4 } from "three";
+import { Matrix4, Quaternion, Vector3 } from "three";
 import type { Recipe } from "../model.js";
 import {
   axisVector,
@@ -43,6 +43,9 @@ import {
   type FaceReference,
   type Feature,
   type HoleFeature,
+  type JointFeature,
+  type MateFeature,
+  type MoveFeature,
   type MirrorFeature,
   type PatternFeature,
   type SketchFeature,
@@ -52,6 +55,14 @@ import {
   evaluateWith,
   type VariableValues,
 } from "../document/variables.js";
+import {
+  contact,
+  grown,
+  JointError,
+  panelOf,
+  planJoint,
+  type Hardware,
+} from "./joints.js";
 import {
   booleanRoles,
   copyRoles,
@@ -77,7 +88,16 @@ export interface Blank {
 /** A cut made into a body after it was created, in model coordinates. */
 export interface Machining {
   readonly feature: string;
-  readonly kind: "cut" | "drill" | "countersink" | "counterbore";
+  readonly kind:
+    | "cut"
+    | "drill"
+    | "countersink"
+    | "counterbore"
+    | "domino"
+    | "edge-drill"
+    | "dado"
+    | "rabbet"
+    | "miter";
   readonly recipe: Recipe;
   readonly diameter?: number;
   readonly depth?: number;
@@ -123,6 +143,8 @@ interface Model {
   readonly merged: ReadonlyMap<string, string>;
   readonly frames: ReadonlyMap<string, Frame>;
   readonly made: ReadonlyMap<string, Made>;
+  /** Hardware each joint needs, by feature. */
+  readonly hardware: ReadonlyMap<string, readonly Hardware[]>;
 }
 
 export type FeatureStatus =
@@ -145,6 +167,8 @@ export interface Evaluation {
   /** For sketches on faces: the face's edges in sketch coordinates, as
    * x1, y1, x2, y2 runs, to draw and snap to. */
   readonly projections: ReadonlyMap<string, Float32Array>;
+  /** Screws, dowels and dominos the joints need. */
+  readonly hardware: readonly (Hardware & { readonly feature: string })[];
   /** Index of the first feature that was re-run; features.length when
    * everything came from the cache. */
   readonly rerunFrom: number;
@@ -173,6 +197,7 @@ const emptyModel: Model = {
   merged: new Map(),
   frames: new Map(),
   made: new Map(),
+  hardware: new Map(),
 };
 
 export class DocumentEvaluator {
@@ -223,6 +248,9 @@ export class DocumentEvaluator {
       status,
       frames: model.frames,
       projections,
+      hardware: [...model.hardware].flatMap(([feature, items]) =>
+        items.map((item) => ({ ...item, feature })),
+      ),
       rerunFrom,
       ms: performance.now() - started,
     };
@@ -320,6 +348,9 @@ const evaluators: Evaluators = {
   chamfer: (feature, context) => roundEdges(feature, context, "chamfer"),
   shell,
   hole,
+  joint,
+  move,
+  mate,
   pattern: (feature, context) => repeat(feature, context),
   mirror: (feature, context) => repeat(feature, context),
 };
@@ -569,6 +600,8 @@ function place<T extends b.AnyShape>(
 /** A solid from the small set of recipes tools are described with. */
 function build(context: Context, recipe: Recipe): b.Shape3D {
   switch (recipe.kind) {
+    case "box":
+      return context.own(b.box(recipe.width, recipe.depth, recipe.height));
     case "cylinder":
       return context.own(
         b.cylinder(recipe.diameter / 2, recipe.length, { centered: true }),
@@ -1171,6 +1204,93 @@ function holeRoles(
   return roles;
 }
 
+// ---------------------------------------------------------------- joints
+
+function joint(feature: JointFeature, context: Context): Result {
+  const bodies = [feature.a, feature.b].map((id) => {
+    const body = bodyOf(context.model, id);
+    if (!body) throw new FeatureError(`The body ${id} no longer exists`, true);
+    return body;
+  });
+  const panels = bodies.map((body) => {
+    const panel = panelOf(body);
+    if (typeof panel === "string") throw new FeatureError(panel);
+    return panel;
+  });
+  const value = (expression: string | undefined, name: string) =>
+    expression === undefined ? undefined : context.value(expression, name);
+  const numbers = {
+    fingerWidth: value(feature.fingerWidth, "Finger width"),
+    clearance: value(feature.clearance, "Clearance"),
+    count: value(feature.count, "Count"),
+    edgeOffset: value(feature.edgeOffset, "Distance from the ends"),
+    depth: value(feature.depth, "Depth"),
+    diameter: value(feature.diameter, "Diameter"),
+    length: value(feature.length, "Length"),
+  };
+  const parameters = Object.fromEntries(
+    Object.entries({ ...numbers, domino: feature.domino }).filter(
+      ([, v]) => v !== undefined,
+    ),
+  );
+  let plan;
+  try {
+    plan = planJoint(feature.kind, contact(panels[0]!, panels[1]!), parameters);
+  } catch (error) {
+    if (error instanceof JointError) throw new FeatureError(error.message);
+    throw error;
+  }
+  let model = context.model;
+  // The part of a panel that reaches into the other comes first: the
+  // panel's blank grows to include it.
+  for (const growth of plan.grow) {
+    const body = bodyOf(model, growth.body)!;
+    const panel = panels[bodies.findIndex((b) => b.id === body.id)]!;
+    const tool = build(context, {
+      kind: "transform",
+      matrix: new Matrix4()
+        .makeTranslation(growth.box.min.x, growth.box.min.y, growth.box.min.z)
+        .toArray(),
+      source: {
+        kind: "box",
+        width: growth.box.max.x - growth.box.min.x,
+        depth: growth.box.max.y - growth.box.min.y,
+        height: growth.box.max.z - growth.box.min.z,
+      },
+    });
+    const joined = combine(context, body, tool, new Map(), feature.id, "add");
+    model = withBody(model, {
+      ...joined,
+      shape: single(joined) as unknown as b.Shape3D,
+      blank: grown(panel, growth.box).blank,
+    });
+  }
+  // Every cut into one body in one boolean.
+  for (const id of new Set(plan.cuts.map((cut) => cut.body))) {
+    const body = bodyOf(model, id)!;
+    const cuts = plan.cuts.filter((cut) => cut.body === id);
+    const shapes = cuts.map((cut) => build(context, cut.recipe));
+    const tool =
+      shapes.length === 1
+        ? shapes[0]!
+        : (context.own(b.compound(shapes)) as unknown as b.Shape3D);
+    const next = combine(context, body, tool, new Map(), feature.id, "cut");
+    model = withBody(model, {
+      ...next,
+      machining: [
+        ...body.machining,
+        ...cuts.map(({ body: _body, ...cut }) => ({
+          ...cut,
+          feature: feature.id,
+        })),
+      ],
+    });
+  }
+  const hardware = new Map(model.hardware);
+  hardware.set(feature.id, plan.hardware);
+  return { model: { ...model, hardware } };
+}
+
 // ---------------------------------------------------------------- pattern, mirror
 
 /** The transforms of a pattern's copies (not the original), or the one
@@ -1358,23 +1478,173 @@ function repeat(
       const body = bodyOf(context.model, id);
       if (!body)
         throw new FeatureError(`The body ${id} no longer exists`, true);
-      const shape = place(context, body.shape, m);
       model = withBody(model, {
-        ...body,
+        ...moved(context, body, m),
         id: `${tag}:${body.id}`,
         name: `${body.name} (${feature.name} ${i + 1})`,
         feature: feature.id,
-        shape,
-        roles: copyRoles(body.roles, body.shape, shape),
-        ...(body.blank ? { blank: moveBlank(body.blank, m) } : {}),
-        machining: body.machining.map((cut) => ({
-          ...cut,
-          recipe: transformRecipe(cut.recipe, m),
-        })),
       });
     }
   }
   return { model };
+}
+
+/** A body moved by a transform, with its names, blank and cuts. */
+function moved(context: Context, body: Body, m: Matrix4): Body {
+  const shape = place(context, body.shape, m);
+  return {
+    ...body,
+    shape,
+    roles: copyRoles(body.roles, body.shape, shape),
+    ...(body.blank ? { blank: moveBlank(body.blank, m) } : {}),
+    machining: body.machining.map((cut) => ({
+      ...cut,
+      recipe: transformRecipe(cut.recipe, m),
+    })),
+  };
+}
+
+// ---------------------------------------------------------------- move, mate
+
+const vector = (v: Vec3) => new Vector3(v[0], v[1], v[2]);
+
+function move(feature: MoveFeature, context: Context): Result {
+  if (!feature.bodies.length)
+    throw new FeatureError("Choose the bodies to move");
+  const triple = (values: readonly string[], name: string) =>
+    values.map((v, i) => context.value(v, `${name} ${"xyz"[i]}`)) as [
+      number,
+      number,
+      number,
+    ];
+  const m = new Matrix4();
+  if (feature.translate) {
+    const [x, y, z] = triple(feature.translate, "Move");
+    m.makeTranslation(x, y, z);
+  }
+  if (feature.rotate) {
+    const [x, y, z] = feature.rotate.center
+      ? triple(feature.rotate.center, "Centre")
+      : [0, 0, 0];
+    const angle = context.value(feature.rotate.angle, "Angle");
+    m.multiply(new Matrix4().makeTranslation(x, y, z))
+      .multiply(
+        rotationAbout(axisVector(feature.rotate.axis), (angle * Math.PI) / 180),
+      )
+      .multiply(new Matrix4().makeTranslation(-x, -y, -z));
+  }
+  let model = context.model;
+  for (const id of feature.bodies) {
+    const body = bodyOf(model, id);
+    if (!body) throw new FeatureError(`The body ${id} no longer exists`, true);
+    const next = moved(context, body, m);
+    model = feature.copy
+      ? withBody(model, {
+          ...next,
+          id: `${feature.id}#1:${body.id}`,
+          name: `${body.name} (${feature.name})`,
+          feature: feature.id,
+        })
+      : withBody(model, next);
+  }
+  return { model };
+}
+
+/** The flat face a reference names: its plane and centre. */
+function flatFace(model: Model, ref: FaceReference, what: string) {
+  const { body, face } = resolveFace(model, ref);
+  if (b.faceGeomType(face) !== "PLANE")
+    throw new FeatureError(`${what} must be a flat face`);
+  return {
+    body,
+    normal: vector(b.normalAt(face) as unknown as Vec3).normalize(),
+    centre: vector(b.faceCenter(face) as unknown as Vec3),
+  };
+}
+
+function mate(feature: MateFeature, context: Context): Result {
+  const moving = flatFace(context.model, feature.moving, "The moving face");
+  const target = flatFace(context.model, feature.target, "The target face");
+  if (moving.body.id === target.body.id)
+    throw new FeatureError("The two faces are on the same body");
+  const offset =
+    feature.offset === undefined ? 0 : context.value(feature.offset, "Offset");
+  // Turn the moving face to lie against the target (or along it), about
+  // its own centre.
+  const wanted = target.normal.clone().multiplyScalar(feature.flip ? 1 : -1);
+  const turn = new Matrix4().makeRotationFromQuaternion(
+    new Quaternion().setFromUnitVectors(moving.normal, wanted),
+  );
+  const about = (m: Matrix4, point: Vector3) =>
+    new Matrix4()
+      .makeTranslation(point.x, point.y, point.z)
+      .multiply(m)
+      .multiply(new Matrix4().makeTranslation(-point.x, -point.y, -point.z));
+  let m = about(turn, moving.centre);
+  const centre = moving.centre.clone().applyMatrix4(m);
+  // Onto the target's plane, `offset` out from it.
+  const across = target.centre.clone().sub(centre).dot(target.normal) + offset;
+  m = new Matrix4()
+    .makeTranslation(
+      target.normal.x * across,
+      target.normal.y * across,
+      target.normal.z * across,
+    )
+    .multiply(m);
+  if (feature.kind === "fastened") {
+    // And centred on it.
+    const now = moving.centre.clone().applyMatrix4(m);
+    const inPlane = target.centre.clone().sub(now);
+    inPlane.addScaledVector(target.normal, -inPlane.dot(target.normal));
+    m = new Matrix4()
+      .makeTranslation(inPlane.x, inPlane.y, inPlane.z)
+      .multiply(m);
+  }
+  if (feature.kind === "edge") {
+    if (!feature.movingEdge || !feature.targetEdge)
+      throw new FeatureError("Pick an edge of each face");
+    const ends = (ref: EdgeReference) => {
+      const { edge } = resolveEdge(context.model, ref);
+      return [0, 1].map((t) =>
+        vector(b.curvePointAt(edge, t) as unknown as Vec3),
+      ) as [Vector3, Vector3];
+    };
+    const [t0, t1] = ends(feature.targetEdge);
+    let [m0, m1] = ends(feature.movingEdge).map((p) => p.applyMatrix4(m)) as [
+      Vector3,
+      Vector3,
+    ];
+    const along = t1.clone().sub(t0).normalize();
+    // Turn about the target's normal so the edges run the same way, by
+    // the smaller of the two turns.
+    let direction = m1.clone().sub(m0).normalize();
+    if (direction.dot(along) < 0) {
+      [m0, m1] = [m1, m0];
+      direction.negate();
+    }
+    const angle = Math.atan2(
+      direction.clone().cross(along).dot(target.normal),
+      direction.dot(along),
+    );
+    const spin = about(
+      new Matrix4().makeRotationAxis(target.normal, angle),
+      m0,
+    );
+    m = spin.clone().multiply(m);
+    m1.applyMatrix4(spin);
+    // Then slide it onto the target edge, lined up at the chosen end.
+    const align = feature.align ?? "start";
+    const pick = (a: Vector3, c: Vector3) =>
+      align === "start"
+        ? a
+        : align === "end"
+          ? c
+          : a.clone().add(c).multiplyScalar(0.5);
+    const shift = pick(t0, t1).clone().sub(pick(m0, m1));
+    shift.addScaledVector(target.normal, -shift.dot(target.normal));
+    m = new Matrix4().makeTranslation(shift.x, shift.y, shift.z).multiply(m);
+  }
+  return { model: withBody(context.model, moved(context, moving.body, m)) };
 }
 
 function nameOf(context: Context, id: string): string {
