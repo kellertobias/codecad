@@ -16,6 +16,7 @@ import {
 } from "./network.js";
 import { openWorkspace } from "./workspace.js";
 import { handleProjects } from "./projects-api.js";
+import { handleOutputs } from "./outputs-api.js";
 import { JobQueue } from "./jobs.js";
 import {
   kernelBundleOptions,
@@ -479,6 +480,7 @@ const server = createServer(async (req, res) => {
       json(languageService.libraries());
       return;
     }
+    if (await handleOutputs(req, res, url, workspace, jobs)) return;
     if (await handleProjects(req, res, url, workspace, trusted)) return;
     if (req.method === "POST") {
       if (!trusted()) {
