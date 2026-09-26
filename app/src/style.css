@@ -1370,3 +1370,10 @@ dialog.share-dialog h2 {
   font-family: ui-monospace, monospace;
   font-size: 12px;
 }
+.stock-cost {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.stock-cost p {
+  margin: 4px 0;
+}

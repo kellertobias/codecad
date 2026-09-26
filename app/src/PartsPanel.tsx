@@ -9,6 +9,7 @@ import type {
 } from "../../src/document/schema.ts";
 import type { VariableValues } from "../../src/document/variables.ts";
 import type { Model } from "./kernel.ts";
+import { stockUsage } from "../../src/document/layout.ts";
 import { billOfMaterials, bomCsv } from "../../src/kernel/bom.ts";
 import { Choice, ExpressionField, Field } from "./features/fields.tsx";
 
@@ -205,7 +206,13 @@ export function PartsPanel({
       {parts.length ? (
         <button
           onClick={() => {
-            const csv = bomCsv(billOfMaterials(parts, model?.hardware ?? []));
+            const csv = bomCsv(
+              billOfMaterials(
+                parts,
+                model?.hardware ?? [],
+                stockUsage(document).pieces,
+              ),
+            );
             const link = globalThis.document.createElement("a");
             link.href = URL.createObjectURL(
               new Blob([csv], { type: "text/csv" }),

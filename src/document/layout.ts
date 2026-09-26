@@ -355,3 +355,52 @@ export function parseOutline(text: string): Point2[] | string {
   if (Math.abs(area(outline)) < eps) return "The outline has no area";
   return area(outline) < 0 ? outline.reverse() : outline;
 }
+
+/** What the layouts cost in stock: each layout uses one piece of its
+ * stock; pieces used by more layouts than there are of them are named. */
+export function stockUsage(document: {
+  readonly stock?: readonly StockPiece[];
+  readonly layouts?: readonly Layout[];
+}): {
+  readonly pieces: readonly {
+    readonly piece: StockPiece;
+    readonly used: number;
+    readonly cost?: number;
+  }[];
+  /** The known costs added up; undefined when no used piece has one. */
+  readonly total?: number;
+  /** Pieces some layouts use without a price. */
+  readonly unpriced: readonly string[];
+  readonly short: readonly string[];
+} {
+  const pieces = (document.stock ?? []).flatMap((piece) => {
+    const used = (document.layouts ?? []).filter(
+      (l) => l.stock === piece.id && l.placements.length,
+    ).length;
+    return used
+      ? [
+          {
+            piece,
+            used,
+            ...(piece.cost === undefined ? {} : { cost: piece.cost * used }),
+          },
+        ]
+      : [];
+  });
+  const priced = pieces.filter((p) => p.cost !== undefined);
+  return {
+    pieces,
+    ...(priced.length
+      ? { total: priced.reduce((sum, p) => sum + p.cost!, 0) }
+      : {}),
+    unpriced: pieces
+      .filter((p) => p.cost === undefined)
+      .map((p) => p.piece.name),
+    short: pieces
+      .filter((p) => p.used > (p.piece.quantity ?? 1))
+      .map(
+        (p) =>
+          `${p.piece.name}: ${p.used} layouts, ${p.piece.quantity ?? 1} on hand`,
+      ),
+  };
+}

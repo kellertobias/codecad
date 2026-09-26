@@ -208,3 +208,46 @@ test("a layout's DXF puts every part where the layout shows it", async () => {
     evaluator.dispose();
   }
 });
+
+test("what the layouts cost in stock, and pieces used too often", async () => {
+  const { stockUsage } = await import("../src/document/layout.js");
+  const { billOfMaterials, bomCsv } = await import("../src/kernel/bom.js");
+  const sheet = {
+    id: "s",
+    name: "Birch 18",
+    material: "ply",
+    kind: "sheet" as const,
+    outline: [
+      { x: 0, y: 0 },
+      { x: 2500, y: 0 },
+      { x: 2500, y: 1250 },
+      { x: 0, y: 1250 },
+    ],
+    cost: 89.5,
+    quantity: 1,
+  };
+  const offcut = {
+    ...sheet,
+    id: "o",
+    name: "Offcut",
+    cost: undefined,
+    quantity: 3,
+  };
+  const placed = [{ part: "a", x: 0, y: 0, rotation: 0 }];
+  const usage = stockUsage({
+    stock: [sheet, offcut],
+    layouts: [
+      { id: "1", name: "1", stock: "s", placements: placed },
+      { id: "2", name: "2", stock: "s", placements: placed },
+      { id: "3", name: "3", stock: "o", placements: placed },
+      // An empty layout uses nothing.
+      { id: "4", name: "4", stock: "o", placements: [] },
+    ],
+  });
+  assert.equal(usage.total, 179);
+  assert.deepEqual(usage.unpriced, ["Offcut"]);
+  assert.deepEqual(usage.short, ["Birch 18: 2 layouts, 1 on hand"]);
+  const csv = bomCsv(billOfMaterials([], [], usage.pieces));
+  assert.match(csv, /"stock","Birch 18","","2500 × 1250","2","179"/);
+  assert.match(csv, /"stock","Offcut","","2500 × 1250","1",""/);
+});

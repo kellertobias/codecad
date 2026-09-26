@@ -12,6 +12,7 @@ import { DocumentEvaluator } from "./evaluator.js";
 import type { CodeResultSource } from "./code-parts.js";
 import { describeParts, sheetProject } from "./parts.js";
 import { billOfMaterials, bomCsv } from "./bom.js";
+import { stockUsage } from "../document/layout.js";
 import { layoutDxf, partDxf } from "./layouts.js";
 import { partSheets, renderSheet } from "./drawings.js";
 
@@ -135,7 +136,11 @@ export async function documentOutput(
       }
       case "bom":
         return done(
-          new TextEncoder().encode(bomCsv(billOfMaterials(info, hardware))),
+          new TextEncoder().encode(
+            bomCsv(
+              billOfMaterials(info, hardware, stockUsage(document).pieces),
+            ),
+          ),
           "bill-of-materials",
         );
       default:

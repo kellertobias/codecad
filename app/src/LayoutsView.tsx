@@ -13,6 +13,7 @@ import {
   parseOutline,
   placedOutline,
   rectangleOutline,
+  stockUsage,
   unplaced,
   type LayoutPart,
 } from "../../src/document/layout.ts";
@@ -110,6 +111,7 @@ export function LayoutsView({
             New
           </button>
         </header>
+        <StockCost document={document} />
         <ul className="list">
           {layouts.map((l) => (
             <li key={l.id}>
@@ -121,6 +123,10 @@ export function LayoutsView({
                 <small>
                   {stock.find((p) => p.id === l.stock)?.name ?? "no stock"} ·{" "}
                   {l.placements.length} parts
+                  {l.placements.length &&
+                  stock.find((p) => p.id === l.stock)?.cost !== undefined
+                    ? ` · ${money(stock.find((p) => p.id === l.stock)!.cost!)}`
+                    : ""}
                 </small>
               </button>
             </li>
@@ -195,12 +201,20 @@ function StockList({
     setAdding(undefined);
     setProblem(undefined);
   };
-  const update = (id: string, change: Partial<StockPiece>) =>
+  const update = (
+    id: string,
+    change: { [K in keyof StockPiece]?: StockPiece[K] | undefined },
+  ) =>
     apply((d) => ({
       ...d,
-      stock: (d.stock ?? []).map((p) =>
-        p.id === id ? { ...p, ...change } : p,
-      ),
+      stock: (d.stock ?? []).map((p) => {
+        if (p.id !== id) return p;
+        const next: Record<string, unknown> = { ...p, ...change };
+        // A cleared field is left out rather than stored as undefined.
+        for (const key of Object.keys(change))
+          if (next[key] === undefined) delete next[key];
+        return next as unknown as StockPiece;
+      }),
     }));
   return (
     <>
@@ -282,6 +296,39 @@ function StockList({
                 <option value="x">grain along x</option>
                 <option value="y">grain along y</option>
               </select>
+              <input
+                aria-label="Price of one piece"
+                className="quantity"
+                type="number"
+                min={0}
+                placeholder="price"
+                title="Price of one piece, for the cost of the layouts"
+                value={piece.cost ?? ""}
+                onChange={(e) =>
+                  update(
+                    piece.id,
+                    e.target.value === ""
+                      ? { cost: undefined }
+                      : { cost: Math.max(0, Number(e.target.value) || 0) },
+                  )
+                }
+              />
+              <input
+                aria-label="Pieces on hand"
+                className="quantity"
+                type="number"
+                min={1}
+                title="How many of this piece there are"
+                value={piece.quantity ?? 1}
+                onChange={(e) =>
+                  update(piece.id, {
+                    quantity: Math.max(
+                      1,
+                      Math.round(Number(e.target.value)) || 1,
+                    ),
+                  })
+                }
+              />
               <button
                 className="icon"
                 aria-label={`Delete ${piece.name}`}
@@ -742,6 +789,39 @@ function PlacementTools({
           />
         </span>
       </Field>
+    </div>
+  );
+}
+
+const money = (value: number) =>
+  value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+/** What the stock the layouts use costs, and pieces used too often. */
+function StockCost({ document }: { document: CadDocument }) {
+  const usage = stockUsage(document);
+  if (!usage.pieces.length) return null;
+  return (
+    <div className="stock-cost">
+      {usage.total !== undefined ? (
+        <p>
+          Stock used: <strong>{money(usage.total)}</strong>
+          {usage.unpriced.length
+            ? ` (no price for ${usage.unpriced.join(", ")})`
+            : ""}
+        </p>
+      ) : (
+        <p className="hint">
+          Give stock pieces a price to see what the layouts cost.
+        </p>
+      )}
+      {usage.short.map((line) => (
+        <p key={line} className="warning">
+          More layouts than pieces: {line}
+        </p>
+      ))}
     </div>
   );
 }
