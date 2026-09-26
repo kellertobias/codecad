@@ -50,8 +50,8 @@
     "check": "tsc --noEmit && tsc --noEmit -p app",
     "check:compat": "tsc6 --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "format": "prettier --write src examples web app tests package.json tsconfig.json README.md",
-    "format:check": "prettier --check src examples web app tests package.json tsconfig.json README.md",
+    "format": "prettier --write src examples web app tests e2e playwright.config.ts package.json tsconfig.json README.md",
+    "format:check": "prettier --check src examples web app tests e2e playwright.config.ts package.json tsconfig.json README.md",
     "dev": "node scripts/dev.mjs",
     "build": "node --import tsx src/native-rebuild.ts examples/kitchen-cabinet/index.ts output/kitchen-cabinet",
     "cad:build": "node --import tsx src/native-rebuild.ts",
@@ -65,12 +65,14 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "app:dev": "vite --config app/vite.config.ts",
-    "app:build": "vite build --config app/vite.config.ts"
+    "app:build": "vite build --config app/vite.config.ts",
+    "test:e2e": "npm run app:build && playwright test"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/exec": "7.1.0",

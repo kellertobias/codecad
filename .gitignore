@@ -9,3 +9,5 @@ artifacts/
 dist/
 desktop/project-tabs.js
 desktop/project-tabs.css
+test-results/
+playwright-report/

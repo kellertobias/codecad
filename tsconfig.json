@@ -10,5 +10,12 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts", "web/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "examples/**/*.ts",
+    "web/**/*.ts",
+    "tests/**/*.ts",
+    "e2e/**/*.ts",
+    "playwright.config.ts"
+  ]
 }

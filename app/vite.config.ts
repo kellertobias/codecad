@@ -1,4 +1,5 @@
-import { defineConfig } from "vite";
+import { join } from "node:path";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 // The new browser editor. In development Vite serves it and forwards API,
@@ -19,11 +20,36 @@ const forward = {
   }) => proxy.on("proxyReq", (request) => request.setHeader("origin", server)),
 };
 
+// The mobile viewer lives at /p/<id>/view with its service worker at
+// /p/sw.js, as the CodeCAD server serves it; the dev server maps both onto
+// this build's pages.
+const viewerRoutes: Plugin = {
+  name: "codecad-viewer-routes",
+  configureServer(server) {
+    server.middlewares.use((request, _response, next) => {
+      const path = request.url?.split("?")[0] ?? "";
+      if (/^\/p\/[0-9a-f-]{36}\/view\/?$/.test(path))
+        request.url = "/app/viewer.html";
+      else if (path === "/p/sw.js") request.url = "/app/viewer-sw.js";
+      next();
+    });
+  },
+};
+
 export default defineConfig({
   root: import.meta.dirname,
   base: "/app/",
-  plugins: [react()],
-  build: { outDir: "dist", emptyOutDir: true },
+  plugins: [react(), viewerRoutes],
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        editor: join(import.meta.dirname, "index.html"),
+        viewer: join(import.meta.dirname, "viewer.html"),
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {
